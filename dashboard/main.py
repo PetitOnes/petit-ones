@@ -11,12 +11,278 @@ from pathlib import Path
 
 import sqlite3
 
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, Response
+import hashlib
+import hmac
+import secrets
+import time
+
+from fastapi import Cookie, FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image
 from pydantic import BaseModel
 
 app = FastAPI()
+
+# --- 認証 ---
+# ユーザー設定は ~/petit_claude/auth.json から読む
+# {
+#   "users": {
+#     "admin_user": {"password": "xxx", "role": "admin"},
+#     "operator_user": {"password": "xxx", "role": "operator"},
+#     "viewer_user": {"password": "xxx", "role": "viewer"}
+#   },
+#   "secret": "ランダム文字列(自動生成)"
+# }
+# role: admin(全機能) / operator(チャット・操作OK、設定変更NG) / viewer(閲覧のみ)
+
+_AUTH_FILE: Path | None = None  # 遅延初期化
+_AUTH_DATA: dict | None = None
+AUTH_COOKIE_NAME = "petit_session"
+AUTH_MAX_AGE = 7 * 24 * 3600  # 7日
+
+
+def _load_auth() -> dict:
+    global _AUTH_DATA, _AUTH_FILE
+    if _AUTH_FILE is None:
+        _AUTH_FILE = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude")) / "auth.json"
+    if _AUTH_DATA is None:
+        if _AUTH_FILE.exists():
+            try:
+                _AUTH_DATA = json.loads(_AUTH_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                _AUTH_DATA = {}
+        else:
+            _AUTH_DATA = {}
+    return _AUTH_DATA
+
+
+def _get_secret() -> str:
+    auth = _load_auth()
+    if "secret" not in auth:
+        auth["secret"] = secrets.token_hex(32)
+        if _AUTH_FILE:
+            _AUTH_FILE.write_text(json.dumps(auth, ensure_ascii=False, indent=2), encoding="utf-8")
+    return auth["secret"]
+
+
+def _auth_enabled() -> bool:
+    auth = _load_auth()
+    return bool(auth.get("users"))
+
+
+def _check_credentials(username: str, password: str) -> str | None:
+    """パスワード照合。成功したらroleを返す。"""
+    auth = _load_auth()
+    users = auth.get("users", {})
+    user = users.get(username)
+    if user and user.get("password") == password:
+        return user.get("role", "viewer")
+    return None
+
+
+def _make_token(username: str, role: str) -> str:
+    """署名付きトークン生成。"""
+    expires = int(time.time()) + AUTH_MAX_AGE
+    payload = f"{username}:{role}:{expires}"
+    sig = hmac.new(_get_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+
+def _verify_token(token: str) -> tuple[str, str] | None:
+    """トークン検証。成功したら (username, role) を返す。"""
+    try:
+        parts = token.rsplit(":", 1)
+        if len(parts) != 2:
+            return None
+        payload, sig = parts
+        expected = hmac.new(_get_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        username, role, expires_str = payload.split(":")
+        if int(expires_str) < int(time.time()):
+            return None
+        return (username, role)
+    except Exception:
+        return None
+
+
+def _get_user_role(request: Request) -> str | None:
+    """リクエストからユーザーのroleを取得。認証無効ならadminを返す。"""
+    if not _auth_enabled():
+        return "admin"
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if token:
+        result = _verify_token(token)
+        if result:
+            return result[1]
+    return None
+
+
+# ロール別の許可マッピング
+# admin: 全て / operator: チャット・操作OK / viewer: 閲覧のみ
+ROLE_LEVELS = {"admin": 3, "operator": 2, "viewer": 1}
+
+
+def _has_role(request: Request, min_role: str) -> bool:
+    role = _get_user_role(request)
+    if role is None:
+        return False
+    return ROLE_LEVELS.get(role, 0) >= ROLE_LEVELS.get(min_role, 99)
+
+
+def _get_username(request: Request) -> str | None:
+    """リクエストからユーザー名を取得。"""
+    if not _auth_enabled():
+        return None
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if token:
+        result = _verify_token(token)
+        if result:
+            return result[0]
+    return None
+
+
+def _get_allowed_characters(request: Request) -> list[str] | None:
+    """ユーザーが閲覧可能なキャラIDリストを返す。Noneは全キャラ許可。"""
+    if not _auth_enabled():
+        return None
+    role = _get_user_role(request)
+    if role == "admin":
+        return None
+    username = _get_username(request)
+    if not username:
+        return None
+    auth = _load_auth()
+    user = auth.get("users", {}).get(username, {})
+    chars = user.get("characters")
+    if not chars:
+        return None
+    return chars
+
+
+def _check_char_access(request: Request, character_id: str) -> bool:
+    """キャラクターへのアクセス権があるか確認。"""
+    allowed = _get_allowed_characters(request)
+    if allowed is None:
+        return True
+    return character_id in allowed
+
+
+@app.post("/api/auth/login")
+async def api_login(request: Request):
+    body = await request.json()
+    username = body.get("username", "")
+    password = body.get("password", "")
+    remember = body.get("remember", False)
+    role = _check_credentials(username, password)
+    if role is None:
+        return JSONResponse({"error": "認証失敗"}, status_code=401)
+    token = _make_token(username, role)
+    max_age = AUTH_MAX_AGE if remember else None
+    resp = JSONResponse({"ok": True, "role": role, "username": username})
+    resp.set_cookie(AUTH_COOKIE_NAME, token, max_age=max_age, httponly=True, samesite="lax")
+    return resp
+
+
+@app.post("/api/auth/logout")
+async def api_logout():
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(AUTH_COOKIE_NAME)
+    return resp
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    if not _auth_enabled():
+        return {"authenticated": True, "role": "admin", "auth_enabled": False}
+    token = request.cookies.get(AUTH_COOKIE_NAME)
+    if token:
+        result = _verify_token(token)
+        if result:
+            resp = {"authenticated": True, "username": result[0], "role": result[1], "auth_enabled": True}
+            allowed = _get_allowed_characters(request)
+            if allowed is not None:
+                resp["characters"] = allowed
+            return resp
+    return {"authenticated": False, "auth_enabled": True}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # 認証不要のパス
+    if path in ("/api/auth/login", "/api/auth/logout", "/api/auth/me") or path.startswith("/login"):
+        return await call_next(request)
+    if not _auth_enabled():
+        return await call_next(request)
+    # 認証チェック
+    role = _get_user_role(request)
+    if role is None:
+        # HTML ページはログインページにリダイレクト、API は 401
+        if path.startswith("/api/"):
+            return JSONResponse({"error": "認証が必要です"}, status_code=401)
+        # ログインページを返す
+        return HTMLResponse(_login_html(), status_code=401)
+    # ロールチェック（POST系はoperator以上、設定変更はadmin）
+    if request.method == "POST":
+        if "/settings" in path:
+            if not _has_role(request, "admin"):
+                return JSONResponse({"error": "admin権限が必要です"}, status_code=403)
+        elif not _has_role(request, "operator"):
+            return JSONResponse({"error": "operator権限が必要です"}, status_code=403)
+    if request.method == "DELETE":
+        if not _has_role(request, "operator"):
+            return JSONResponse({"error": "operator権限が必要です"}, status_code=403)
+    # キャラクターアクセスチェック: /api/{character_id}/... パス
+    if path.startswith("/api/"):
+        parts = path.split("/")
+        if len(parts) >= 4:
+            candidate = parts[2]
+            non_char_prefixes = ("characters", "group", "relations", "auth", "avatar", "interact")
+            if candidate not in non_char_prefixes:
+                if not _check_char_access(request, candidate):
+                    return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
+    return await call_next(request)
+
+
+def _login_html() -> str:
+    return """<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ログイン - Petit Dashboard</title>
+<style>
+body { font-family: -apple-system, sans-serif; background: #f5f0fa; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+.login-box { background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); width: 300px; }
+h2 { margin: 0 0 20px; color: #333; font-size: 1.2rem; text-align: center; }
+input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; }
+button { width: 100%; padding: 10px; background: #cab8d9; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; color: #333; }
+button:hover { background: #b8a3cc; }
+.remember { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; font-size: 0.8rem; color: #666; }
+.error { color: #e74c3c; font-size: 0.8rem; margin-bottom: 12px; display: none; }
+</style></head><body>
+<div class="login-box">
+<h2>Petit Dashboard</h2>
+<div class="error" id="error">ユーザー名またはパスワードが違います</div>
+<input id="username" placeholder="ユーザー名" autocomplete="username">
+<input id="password" type="password" placeholder="パスワード" autocomplete="current-password">
+<label class="remember"><input type="checkbox" id="remember" checked> 7日間ログインを維持</label>
+<button onclick="doLogin()">ログイン</button>
+</div>
+<script>
+async function doLogin() {
+  const res = await fetch("/api/auth/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      username: document.getElementById("username").value,
+      password: document.getElementById("password").value,
+      remember: document.getElementById("remember").checked
+    })
+  });
+  if (res.ok) { location.href = "/"; }
+  else { document.getElementById("error").style.display = "block"; }
+}
+document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+</script></body></html>"""
 
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
@@ -530,8 +796,12 @@ async def api_diary_summarize(character_id: str, date: str):
 
 
 @app.get("/api/characters")
-def api_characters():
-    return list_characters()
+def api_characters(request: Request):
+    chars = list_characters()
+    allowed = _get_allowed_characters(request)
+    if allowed is not None:
+        chars = [c for c in chars if c["id"] in allowed]
+    return chars
 
 
 @app.get("/api/{character_id}/status")
@@ -583,14 +853,21 @@ class GroupChatRequest(BaseModel):
 
 
 @app.get("/api/group/history")
-def api_group_history():
-    return load_group_log()[-200:]
+def api_group_history(request: Request):
+    log = load_group_log()[-200:]
+    allowed = _get_allowed_characters(request)
+    if allowed is not None:
+        log = [m for m in log if m.get("role") == "user" or m.get("role") in allowed]
+    return log
 
 
 @app.post("/api/group/chat")
-async def api_group_chat(req: GroupChatRequest):
-    """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
+async def api_group_chat(req: GroupChatRequest, request: Request):
+    """許可キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
     chars = list_characters()
+    allowed = _get_allowed_characters(request)
+    if allowed is not None:
+        chars = [c for c in chars if c["id"] in allowed]
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_group_log({"type": "group", "role": "user", "name": "ありさん", "color": "#aaaaaa", "text": req.message, "timestamp": now})
@@ -662,8 +939,10 @@ class InteractRequest(BaseModel):
 
 
 @app.post("/api/interact")
-async def api_interact(req: InteractRequest):
+async def api_interact(req: InteractRequest, request: Request):
     """キャラ同士で会話させる。from_idが先に話しかける。"""
+    if not _check_char_access(request, req.from_id) or not _check_char_access(request, req.to_id):
+        return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
     chars = {c["id"]: c for c in list_characters()}
     from_char = chars.get(req.from_id, {"id": req.from_id, "name": req.from_id, "color": "#cab8d9"})
     to_char = chars.get(req.to_id, {"id": req.to_id, "name": req.to_id, "color": "#cab8d9"})
@@ -830,7 +1109,10 @@ HTML = """<!DOCTYPE html>
 <body>
   <div class="header">
     <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
-    <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
+    <div style="display:flex;gap:4px;">
+      <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
+      <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
+    </div>
   </div>
   <div class="char-tabs" id="charTabs"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1435,9 +1717,25 @@ HTML = """<!DOCTYPE html>
       closePopup("settingsOverlay");
     }
 
+    async function doLogout() {
+      await fetch("/api/auth/logout", {method:"POST"});
+      location.reload();
+    }
+
+    async function checkAuth() {
+      try {
+        const res = await fetch("/api/auth/me");
+        const data = await res.json();
+        if (data.auth_enabled && data.authenticated) {
+          document.getElementById("logoutBtn").style.display = "";
+        }
+      } catch {}
+    }
+
     document.getElementById("send").addEventListener("click", send);
     document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
 
+    checkAuth();
     loadCharacters();
     update();
     setInterval(update, 30000);
