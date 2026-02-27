@@ -240,8 +240,24 @@ ping <M5StackのIP>  # 例: ping 192.168.49.1
 
 PC再起動後も自動でダッシュボードが起動するようにする。
 
+### 1. 環境設定ファイルを作成
+
+`~/petit_claude/.env.dashboard` に環境固有の値を書く:
+
 ```bash
-# サービスファイルをコピー（User, WorkingDirectory, PATH を環境に合わせて編集）
+cat > ~/petit_claude/.env.dashboard <<'EOF'
+PETIT_DATA_DIR=/home/yourname/petit_claude
+DASHBOARD_HOST=100.x.x.x
+DASHBOARD_PORT=8765
+EOF
+```
+
+- `DASHBOARD_HOST`: Tailscale IP を指定すると VPN 経由のみアクセス可能（セキュリティ推奨）。`0.0.0.0` なら全インタフェース
+- Tailscale IP の確認: `tailscale ip -4`
+
+### 2. サービスを登録・起動
+
+```bash
 sudo cp dashboard/petit-dashboard.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable petit-dashboard

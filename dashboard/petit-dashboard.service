@@ -4,13 +4,13 @@ After=network.target
 
 [Service]
 Type=simple
-User=cube-petit
-WorkingDirectory=/home/cube-petit/work/embodied-claude/dashboard
-ExecStart=/home/cube-petit/work/embodied-claude/dashboard/.venv/bin/python3 main.py
+User=%u
+WorkingDirectory=%h/work/embodied-claude/dashboard
+ExecStart=%h/work/embodied-claude/dashboard/.venv/bin/python3 main.py
 Restart=on-failure
 RestartSec=5
-Environment=PETIT_DATA_DIR=/home/cube-petit/petit_claude
-Environment=PATH=/home/cube-petit/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/petit_claude/.env.dashboard
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=multi-user.target

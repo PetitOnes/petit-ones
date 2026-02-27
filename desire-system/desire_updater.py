@@ -19,7 +19,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # カレントディレクトリの .env
+load_dotenv(Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude"))) / ".env")  # DATA_DIR の .env
 
 # キャラクターID（コマンドライン引数 or 環境変数）
 import sys

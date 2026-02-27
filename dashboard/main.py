@@ -1735,7 +1735,8 @@ KANKEI_HTML = """<!DOCTYPE html>
 def main():
     import uvicorn
     port = int(os.getenv("DASHBOARD_PORT", "8765"))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

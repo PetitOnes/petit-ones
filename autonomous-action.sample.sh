@@ -57,7 +57,7 @@ DATA_DIR="${PETIT_DATA_DIR:-$HOME/petit_claude}"
 #   - ELEVENLABS_API_KEY: ElevenLabs TTS の API キー
 #   - TAPO_USERNAME, TAPO_PASSWORD: Wi-Fi カメラの認証情報
 #   - その他 MCP サーバーが必要とする環境変数
-ENV_FILE="$PROJECT_DIR/.env"
+ENV_FILE="$DATA_DIR/.env"
 set -a
 source "$ENV_FILE"
 set +a
