@@ -1,0 +1,16 @@
+[project]
+name = "relations-mcp"
+version = "0.1.0"
+description = "キャラクター間の関係性を読み書きするMCPサーバー"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=3.0.2",
+    "mcp>=1.26.0",
+]
+
+[project.scripts]
+relations-mcp = "relations_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

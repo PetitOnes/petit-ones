@@ -1,0 +1,1731 @@
+"""ぷちこ状態ダッシュボード"""
+
+from __future__ import annotations
+
+import asyncio
+import io
+import json
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+import sqlite3
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, Response
+from PIL import Image
+from pydantic import BaseModel
+
+app = FastAPI()
+
+PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
+DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
+CHARACTERS_DIR = DATA_DIR / "characters"
+def memory_db_path(character_id: str) -> Path:
+    return Path.home() / ".claude" / "memories" / character_id / "memory.db"
+
+DEFAULT_SETTINGS = {
+    "active_hours": [[7, 8], [12, 13], [18, 24]],
+    "allow_camera": True,
+    "allow_sound": True,
+    "allow_microphone": False,
+}
+
+
+async def check_m5_online(host: str, port: int = 80, timeout: float = 2.0) -> bool:
+    """TCP接続でM5のHTTPポート(80)が応答するか確認する。"""
+    if not host:
+        return False
+    try:
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port), timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except Exception:
+        return False
+
+
+def get_char_config(character_id: str) -> dict:
+    cfg_path = char_dir(character_id) / "config.json"
+    if cfg_path.exists():
+        try:
+            return json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"id": character_id, "name": character_id}
+
+
+def char_dir(character_id: str) -> Path:
+    return CHARACTERS_DIR / character_id
+
+
+def session_file(character_id: str) -> Path:
+    return char_dir(character_id) / ".dashboard-session-id"
+
+
+def chat_log_file(character_id: str) -> Path:
+    return char_dir(character_id) / "chat_history.json"
+
+
+def desires_path(character_id: str) -> Path:
+    return char_dir(character_id) / "desires.json"
+
+
+def settings_file(character_id: str) -> Path:
+    return char_dir(character_id) / "settings.json"
+
+BASE_TOOLS = [
+    # m5-mcp（全ツール）
+    "mcp__m5-mcp__look",
+    "mcp__m5-mcp__blink",
+    "mcp__m5-mcp__get_sensor_data",
+    "mcp__m5-mcp__show_face",
+    "mcp__m5-mcp__list_faces",
+    "mcp__m5-mcp__list_sounds",
+    "mcp__m5-mcp__list_icons",
+    "mcp__m5-mcp__get_volume",
+    "mcp__m5-mcp__set_volume",
+    "mcp__m5-mcp__set_face_color",
+    "mcp__m5-mcp__set_face_draw_mode",
+    "mcp__m5-mcp__set_face_slideshow_mode",
+    "mcp__m5-mcp__wait_for_touch",
+    "mcp__m5-mcp__sleep",
+    "mcp__m5-mcp__wake",
+    # memory
+    "mcp__memory__remember",
+    "mcp__memory__recall",
+    "mcp__memory__search_memories",
+    "mcp__memory__list_recent_memories",
+    # desire-system
+    "mcp__desire-system__get_desires",
+    "mcp__desire-system__satisfy_desire",
+    "mcp__desire-system__boost_desire",
+]
+CAMERA_TOOLS = ["mcp__m5-mcp__take_snapshot"]
+SOUND_TOOLS = ["mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon"]
+MIC_TOOLS = ["mcp__m5-mcp__mic_start", "mcp__m5-mcp__mic_stop"]
+
+
+def build_allowed_tools(settings: dict) -> str:
+    tools = BASE_TOOLS.copy()
+    if settings.get("allow_camera", True):
+        tools += CAMERA_TOOLS
+    if settings.get("allow_sound", True):
+        tools += SOUND_TOOLS
+    if settings.get("allow_microphone", False):
+        tools += MIC_TOOLS
+    return ",".join(tools)
+
+
+def list_characters() -> list[dict]:
+    if not CHARACTERS_DIR.exists():
+        return []
+    chars = []
+    for d in sorted(CHARACTERS_DIR.iterdir()):
+        if not d.is_dir():
+            continue
+        cfg_path = d / "config.json"
+        if cfg_path.exists():
+            try:
+                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+                chars.append(cfg)
+            except Exception:
+                chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
+        else:
+            chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
+    return chars
+
+
+def get_desires(character_id: str) -> dict:
+    p = desires_path(character_id)
+    if not p.exists():
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _query_memories(character_id: str, limit: int, date_filter: str | None = None) -> list[dict]:
+    db = memory_db_path(character_id)
+    if not db.exists():
+        return []
+    try:
+        conn = sqlite3.connect(str(db))
+        conn.row_factory = sqlite3.Row
+        if date_filter:
+            rows = conn.execute(
+                "SELECT content, timestamp, category, emotion, importance FROM memories "
+                "WHERE timestamp LIKE ? ORDER BY timestamp DESC LIMIT ?",
+                (f"{date_filter}%", limit)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT content, timestamp, category, emotion, importance FROM memories "
+                "ORDER BY timestamp DESC LIMIT ?", (limit,)
+            ).fetchall()
+        conn.close()
+        return [{"content": r["content"], "metadata": {
+            "timestamp": r["timestamp"],
+            "category": r["category"],
+            "emotion": r["emotion"],
+            "importance": r["importance"],
+        }} for r in rows]
+    except Exception:
+        return []
+
+
+def get_recent_memories(character_id: str, limit: int = 20) -> list[dict]:
+    return _query_memories(character_id, limit)
+
+
+def get_all_memories_by_date(character_id: str) -> dict[str, list[dict]]:
+    items = _query_memories(character_id, 2000)
+    by_date: dict[str, list[dict]] = {}
+    for item in items:
+        ts = item["metadata"].get("timestamp", "")
+        date = ts[:10] if ts else "不明"
+        by_date.setdefault(date, []).append(item)
+    return by_date
+
+
+def get_settings(character_id: str) -> dict:
+    p = settings_file(character_id)
+    if not p.exists():
+        return DEFAULT_SETTINGS.copy()
+    try:
+        with open(p, encoding="utf-8") as f:
+            data = json.load(f)
+        for k, v in DEFAULT_SETTINGS.items():
+            data.setdefault(k, v)
+        return data
+    except Exception:
+        return DEFAULT_SETTINGS.copy()
+
+
+def save_settings(character_id: str, data: dict) -> None:
+    p = settings_file(character_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_soul(character_id: str) -> str:
+    soul_path = char_dir(character_id) / "SOUL.md"
+    if soul_path.exists():
+        return soul_path.read_text(encoding="utf-8")
+    return f"あなたは{character_id}。キューブプチ家族の一員。好奇心旺盛で知識欲が高い。"
+
+
+def load_chat_log(character_id: str) -> list[dict]:
+    p = chat_log_file(character_id)
+    if not p.exists():
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def save_chat_log(character_id: str, log: list[dict]) -> None:
+    p = chat_log_file(character_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(log[-200:], f, ensure_ascii=False, indent=2)
+
+
+def append_chat(character_id: str, role: str, text: str) -> None:
+    log = load_chat_log(character_id)
+    log.append({"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+    save_chat_log(character_id, log)
+
+
+def group_log_file() -> Path:
+    return DATA_DIR / "group_chat.json"
+
+
+def load_group_log() -> list[dict]:
+    p = group_log_file()
+    if not p.exists():
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def append_group_log(entry: dict) -> None:
+    log = load_group_log()
+    log.append(entry)
+    with open(group_log_file(), "w", encoding="utf-8") as f:
+        json.dump(log[-500:], f, ensure_ascii=False, indent=2)
+
+
+async def call_claude(character_id: str, message: str, m5_online: bool | None = None) -> str:
+    char_mcp = char_dir(character_id) / "autonomous-mcp.json"
+    mcp_config = char_mcp if char_mcp.exists() else PROJECT_DIR / "autonomous-mcp.json"
+    soul = get_soul(character_id)
+    settings = get_settings(character_id)
+
+    # M5オフライン時はM5ツールを強制除外
+    if m5_online is None:
+        cfg = get_char_config(character_id)
+        host = cfg.get("m5_host", "")
+        m5_online = await check_m5_online(host) if host else False
+
+    effective_settings = settings.copy()
+    if not m5_online:
+        effective_settings["allow_camera"] = False
+        effective_settings["allow_sound"] = False
+        effective_settings["allow_microphone"] = False
+
+    allowed_tools = build_allowed_tools(effective_settings)
+
+    restrictions = []
+    if not settings.get("allow_camera", True):
+        restrictions.append("カメラ（take_snapshot）は今は使わないこと。")
+    if not settings.get("allow_sound", True):
+        restrictions.append("音（play_sound, play_icon）は今は出さないこと。")
+    if not settings.get("allow_microphone", False):
+        restrictions.append("マイク（mic_start）は今は使わないこと。")
+
+    restriction_text = "\n".join(restrictions)
+    system_prompt = (
+        f"あなたは{character_id}です。以下があなたの魂の定義です。\n\n{soul}\n\n"
+        f"ありさんと自然に会話してください。必要があればMCPツールを使ってください。"
+        f"印象に残った話題や気づきは `remember` で記憶に残してください。"
+        + (f"\n\n## 現在の制限\n{restriction_text}" if restriction_text else "")
+    )
+
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    sf = session_file(character_id)
+
+    if sf.exists():
+        sid = sf.read_text().strip()
+        cmd = ["claude", "-p", "--resume", sid,
+               "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+               "--output-format", "json"]
+    else:
+        cmd = ["claude", "-p", "--append-system-prompt", system_prompt,
+               "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+               "--output-format", "json"]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env, cwd=str(PROJECT_DIR),
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(input=message.encode()), timeout=120,
+        )
+        output = stdout.decode()
+        try:
+            data = json.loads(output)
+            new_sid = data.get("session_id", "")
+            if new_sid:
+                sf.parent.mkdir(parents=True, exist_ok=True)
+                sf.write_text(new_sid)
+            return data.get("result", output)
+        except json.JSONDecodeError:
+            return output or stderr.decode() or "返答がありませんでした"
+    except asyncio.TimeoutError:
+        return "タイムアウトしました"
+    except Exception as e:
+        return f"エラー: {e}"
+
+
+async def generate_diary_summary(character_id: str, date: str, memories: list[dict]) -> str:
+    """1日の記憶をClaudeで短くまとめる。過去の日付のみキャッシュ。"""
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    cache_dir = char_dir(character_id) / "diary"
+    cache_file = cache_dir / f"{date}.txt"
+
+    # 過去の日付はキャッシュを使う（今日はキャッシュしない）
+    if date != today and cache_file.exists():
+        return cache_file.read_text(encoding="utf-8")
+
+    if not memories:
+        return ""
+
+    soul = get_soul(character_id)
+    lines = "\n".join(f"- {m['content']}" for m in memories)
+    prompt = (
+        f"あなたは{character_id}です。以下があなたの魂:\n{soul}\n\n"
+        f"{date}の記憶一覧:\n{lines}\n\n"
+        "この日を自分の口調で2〜3文の日記にまとめて。余計な前置きなしで日記の文章だけ書いて。"
+    )
+
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "claude", "-p", prompt,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            env=env, cwd=str(PROJECT_DIR),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
+        summary = stdout.decode().strip() or stderr.decode().strip()
+    except Exception as e:
+        return f"（サマリー生成失敗: {e}）"
+
+    # 過去の日付のみキャッシュ保存
+    if summary and date != today:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(summary, encoding="utf-8")
+
+    return summary
+
+
+# --- Avatar / Relations / Kankei (before wildcard routes) ---
+
+_avatar_cache: dict[str, bytes] = {}
+BLUE_PIXEL = (109, 181, 254)
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _make_color_circle(color: str, size: int = 200) -> bytes:
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([10, 10, size - 10, size - 10], fill=color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _recolor_avatar(character_id: str) -> bytes:
+    if character_id in _avatar_cache:
+        return _avatar_cache[character_id]
+
+    cfg = get_char_config(character_id)
+    color_hex = cfg.get("color", "#cab8d9")
+    target_rgb = _hex_to_rgb(color_hex)
+
+    petit_path = char_dir(character_id) / "petit.png"
+    if not petit_path.exists():
+        data = _make_color_circle(color_hex)
+        _avatar_cache[character_id] = data
+        return data
+
+    img = Image.open(petit_path).convert("RGBA")
+    pixels = img.load()
+    w, h = img.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = pixels[x, y]
+            if (r, g, b) == BLUE_PIXEL:
+                pixels[x, y] = (*target_rgb, a)
+
+    img = img.resize((200, 200), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    data = buf.getvalue()
+    _avatar_cache[character_id] = data
+    return data
+
+
+@app.get("/api/avatar/{character_id}.png")
+def api_avatar(character_id: str):
+    data = _recolor_avatar(character_id)
+    return Response(content=data, media_type="image/png")
+
+
+@app.get("/api/relations")
+def api_relations():
+    chars = list_characters()
+    char_ids = {c["id"] for c in chars}
+
+    nodes = []
+    for c in chars:
+        cfg = get_char_config(c["id"])
+        rel_path = char_dir(c["id"]) / "relations.json"
+        self_info = {}
+        if rel_path.exists():
+            try:
+                rel = json.loads(rel_path.read_text(encoding="utf-8"))
+                self_info = rel.get("self", {})
+            except Exception:
+                pass
+        nodes.append({
+            "id": c["id"],
+            "name": cfg.get("name", c["id"]),
+            "color": cfg.get("color", "#cab8d9"),
+            "has_avatar": (char_dir(c["id"]) / "petit.png").exists(),
+            "self_info": self_info,
+        })
+
+    # arisan node
+    nodes.append({
+        "id": "arisan",
+        "name": "ありさん",
+        "color": "#aaaaaa",
+        "has_avatar": False,
+        "self_info": {},
+    })
+
+    edges = []
+    for c in chars:
+        rel_path = char_dir(c["id"]) / "relations.json"
+        if not rel_path.exists():
+            continue
+        try:
+            rel = json.loads(rel_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for target_id, info in rel.items():
+            if target_id == "self":
+                continue
+            if target_id not in char_ids and target_id != "arisan":
+                continue
+            edges.append({
+                "from": c["id"],
+                "to": target_id,
+                "closeness": info.get("closeness", 0),
+                "feeling": info.get("feeling", ""),
+            })
+
+    return {"nodes": nodes, "edges": edges}
+
+
+@app.get("/kankei", response_class=HTMLResponse)
+def kankei_page():
+    return HTMLResponse(KANKEI_HTML)
+
+
+@app.get("/api/{character_id}/diary/{date}")
+async def api_diary(character_id: str, date: str):
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    memories = _query_memories(character_id, 200, date_filter=date)
+    # 今日はサマリーを自動生成しない（手動ボタンで生成）
+    if date == today:
+        cache_dir = char_dir(character_id) / "diary"
+        cache_file = cache_dir / f"{date}.txt"
+        summary = cache_file.read_text(encoding="utf-8") if cache_file.exists() else None
+    else:
+        summary = await generate_diary_summary(character_id, date, memories)
+    return {"date": date, "summary": summary, "count": len(memories), "memories": memories}
+
+
+@app.post("/api/{character_id}/diary/{date}/summarize")
+async def api_diary_summarize(character_id: str, date: str):
+    """手動でサマリーを生成（今日用）"""
+    memories = _query_memories(character_id, 200, date_filter=date)
+    summary = await generate_diary_summary(character_id, date, memories)
+    # 手動生成はキャッシュ保存
+    if summary:
+        cache_dir = char_dir(character_id) / "diary"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / f"{date}.txt").write_text(summary, encoding="utf-8")
+    return {"summary": summary}
+
+
+@app.get("/api/characters")
+def api_characters():
+    return list_characters()
+
+
+@app.get("/api/{character_id}/status")
+async def api_status(character_id: str):
+    import requests as req
+    cfg = get_char_config(character_id)
+    host = cfg.get("m5_host", "")
+    m5_online = await check_m5_online(host) if host else False
+    m5_sleeping = False
+    if m5_online:
+        try:
+            r = await asyncio.to_thread(lambda: req.get(f"http://{host}/status", timeout=2))
+            m5_sleeping = r.json().get("is_sleeping", False)
+        except Exception:
+            pass
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping}
+
+
+@app.get("/api/{character_id}/settings")
+def api_get_settings(character_id: str):
+    return get_settings(character_id)
+
+
+@app.post("/api/{character_id}/settings")
+def api_save_settings(character_id: str, data: dict):
+    save_settings(character_id, data)
+    return {"ok": True}
+
+
+@app.get("/api/{character_id}/memories/all")
+def api_memories_all(character_id: str):
+    return get_all_memories_by_date(character_id)
+
+
+@app.get("/api/{character_id}/memories/today")
+def api_memories_today(character_id: str):
+    today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+    return _query_memories(character_id, 200, date_filter=today)
+
+
+@app.get("/api/{character_id}/chat/history")
+def api_chat_history(character_id: str):
+    return load_chat_log(character_id)[-100:]
+
+
+class GroupChatRequest(BaseModel):
+    message: str
+
+
+@app.get("/api/group/history")
+def api_group_history():
+    return load_group_log()[-200:]
+
+
+@app.post("/api/group/chat")
+async def api_group_chat(req: GroupChatRequest):
+    """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
+    chars = list_characters()
+    now = datetime.now(timezone.utc).isoformat()
+    responses = []
+    append_group_log({"type": "group", "role": "user", "name": "ありさん", "color": "#aaaaaa", "text": req.message, "timestamp": now})
+    for char in chars:
+        context = req.message
+        if responses:
+            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
+            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+        reply = await call_claude(char["id"], context)
+        append_chat(char["id"], "user", req.message)
+        append_chat(char["id"], char["id"], reply)
+        r = {
+            "character_id": char["id"],
+            "name": char.get("name", char["id"]),
+            "color": char.get("color", "#cab8d9"),
+            "reply": reply,
+        }
+        responses.append(r)
+        append_group_log({"type": "group", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+    return {"responses": responses}
+
+
+class ChatRequest(BaseModel):
+    message: str
+
+
+@app.post("/api/{character_id}/chat")
+async def api_chat(character_id: str, req: ChatRequest):
+    append_chat(character_id, "user", req.message)
+    reply = await call_claude(character_id, req.message)
+    append_chat(character_id, character_id, reply)
+    return {"reply": reply}
+
+
+@app.delete("/api/{character_id}/chat/session")
+def reset_session(character_id: str):
+    sf = session_file(character_id)
+    if sf.exists():
+        sf.unlink()
+    return {"ok": True}
+
+
+@app.post("/api/{character_id}/m5/sleep")
+async def api_m5_sleep(character_id: str):
+    cfg = get_char_config(character_id)
+    host = cfg.get("m5_host", "")
+    if not host:
+        return {"ok": False, "error": "no m5_host"}
+    import requests as req
+    await asyncio.to_thread(lambda: req.get(f"http://{host}/sleep", timeout=5))
+    return {"ok": True}
+
+
+@app.post("/api/{character_id}/m5/wake")
+async def api_m5_wake(character_id: str):
+    cfg = get_char_config(character_id)
+    host = cfg.get("m5_host", "")
+    if not host:
+        return {"ok": False, "error": "no m5_host"}
+    import requests as req
+    await asyncio.to_thread(lambda: req.get(f"http://{host}/wake", timeout=5))
+    return {"ok": True}
+
+
+class InteractRequest(BaseModel):
+    from_id: str
+    to_id: str
+    turns: int = 3
+
+
+@app.post("/api/interact")
+async def api_interact(req: InteractRequest):
+    """キャラ同士で会話させる。from_idが先に話しかける。"""
+    chars = {c["id"]: c for c in list_characters()}
+    from_char = chars.get(req.from_id, {"id": req.from_id, "name": req.from_id, "color": "#cab8d9"})
+    to_char = chars.get(req.to_id, {"id": req.to_id, "name": req.to_id, "color": "#cab8d9"})
+
+    exchanges = []
+    current_from, current_to = from_char, to_char
+
+    # 最初のキャラが話しかける
+    start_prompt = (
+        f"{current_to['name']}に話しかけてみて。"
+        f"今の気分や欲求から自然な内容で。短めに。"
+    )
+    msg = await call_claude(current_from["id"], start_prompt)
+    append_chat(current_from["id"], current_from["id"], msg)
+    exchanges.append({
+        "from_id": current_from["id"],
+        "name": current_from.get("name", current_from["id"]),
+        "color": current_from.get("color", "#cab8d9"),
+        "text": msg,
+    })
+    append_group_log({"type": "interact", "role": exchanges[-1]["from_id"], "name": exchanges[-1]["name"], "color": exchanges[-1]["color"], "text": exchanges[-1]["text"], "timestamp": datetime.now(timezone.utc).isoformat()})
+
+    for _ in range(req.turns):
+        current_from, current_to = current_to, current_from
+        reply_prompt = (
+            f"{current_to['name']}からこんなメッセージが届いた: 「{msg}」\n"
+            f"返事をして。短めに。"
+        )
+        msg = await call_claude(current_from["id"], reply_prompt)
+        append_chat(current_from["id"], current_from["id"], msg)
+        exchanges.append({
+            "from_id": current_from["id"],
+            "name": current_from.get("name", current_from["id"]),
+            "color": current_from.get("color", "#cab8d9"),
+            "text": msg,
+        })
+        append_group_log({"type": "interact", "role": exchanges[-1]["from_id"], "name": exchanges[-1]["name"], "color": exchanges[-1]["color"], "text": exchanges[-1]["text"], "timestamp": datetime.now(timezone.utc).isoformat()})
+
+    return {"exchanges": exchanges}
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return HTMLResponse(HTML)
+
+
+HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>プチたち</title>
+  <style>
+    :root {
+      --char: #cab8d9;
+      --char-dark: #7a5fa8;
+      --char-mid: #9b8ec4;
+      --char-bg: #f5f0fa;
+      --char-soft: #f0eaf8;
+      --char-border: #e0d8f0;
+      --char-btn-text: white;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 600px; margin: 0 auto; transition: background 0.4s; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+    h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
+    .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
+    .gear-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #bbb; }
+    .updated { font-size: 0.75rem; color: #aaa; margin-bottom: 16px; }
+    section { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    h2 { font-size: 0.85rem; color: var(--char-mid); font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .desire { margin-bottom: 12px; }
+    .desire-label { font-size: 0.9rem; margin-bottom: 4px; display: flex; justify-content: space-between; }
+    .desire-level { font-weight: 600; }
+    .bar-bg { background: var(--char-soft); border-radius: 6px; height: 10px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
+    .two-col { display: flex; gap: 16px; align-items: flex-start; }
+    .two-col .main-col { flex: 1; min-width: 0; }
+    .two-col .diary-col { width: 280px; flex-shrink: 0; }
+    @media (max-width: 700px) { .two-col { flex-direction: column; } .two-col .diary-col { width: 100%; } }
+    .diary-panel { background: white; border-radius: 12px; padding: 14px; position: sticky; top: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .diary-panel h3 { font-size: 0.9rem; font-weight: 700; margin: 0 0 8px; color: var(--char-dark); }
+    .diary-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .diary-nav-btn { background: none; border: 1px solid var(--char-border); border-radius: 8px; padding: 2px 8px; cursor: pointer; font-size: 0.8rem; color: #666; }
+    .diary-nav-btn:disabled { opacity: 0.3; cursor: default; }
+    .diary-date-label { font-size: 0.8rem; font-weight: 700; color: #555; }
+    .diary-entry { padding: 6px 0; border-bottom: 1px solid var(--char-soft); cursor: pointer; }
+    .diary-entry:last-child { border-bottom: none; }
+    .diary-time { font-size: 0.7rem; color: #bbb; }
+    .diary-summary { font-size: 0.8rem; line-height: 1.4; color: #555; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .diary-summary.expanded { display: block; color: #333; }
+    .memory { padding: 10px 0; border-bottom: 1px solid var(--char-bg); }
+    .memory:last-child { border-bottom: none; }
+    .memory-time { font-size: 0.75rem; color: #aaa; margin-bottom: 2px; }
+    .memory-text { font-size: 0.875rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
+    .empty { color: #bbb; font-size: 0.875rem; }
+    .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { max-width: 85%; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    /* キャラクター選択 */
+    .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
+
+    .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .msg.user { background: var(--char); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
+    .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
+    .chat-input { display: flex; gap: 8px; }
+    .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
+    .chat-input input:focus { border-color: var(--char); }
+    .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
+    .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .sub-btn { font-size: 0.8rem; color: var(--char-mid); background: none; border: 1px solid var(--char-border); border-radius: 20px; padding: 5px 14px; cursor: pointer; margin-top: 10px; }
+    .sub-btn:hover { background: var(--char-bg); }
+    .reset-btn { font-size: 0.75rem; color: #ccc; background: none; border: none; cursor: pointer; margin-top: 6px; margin-left: 8px; }
+
+    /* 設定 */
+    .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--char-bg); }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-size: 0.9rem; }
+    .toggle { position: relative; width: 44px; height: 24px; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider { position: absolute; inset: 0; background: #ddd; border-radius: 24px; cursor: pointer; transition: background 0.2s; }
+    .toggle input:checked + .toggle-slider { background: var(--char); }
+    .toggle-slider:before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: white; border-radius: 50%; transition: transform 0.2s; }
+    .toggle input:checked + .toggle-slider:before { transform: translateX(20px); }
+    .hours-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+    .hour-row { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
+    .hour-row input[type=number] { width: 52px; padding: 4px 8px; border: 1px solid var(--char-border); border-radius: 8px; font-size: 0.875rem; text-align: center; }
+    .hour-del { background: none; border: none; color: #ccc; cursor: pointer; font-size: 1rem; }
+    .add-hour-btn { font-size: 0.8rem; color: var(--char-mid); background: none; border: 1px dashed var(--char); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
+    .save-settings-btn { width: 100%; margin-top: 12px; background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px; font-size: 0.9rem; cursor: pointer; }
+
+    /* ポップアップ */
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
+    .overlay.open { display: flex; }
+    .popup { background: white; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 75vh; display: flex; flex-direction: column; }
+    .popup-header { padding: 14px 16px; border-bottom: 1px solid var(--char-soft); display: flex; justify-content: space-between; align-items: center; }
+    .popup-title { font-size: 0.9rem; font-weight: 600; color: var(--char-dark); }
+    .popup-close { background: none; border: none; font-size: 1.2rem; color: #aaa; cursor: pointer; }
+    .popup-body { overflow-y: auto; padding: 12px 16px; flex: 1; }
+
+    /* 会話ポップアップ */
+    .history-msg { padding: 6px 0; border-bottom: 1px solid var(--char-bg); }
+    .history-msg:last-child { border-bottom: none; }
+    .history-role { font-size: 0.7rem; color: #aaa; margin-bottom: 2px; }
+    .history-text { font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+    /* 記憶ポップアップ */
+    .date-group { margin-bottom: 16px; }
+    .date-label { font-size: 0.8rem; font-weight: 600; color: var(--char-mid); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--char-soft); }
+    .mem-item { padding: 8px 0; border-bottom: 1px solid var(--char-bg); }
+    .mem-item:last-child { border-bottom: none; }
+    .mem-time { font-size: 0.7rem; color: #bbb; margin-bottom: 2px; }
+    .mem-text { font-size: 0.85rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+
+    /* グループチャット */
+    .group-tab { background: linear-gradient(135deg, #cab8d9, #fff262) !important; color: #555 !important; border-color: transparent !important; }
+    .msg-group { max-width: 85%; align-self: flex-start; border-bottom-left-radius: 4px; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .msg-name { font-size: 0.7rem; font-weight: 700; margin-bottom: 3px; }
+    .interact-btn { font-size: 0.8rem; background: none; border: 1px solid #ddd; border-radius: 20px; padding: 5px 14px; cursor: pointer; color: #888; margin-top: 10px; }
+    .interact-btn:hover { background: #f9f9f9; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
+    <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
+  </div>
+  <div class="char-tabs" id="charTabs"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div class="updated" id="updated">読み込み中...</div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div id="m5status"></div>
+      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
+      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
+    </div>
+  </div>
+
+  <div id="groupStatusPanel" style="display:none;margin-bottom:16px;">
+    <section>
+      <h2>プチたちの状態</h2>
+      <div id="groupCharStatus"></div>
+    </section>
+  </div>
+
+  <div class="two-col" id="twoColLayout">
+    <div class="main-col">
+      <section id="desiresSection">
+        <h2>欲求</h2>
+        <div id="dominant"></div>
+        <div id="desires"></div>
+      </section>
+
+      <section>
+        <h2 id="chatTitle">話す</h2>
+        <div class="chat-messages" id="chat"></div>
+        <div class="chat-input">
+          <input type="text" id="input" placeholder="話しかける..." />
+          <button id="send">送信</button>
+        </div>
+        <div>
+          <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
+          <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
+          <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ ふたりで話させる</button>
+        </div>
+      </section>
+
+      <section id="memoriesSection">
+        <h2>今日の記憶</h2>
+        <div id="memories"></div>
+      </section>
+    </div>
+
+    <div class="diary-col" id="diaryCol">
+      <div class="diary-panel">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">📖 日記</h3>
+          <button class="diary-nav-btn" id="diaryDetailBtn" onclick="toggleDiaryDetail()">詳細</button>
+        </div>
+        <div class="diary-nav">
+          <button class="diary-nav-btn" id="diaryPrev" onclick="diaryNav(-1)">◀</button>
+          <span class="diary-date-label" id="diaryDateLabel">—</span>
+          <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
+        </div>
+        <div id="diaryContent"><div class="empty">読み込み中...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 会話ポップアップ -->
+  <div class="overlay" id="historyOverlay" onclick="closeIfOverlay(event,'historyOverlay')">
+    <div class="popup">
+      <div class="popup-header">
+        <span class="popup-title">最近した会話</span>
+        <button class="popup-close" onclick="closePopup('historyOverlay')">✕</button>
+      </div>
+      <div class="popup-body" id="historyBody"></div>
+    </div>
+  </div>
+
+  <!-- 設定ポップアップ -->
+  <div class="overlay" id="settingsOverlay" onclick="closeIfOverlay(event,'settingsOverlay')">
+    <div class="popup">
+      <div class="popup-header">
+        <span class="popup-title">設定</span>
+        <button class="popup-close" onclick="closePopup('settingsOverlay')">✕</button>
+      </div>
+      <div class="popup-body">
+        <div style="font-size:0.8rem;color:#9b8ec4;margin-bottom:8px;font-weight:600;">アクティブタイム（毎回動く時間帯）</div>
+        <div class="hours-list" id="hoursList"></div>
+        <button class="add-hour-btn" onclick="addHourRow()">＋ 追加</button>
+        <div style="margin-top:16px;">
+          <div class="setting-row">
+            <span class="setting-label">📷 カメラ</span>
+            <label class="toggle"><input type="checkbox" id="allowCamera"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">🔊 音</span>
+            <label class="toggle"><input type="checkbox" id="allowSound"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">🎤 マイク</span>
+            <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+        <button class="save-settings-btn" onclick="saveSettings()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 記憶一覧ポップアップ -->
+  <div class="overlay" id="memoriesOverlay" onclick="closeIfOverlay(event,'memoriesOverlay')">
+    <div class="popup">
+      <div class="popup-header">
+        <span class="popup-title">記憶一覧</span>
+        <button class="popup-close" onclick="closePopup('memoriesOverlay')">✕</button>
+      </div>
+      <div class="popup-body" id="memoriesBody"></div>
+    </div>
+  </div>
+
+  <script>
+    const DESIRE_LABELS = {
+      browse_curiosity:"何か調べたい", miss_companion:"ありさんに会いたい",
+      observe_surroundings:"周りを見たい", go_outside:"外に出たい",
+      want_to_learn:"新しいことを知りたい", want_attention:"注目されたい",
+    };
+    const DESIRE_COLORS = {
+      browse_curiosity:"#9b8ec4", miss_companion:"#e8a0bf",
+      observe_surroundings:"#7fb3c8", go_outside:"#a8c9a0",
+      want_to_learn:"#f0c040", want_attention:"#f5956e",
+    };
+
+    let currentCharId = "puchiko";
+    let characters = [];
+    const chatStates = {};
+
+    function brightness(hex) {
+      const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+      return (r*299+g*587+b*114)/1000;
+    }
+    function lighten(hex, f) {
+      const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+      return `rgb(${Math.round(r+(255-r)*f)},${Math.round(g+(255-g)*f)},${Math.round(b+(255-b)*f)})`;
+    }
+    function darken(hex, f) {
+      const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+      return `rgb(${Math.round(r*(1-f))},${Math.round(g*(1-f))},${Math.round(b*(1-f))})`;
+    }
+    function readableText(hex) {
+      return brightness(hex) > 160 ? darken(hex, 0.42) : hex;
+    }
+    function btnTextColor(hex) {
+      return brightness(hex) > 160 ? darken(hex, 0.45) : "white";
+    }
+
+    function applyTheme(color) {
+      const r = document.documentElement;
+      r.style.setProperty("--char", color);
+      r.style.setProperty("--char-dark", readableText(color));
+      r.style.setProperty("--char-mid", darken(color, brightness(color)>160 ? 0.28 : 0.1));
+      r.style.setProperty("--char-bg", lighten(color, 0.92));
+      r.style.setProperty("--char-soft", lighten(color, 0.86));
+      r.style.setProperty("--char-border", lighten(color, 0.72));
+      r.style.setProperty("--char-btn-text", btnTextColor(color));
+      document.getElementById("charDot").style.background = color;
+    }
+
+    async function loadCharacters() {
+      const res = await fetch("/api/characters");
+      characters = await res.json();
+      const tabs = document.getElementById("charTabs");
+      tabs.innerHTML = characters.map(c => {
+        const isActive = c.id === currentCharId;
+        const col = c.color || "#cab8d9";
+        const activeTxt = btnTextColor(col);
+        const inactiveTxt = readableText(col);
+        return `<button class="char-tab${isActive?" active":""}" data-char-id="${c.id}"
+          style="${isActive
+            ? `background:${col};border-color:${col};color:${activeTxt}`
+            : `border-color:${col};color:${inactiveTxt};background:white`}"
+          onclick="switchChar('${c.id}')">
+          <span class="m5-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ccc;vertical-align:middle;margin-right:4px;"></span>${c.name||c.id}</button>`;
+      }).join("");
+      // 「みんなで」タブを末尾に追加
+      const isGroup = currentCharId === "group";
+      tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
+        style="${isGroup?"opacity:1":"opacity:0.8"}"
+        onclick="switchChar('group')">みんなで 🌟</button>`;
+      tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
+
+      const cur = characters.find(c=>c.id===currentCharId);
+      if (cur) {
+        applyTheme(cur.color || "#cab8d9");
+        document.getElementById("pageTitle").textContent = cur.name||cur.id;
+        document.getElementById("chatTitle").textContent = `${cur.name||cur.id}と話す`;
+        document.getElementById("interactBtn").style.display = "none";
+        document.getElementById("historyBtn").style.display = "";
+        document.getElementById("resetBtn").style.display = "";
+      } else if (isGroup) {
+        applyTheme("#cab8d9");
+        document.getElementById("pageTitle").textContent = "みんな";
+        document.getElementById("chatTitle").textContent = "みんなで話す";
+        document.getElementById("interactBtn").style.display = "";
+        document.getElementById("historyBtn").style.display = "";
+        document.getElementById("resetBtn").style.display = "none";
+      }
+    }
+
+    function switchChar(id) {
+      const chatEl = document.getElementById("chat");
+      chatStates[currentCharId] = chatEl.innerHTML;
+      currentCharId = id;
+      chatEl.innerHTML = chatStates[id] || "";
+      loadCharacters();
+      const isGroup = id === "group";
+      document.getElementById("gearBtn").style.display = isGroup ? "none" : "";
+      document.getElementById("sleepBtn").style.display = "none";
+      document.getElementById("wakeBtn").style.display = "none";
+      document.getElementById("m5status").innerHTML = "";
+      document.getElementById("twoColLayout").style.display = isGroup ? "block" : "";
+      document.getElementById("diaryCol").style.display = isGroup ? "none" : "";
+      document.getElementById("desiresSection").style.display = isGroup ? "none" : "";
+      document.getElementById("memoriesSection").style.display = isGroup ? "none" : "";
+      document.getElementById("groupStatusPanel").style.display = isGroup ? "" : "none";
+      if (!isGroup) { update(); updateDiary(); }
+      else {
+        document.getElementById("updated").textContent = "";
+        document.getElementById("diaryContent").innerHTML = "";
+        updateGroupStatus();
+      }
+    }
+
+    async function updateGroupStatus() {
+      const panel = document.getElementById("groupCharStatus");
+      if (!characters.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
+      panel.innerHTML = '<div class="empty">確認中...</div>';
+      const rows = await Promise.all(characters.map(async c => {
+        try {
+          const res = await fetch(`/api/${c.id}/status`);
+          const { m5_online } = await res.json();
+          const color = c.color || "#cab8d9";
+          return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+            <span style="font-weight:700;flex:1;color:${readableText(color)};">${c.name||c.id}</span>
+            <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
+          </div>`;
+        } catch {
+          return `<div style="padding:8px 0;">${c.name||c.id} — 確認失敗</div>`;
+        }
+      }));
+      panel.innerHTML = rows.join("");
+    }
+
+    async function update() {
+      if (currentCharId === "group") return;
+      try {
+        const res = await fetch(`/api/${currentCharId}/status`);
+        const { desires, memories, m5_online, m5_sleeping } = await res.json();
+
+        // M5オンライン状態をタブに反映
+        const tabs = document.querySelectorAll(".char-tab");
+        tabs.forEach(tab => {
+          if (tab.dataset.charId === currentCharId) {
+            const dot = tab.querySelector(".m5-dot");
+            if (dot) dot.style.background = m5_online ? "#4caf50" : "#f44336";
+          }
+        });
+        // ステータス表示
+        const m5El = document.getElementById("m5status");
+        if (m5El) m5El.innerHTML = m5_online
+          ? `<span style="color:#4caf50;font-size:0.75rem">● M5 接続済</span>`
+          : `<span style="color:#f44336;font-size:0.75rem">● M5 未接続（会話のみ）</span>`;
+        document.getElementById("sleepBtn").style.display = (m5_online && !m5_sleeping) ? "" : "none";
+        document.getElementById("wakeBtn").style.display  = (m5_online && m5_sleeping)  ? "" : "none";
+
+        if (desires.updated_at) {
+          document.getElementById("updated").textContent = "更新: " + new Date(desires.updated_at).toLocaleString("ja-JP");
+        }
+        const domEl = document.getElementById("dominant");
+        if (desires.dominant) {
+          domEl.innerHTML = `<span class="dominant">いちばん強い欲求: ${DESIRE_LABELS[desires.dominant]||desires.dominant}</span>`;
+        }
+        const desEl = document.getElementById("desires");
+        if (desires.desires && Object.keys(desires.desires).length > 0) {
+          desEl.innerHTML = Object.entries(desires.desires).sort((a,b)=>b[1]-a[1]).map(([k,v])=>{
+            const pct = Math.round(v*100);
+            return `<div class="desire"><div class="desire-label"><span>${DESIRE_LABELS[k]||k}</span><span class="desire-level">${pct}%</span></div><div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${DESIRE_COLORS[k]||'#cab8d9'}"></div></div></div>`;
+          }).join("");
+        } else { desEl.innerHTML = '<div class="empty">データなし</div>'; }
+
+        const memEl = document.getElementById("memories");
+        if (memories.length > 0) {
+          memEl.innerHTML = memories.map(m => {
+            const ts = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "";
+            return `<div class="memory"><div class="memory-time">${ts}</div><div class="memory-text">${m.content}</div></div>`;
+          }).join("");
+        } else { memEl.innerHTML = '<div class="empty">今日はまだ記憶がありません</div>'; }
+
+        // 日記パネル更新
+        updateDiary();
+      } catch(e) { document.getElementById("updated").textContent = "取得失敗"; }
+    }
+
+    function addMsg(text, role, color, name) {
+      const chat = document.getElementById("chat");
+      if (role === "group") {
+        // グループメッセージ：名前＋色付きバブル
+        const div = document.createElement("div");
+        div.className = "msg-group";
+        div.style.background = lighten(color || "#cab8d9", 0.84);
+        if (name) {
+          const nameEl = document.createElement("div");
+          nameEl.className = "msg-name";
+          nameEl.style.color = readableText(color || "#cab8d9");
+          nameEl.textContent = name;
+          div.appendChild(nameEl);
+        }
+        const textEl = document.createElement("div");
+        textEl.textContent = text;
+        div.appendChild(textEl);
+        chat.appendChild(div);
+        chat.scrollTop = chat.scrollHeight;
+        return div;
+      }
+      const div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
+
+    async function send() {
+      const input = document.getElementById("input");
+      const btn = document.getElementById("send");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      btn.disabled = true;
+      addMsg(text, "user");
+
+      if (currentCharId === "group") {
+        const thinking = addMsg("みんなに聞いてる…", "thinking");
+        try {
+          const res = await fetch("/api/group/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
+          const data = await res.json();
+          thinking.remove();
+          for (const r of data.responses) {
+            addMsg(r.reply, "group", r.color, r.name);
+          }
+        } catch(e) { thinking.textContent = "エラーが発生しました"; }
+        finally { btn.disabled = false; input.focus(); }
+      } else {
+        const thinking = addMsg("考え中…", "thinking");
+        try {
+          const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
+          const data = await res.json();
+          thinking.remove();
+          addMsg(data.reply, "char");
+          update();
+        } catch(e) { thinking.textContent = "エラーが発生しました"; }
+        finally { btn.disabled = false; input.focus(); }
+      }
+    }
+
+    async function startInteract() {
+      if (characters.length < 2) { alert("キャラが2人必要です"); return; }
+      const btn = document.getElementById("interactBtn");
+      btn.disabled = true;
+      btn.textContent = "話し合い中…";
+      const [a, b] = characters;
+      try {
+        const res = await fetch("/api/interact", {
+          method: "POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({from_id: a.id, to_id: b.id, turns: 3})
+        });
+        const data = await res.json();
+        for (const ex of data.exchanges) {
+          const char = characters.find(c=>c.id===ex.from_id);
+          addMsg(ex.text, "group", ex.color, ex.name);
+          await new Promise(r=>setTimeout(r, 400)); // 少し間を置く
+        }
+      } catch(e) { addMsg("エラーが発生しました", "thinking"); }
+      finally { btn.disabled = false; btn.textContent = "✨ ふたりで話させる"; }
+    }
+
+    let _diaryDates = [];
+    let _diaryIdx = 0;
+    let _diaryShowDetail = false;
+    let _diaryCache = {};  // date -> {summary, memories}
+
+    function renderDiaryPage() {
+      const diaryEl = document.getElementById("diaryContent");
+      const labelEl = document.getElementById("diaryDateLabel");
+      if (_diaryDates.length === 0) {
+        diaryEl.innerHTML = '<div class="empty">まだ記憶がありません</div>';
+        labelEl.textContent = "—";
+        return;
+      }
+      const date = _diaryDates[_diaryIdx];
+      labelEl.textContent = date;
+      document.getElementById("diaryPrev").disabled = _diaryIdx >= _diaryDates.length - 1;
+      document.getElementById("diaryNext").disabled = _diaryIdx <= 0;
+      loadDiaryDate(date);
+    }
+
+    async function loadDiaryDate(date) {
+      const diaryEl = document.getElementById("diaryContent");
+      if (_diaryCache[date]) {
+        renderDiaryContent(_diaryCache[date]);
+        return;
+      }
+      diaryEl.innerHTML = '<div class="empty">読み込み中...</div>';
+      try {
+        const res = await fetch(`/api/${currentCharId}/diary/${date}`);
+        _diaryCache[date] = await res.json();
+        renderDiaryContent(_diaryCache[date]);
+      } catch(e) { diaryEl.innerHTML = '<div class="empty">取得失敗</div>'; }
+    }
+
+    const _today = new Date().toLocaleDateString("sv-SE");
+
+    function renderDiaryContent(data) {
+      const diaryEl = document.getElementById("diaryContent");
+      if (_diaryShowDetail) {
+        const items = (data.memories || []).map((m, i) => {
+          const t = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "";
+          return `<div class="diary-entry"><div class="diary-time">${t}</div><div class="diary-summary expanded">${m.content}</div></div>`;
+        }).join("") || '<div class="empty">記憶なし</div>';
+        diaryEl.innerHTML = items;
+      } else if (data.summary) {
+        diaryEl.innerHTML = `<div style="font-size:0.85rem;line-height:1.7;color:#333">${data.summary}</div>
+          <div style="font-size:0.7rem;color:#bbb;margin-top:6px">${data.count}件の記憶</div>`;
+      } else if (data.date === _today) {
+        // 今日はボタンで手動生成
+        const countText = data.count > 0 ? `${data.count}件の記憶` : "まだ記憶がありません";
+        diaryEl.innerHTML = `<div style="font-size:0.75rem;color:#aaa;margin-bottom:8px">${countText}</div>`
+          + (data.count > 0 ? `<button class="diary-nav-btn" style="width:100%" onclick="generateTodaySummary()">📝 サマリーを生成</button>` : "");
+      } else {
+        diaryEl.innerHTML = '<div class="empty">記憶なし</div>';
+      }
+    }
+
+    async function generateTodaySummary() {
+      const diaryEl = document.getElementById("diaryContent");
+      diaryEl.innerHTML = '<div class="empty">生成中...</div>';
+      try {
+        const res = await fetch(`/api/${currentCharId}/diary/${_today}/summarize`, {method:"POST"});
+        const {summary} = await res.json();
+        _diaryCache[_today] = {...(_diaryCache[_today]||{}), summary};
+        renderDiaryContent(_diaryCache[_today]);
+      } catch(e) { diaryEl.innerHTML = '<div class="empty">生成失敗</div>'; }
+    }
+
+    function diaryNav(dir) {
+      _diaryIdx = Math.max(0, Math.min(_diaryDates.length - 1, _diaryIdx + dir));
+      _diaryShowDetail = false;
+      renderDiaryPage();
+    }
+
+    function toggleDiaryDetail() {
+      _diaryShowDetail = !_diaryShowDetail;
+      const btn = document.getElementById("diaryDetailBtn");
+      btn.textContent = _diaryShowDetail ? "サマリー" : "詳細";
+      if (_diaryDates.length > 0) renderDiaryContent(_diaryCache[_diaryDates[_diaryIdx]] || {});
+    }
+
+    async function updateDiary() {
+      if (currentCharId === "group") return;
+      _diaryCache = {};
+      try {
+        const res = await fetch(`/api/${currentCharId}/memories/all`);
+        const byDate = await res.json();
+        _diaryDates = Object.keys(byDate).sort().reverse();
+        _diaryIdx = 0;
+        _diaryShowDetail = false;
+        renderDiaryPage();
+      } catch(e) {}
+    }
+
+    async function m5Sleep() {
+      document.getElementById("sleepBtn").style.display = "none";
+      document.getElementById("wakeBtn").style.display = "";
+      await fetch(`/api/${currentCharId}/m5/sleep`, {method:"POST"});
+    }
+
+    async function m5Wake() {
+      document.getElementById("wakeBtn").style.display = "none";
+      document.getElementById("sleepBtn").style.display = "";
+      await fetch(`/api/${currentCharId}/m5/wake`, {method:"POST"});
+    }
+
+    async function resetSession() {
+      await fetch(`/api/${currentCharId}/chat/session`, {method:"DELETE"});
+      document.getElementById("chat").innerHTML = "";
+      chatStates[currentCharId] = "";
+    }
+
+    async function openHistory() {
+      const body = document.getElementById("historyBody");
+      body.innerHTML = '<div class="empty">読み込み中…</div>';
+      document.getElementById("historyOverlay").classList.add("open");
+
+      if (currentCharId === "group") {
+        const res = await fetch("/api/group/history");
+        const log = await res.json();
+        if (log.length === 0) {
+          body.innerHTML = '<div class="empty">まだ会話がありません</div>';
+        } else {
+          body.innerHTML = log.map(m => {
+            const ts = new Date(m.timestamp).toLocaleString("ja-JP");
+            const col = m.color || "#cab8d9";
+            const nameColor = readableText(col);
+            const typeLabel = m.type === "interact" ? "💬 交流" : "🌟 みんなで";
+            return `<div class="history-msg">
+              <div class="history-role" style="color:${nameColor}">${m.name} · ${ts} <span style="color:#ccc;font-size:0.65rem">${typeLabel}</span></div>
+              <div class="history-text">${m.text}</div>
+            </div>`;
+          }).join("");
+        }
+      } else {
+        const res = await fetch(`/api/${currentCharId}/chat/history`);
+        const log = await res.json();
+        const cur = characters.find(c=>c.id===currentCharId);
+        const charName = cur ? (cur.name||cur.id) : currentCharId;
+        if (log.length === 0) {
+          body.innerHTML = '<div class="empty">まだ会話がありません</div>';
+        } else {
+          body.innerHTML = log.map(m => {
+            const role = m.role === "user" ? "ありさん" : charName;
+            const ts = new Date(m.timestamp).toLocaleString("ja-JP");
+            return `<div class="history-msg"><div class="history-role">${role} · ${ts}</div><div class="history-text">${m.text}</div></div>`;
+          }).join("");
+        }
+      }
+    }
+
+    async function openMemories() {
+      const res = await fetch(`/api/${currentCharId}/memories/all`);
+      const byDate = await res.json();
+      const body = document.getElementById("memoriesBody");
+      const dates = Object.keys(byDate).sort((a,b)=>b.localeCompare(a));
+      if (dates.length === 0) {
+        body.innerHTML = '<div class="empty">まだ記憶がありません</div>';
+      } else {
+        body.innerHTML = dates.map(date => {
+          const items = byDate[date];
+          const rows = items.map(m => {
+            const ts = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP") : "";
+            return `<div class="mem-item"><div class="mem-time">${ts}</div><div class="mem-text">${m.content}</div></div>`;
+          }).join("");
+          return `<div class="date-group"><div class="date-label">${date}</div>${rows}</div>`;
+        }).join("");
+      }
+      document.getElementById("memoriesOverlay").classList.add("open");
+    }
+
+    function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    function closeIfOverlay(e, id) { if (e.target === e.currentTarget) closePopup(id); }
+
+    let currentHours = [];
+
+    function renderHours() {
+      const list = document.getElementById("hoursList");
+      list.innerHTML = currentHours.map((h, i) => `
+        <div class="hour-row">
+          <input type="number" min="0" max="23" value="${h[0]}" onchange="currentHours[${i}][0]=+this.value" />
+          <span>〜</span>
+          <input type="number" min="0" max="24" value="${h[1]}" onchange="currentHours[${i}][1]=+this.value" />
+          <span>時</span>
+          <button class="hour-del" onclick="removeHour(${i})">✕</button>
+        </div>`).join("");
+    }
+
+    function addHourRow() { currentHours.push([8, 12]); renderHours(); }
+    function removeHour(i) { currentHours.splice(i, 1); renderHours(); }
+
+    async function openSettings() {
+      const res = await fetch(`/api/${currentCharId}/settings`);
+      const s = await res.json();
+      currentHours = JSON.parse(JSON.stringify(s.active_hours || []));
+      renderHours();
+      document.getElementById("allowCamera").checked = s.allow_camera ?? true;
+      document.getElementById("allowSound").checked = s.allow_sound ?? true;
+      document.getElementById("allowMic").checked = s.allow_microphone ?? false;
+      document.getElementById("settingsOverlay").classList.add("open");
+    }
+
+    async function saveSettings() {
+      const data = {
+        active_hours: currentHours,
+        allow_camera: document.getElementById("allowCamera").checked,
+        allow_sound: document.getElementById("allowSound").checked,
+        allow_microphone: document.getElementById("allowMic").checked,
+      };
+      await fetch(`/api/${currentCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) });
+      closePopup("settingsOverlay");
+    }
+
+    document.getElementById("send").addEventListener("click", send);
+    document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
+
+    loadCharacters();
+    update();
+    setInterval(update, 30000);
+  </script>
+</body>
+</html>
+"""
+
+
+KANKEI_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>秘密の相関図</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+    .top-bar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 16px 20px 0; }
+    .top-bar h1 { font-size: 1.2rem; color: white; }
+    .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+    .back-btn:hover { background: #0f3460; }
+    .chart-container { display: flex; justify-content: center; padding: 20px; }
+    svg { max-width: 700px; width: 100%; height: auto; }
+    .tooltip {
+      position: fixed; background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+      padding: 10px 14px; font-size: 0.85rem; pointer-events: none; opacity: 0;
+      transition: opacity 0.2s; z-index: 100; max-width: 260px; color: #e0e0e0;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .tooltip .feeling { margin-bottom: 6px; line-height: 1.4; }
+    .tooltip .gauge-bar { background: #2a2a4a; border-radius: 4px; height: 8px; overflow: hidden; }
+    .tooltip .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+    .tooltip .gauge-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+    .cards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; padding: 0 20px 30px; }
+    .card {
+      background: #16213e; border-radius: 12px; padding: 16px; width: 260px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3); border-top: 3px solid #cab8d9;
+    }
+    .card h3 { font-size: 1rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .card .avatar-small { width: 28px; height: 28px; border-radius: 50%; }
+    .card .likes { font-size: 0.8rem; color: #aaa; margin-bottom: 4px; }
+    .card .notes { font-size: 0.85rem; color: #ccc; font-style: italic; }
+    .detail-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
+      display: none; align-items: center; justify-content: center; padding: 20px;
+    }
+    .detail-overlay.open { display: flex; }
+    .detail-panel {
+      background: #16213e; border-radius: 14px; padding: 20px; max-width: 360px; width: 100%;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+    .detail-panel .header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .detail-panel .header img { width: 48px; height: 48px; border-radius: 50%; background: white; }
+    .detail-panel .header h2 { font-size: 1.1rem; color: white; }
+    .detail-panel .rel-item { margin-bottom: 14px; }
+    .detail-panel .rel-target { font-size: 0.9rem; color: #ccc; margin-bottom: 2px; }
+    .detail-panel .rel-feeling { font-size: 1rem; color: #e0e0e0; margin-bottom: 6px; line-height: 1.5; }
+    .detail-panel .rel-gauge { background: #2a2a4a; border-radius: 6px; height: 10px; overflow: hidden; }
+    .detail-panel .rel-gauge-fill { height: 100%; border-radius: 6px; }
+    .detail-panel .rel-gauge-label { font-size: 0.8rem; color: #888; margin-top: 2px; }
+    .detail-panel .close-btn {
+      display: block; margin: 12px auto 0; background: #0f3460; border: none; color: white;
+      padding: 8px 24px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <a href="/" class="back-btn">← もどる</a>
+    <h1>🔒 秘密のそうかんず</h1>
+  </div>
+  <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
+  <div class="tooltip" id="tip"></div>
+  <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
+    <div class="detail-panel" id="detailPanel"></div>
+  </div>
+  <div class="cards" id="cards"></div>
+  <script>
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const CX = 350, CY = 350, RADIUS = 220, NODE_R = 40;
+
+    function svgEl(tag, attrs) {
+      const el = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    let _nodes, _edges;
+
+    function showDetail(nodeId) {
+      const n = _nodes.find(x => x.id === nodeId);
+      if (!n) return;
+      const outgoing = _edges.filter(e => e.from === nodeId);
+      const incoming = _edges.filter(e => e.to === nodeId);
+      const panel = document.getElementById("detailPanel");
+      let html = `<div class="header"><img src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"><h2 style="color:${n.color}">${n.name}</h2></div>`;
+
+      if (outgoing.length) {
+        html += `<div style="font-size:0.8rem;color:#888;margin-bottom:8px">${n.name} → みんなへの気持ち</div>`;
+        outgoing.forEach(e => {
+          const target = _nodes.find(x => x.id === e.to);
+          html += `<div class="rel-item">
+            <div class="rel-target">→ ${target?.name || e.to}</div>
+            <div class="rel-feeling">${e.feeling || "(まだ何も思っていない)"}</div>
+            <div class="rel-gauge-label">♥ ${(e.closeness * 100).toFixed(0)}%</div>
+            <div class="rel-gauge"><div class="rel-gauge-fill" style="width:${e.closeness * 100}%;background:${n.color}"></div></div>
+          </div>`;
+        });
+      }
+      if (incoming.length) {
+        html += `<div style="font-size:0.8rem;color:#888;margin:12px 0 8px">みんな → ${n.name} への気持ち</div>`;
+        incoming.forEach(e => {
+          const src = _nodes.find(x => x.id === e.from);
+          html += `<div class="rel-item">
+            <div class="rel-target">← ${src?.name || e.from}</div>
+            <div class="rel-feeling">${e.feeling || "(まだ何も思っていない)"}</div>
+            <div class="rel-gauge-label">♥ ${(e.closeness * 100).toFixed(0)}%</div>
+            <div class="rel-gauge"><div class="rel-gauge-fill" style="width:${e.closeness * 100}%;background:${src?.color || '#e94560'}"></div></div>
+          </div>`;
+        });
+      }
+      html += `<button class="close-btn" onclick="document.getElementById('detailOverlay').classList.remove('open')">とじる</button>`;
+      panel.innerHTML = html;
+      document.getElementById("detailOverlay").classList.add("open");
+    }
+
+    async function load() {
+      const res = await fetch("/api/relations");
+      const data = await res.json();
+      const { nodes, edges } = data;
+      _nodes = nodes; _edges = edges;
+
+      // circular layout
+      const pos = {};
+      nodes.forEach((n, i) => {
+        const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+        pos[n.id] = { x: CX + RADIUS * Math.cos(angle), y: CY + RADIUS * Math.sin(angle) };
+      });
+
+      const svg = document.getElementById("chart");
+
+      // defs for arrowheads
+      const defs = svgEl("defs", {});
+      edges.forEach((e, i) => {
+        const marker = svgEl("marker", {
+          id: `arr${i}`, markerWidth: "8", markerHeight: "6",
+          refX: "8", refY: "3", orient: "auto", markerUnits: "strokeWidth"
+        });
+        marker.appendChild(svgEl("path", { d: "M0,0 L8,3 L0,6 Z", fill: "#e94560" }));
+        defs.appendChild(marker);
+      });
+      svg.appendChild(defs);
+
+      // edges
+      edges.forEach((e, i) => {
+        const from = pos[e.from], to = pos[e.to];
+        if (!from || !to) return;
+
+        // offset toward center so arrow doesn't overlap node
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const ux = dx / dist, uy = dy / dist;
+        const x1 = from.x + ux * NODE_R, y1 = from.y + uy * NODE_R;
+        const x2 = to.x - ux * (NODE_R + 8), y2 = to.y - uy * (NODE_R + 8);
+
+        // parallel offset for bidirectional edges
+        const reverse = edges.find(re => re.from === e.to && re.to === e.from);
+        let ox = 0, oy = 0;
+        if (reverse) { ox = -uy * 8; oy = ux * 8; }
+
+        const strokeW = Math.max(1, e.closeness * 5 + 1);
+        const line = svgEl("line", {
+          x1: x1 + ox, y1: y1 + oy, x2: x2 + ox, y2: y2 + oy,
+          stroke: "#e94560", "stroke-width": strokeW, "stroke-opacity": 0.6,
+          "marker-end": `url(#arr${i})`
+        });
+        svg.appendChild(line);
+
+        // heart at midpoint
+        const mx = (x1 + x2) / 2 + ox, my = (y1 + y2) / 2 + oy;
+        const heartSize = Math.max(8, e.closeness * 16);
+        const heart = svgEl("text", {
+          x: mx, y: my, "font-size": heartSize, "text-anchor": "middle",
+          "dominant-baseline": "central", fill: "#e94560", "fill-opacity": 0.8,
+          style: "cursor:default"
+        });
+        heart.textContent = "\\u2665";
+        svg.appendChild(heart);
+
+
+        // invisible hover zone
+        const hitLine = svgEl("line", {
+          x1: x1 + ox, y1: y1 + oy, x2: x2 + ox, y2: y2 + oy,
+          stroke: "transparent", "stroke-width": Math.max(strokeW, 20)
+        });
+        const tip = document.getElementById("tip");
+        const showTip = (ev) => {
+          const fromNode = nodes.find(n => n.id === e.from);
+          const toNode = nodes.find(n => n.id === e.to);
+          tip.innerHTML = `<strong>${fromNode?.name || e.from}</strong> → <strong>${toNode?.name || e.to}</strong>`
+            + `<div class="feeling">${e.feeling || "(まだ何も思っていない)"}</div>`
+            + `<div class="gauge-label">♥ ${(e.closeness * 100).toFixed(0)}%</div>`
+            + `<div class="gauge-bar"><div class="gauge-fill" style="width:${e.closeness * 100}%;background:${fromNode?.color || '#e94560'}"></div></div>`;
+          tip.style.opacity = 1;
+          tip.style.left = ev.clientX + 12 + "px";
+          tip.style.top = ev.clientY + 12 + "px";
+        };
+        const hideTip = () => { tip.style.opacity = 0; };
+        hitLine.addEventListener("mouseenter", showTip);
+        hitLine.addEventListener("mousemove", (ev) => {
+          tip.style.left = ev.clientX + 12 + "px";
+          tip.style.top = ev.clientY + 12 + "px";
+        });
+        hitLine.addEventListener("mouseleave", hideTip);
+        heart.addEventListener("mouseenter", showTip);
+        heart.addEventListener("mousemove", (ev) => {
+          tip.style.left = ev.clientX + 12 + "px";
+          tip.style.top = ev.clientY + 12 + "px";
+        });
+        heart.addEventListener("mouseleave", hideTip);
+        svg.appendChild(hitLine);
+      });
+
+      // nodes
+      nodes.forEach(n => {
+        const p = pos[n.id];
+        const g = svgEl("g", { style: "cursor:pointer" });
+        g.addEventListener("click", () => showDetail(n.id));
+
+        if (n.has_avatar || n.id !== "arisan") {
+          // clip for circular avatar
+          const clipId = `clip-${n.id}`;
+          const clipPath = svgEl("clipPath", { id: clipId });
+          clipPath.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: NODE_R }));
+          defs.appendChild(clipPath);
+
+          // background circle (white so avatars are visible)
+          g.appendChild(svgEl("circle", {
+            cx: p.x, cy: p.y, r: NODE_R, fill: "white", stroke: n.color, "stroke-width": 3
+          }));
+
+          const img = svgEl("image", {
+            href: `/api/avatar/${n.id}.png`, x: p.x - NODE_R, y: p.y - NODE_R,
+            width: NODE_R * 2, height: NODE_R * 2, "clip-path": `url(#${clipId})`
+          });
+          g.appendChild(img);
+        } else {
+          // arisan: color circle
+          g.appendChild(svgEl("circle", {
+            cx: p.x, cy: p.y, r: NODE_R, fill: n.color, stroke: "#e0e0e0", "stroke-width": 2
+          }));
+          const initials = svgEl("text", {
+            x: p.x, y: p.y, "text-anchor": "middle", "dominant-baseline": "central",
+            fill: "white", "font-size": "16", "font-weight": "bold"
+          });
+          initials.textContent = n.name.slice(0, 2);
+          g.appendChild(initials);
+        }
+
+        // name label
+        const label = svgEl("text", {
+          x: p.x, y: p.y + NODE_R + 18, "text-anchor": "middle",
+          fill: "#e0e0e0", "font-size": "14", "font-weight": "bold"
+        });
+        label.textContent = n.name;
+        g.appendChild(label);
+
+        svg.appendChild(g);
+      });
+
+      // self-info cards
+      const cardsDiv = document.getElementById("cards");
+      nodes.forEach(n => {
+        const si = n.self_info;
+        if (!si || (!si.likes?.length && !si.notes)) return;
+        const card = document.createElement("div");
+        card.className = "card";
+        card.style.borderTopColor = n.color;
+        let html = `<h3><img class="avatar-small" src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"> ${n.name}</h3>`;
+        if (si.likes?.length) html += `<div class="likes">♥ ${si.likes.join("、")}</div>`;
+        if (si.notes) html += `<div class="notes">${si.notes}</div>`;
+        card.innerHTML = html;
+        cardsDiv.appendChild(card);
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>
+"""
+
+
+def main():
+    import uvicorn
+    port = int(os.getenv("DASHBOARD_PORT", "8765"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+if __name__ == "__main__":
+    main()
