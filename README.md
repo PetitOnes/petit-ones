@@ -29,6 +29,7 @@
 | [memory-mcp](./memory-mcp/) | 脳 | 長期記憶・視覚記憶・エピソード記憶・ToM | SQLite + numpy + Pillow |
 | [system-temperature-mcp](./system-temperature-mcp/) | 体温感覚 | システム温度監視 | Linux sensors |
 | [mobility-mcp](./mobility-mcp/) | 足 | ロボット掃除機を足として使う（Tuya制御） | VersLife L6 等 Tuya 対応ロボット掃除機（約12,000円〜） |
+| [m5-mcp](./m5-mcp/) | 目・感情・センサー | M5Stack の顔表示・カメラ・センサー制御 | M5Stack（約4,000円〜） |
 
 ## アーキテクチャ
 
@@ -442,6 +443,132 @@ crontab -e
 - 定期的にカメラで撮影が行われます
 - 他人のプライバシーに配慮し、適切な場所で使用してください
 - 不要な場合は cron から削除してください
+
+---
+
+## キャラクターシステム（プチ） / Character System
+
+> **「キューブプチ」**: 小さなM5Stackロボットに身体を与え、それぞれ独自の性格・欲求・記憶を持って自律的に生きるキャラクターたち。
+
+[ROS版キューブプチ](https://github.com/sbgisen/cube_petit_ros) の AI 版。カメラ・センサー・音を持つ M5Stack + Claude Code + 記憶システムの組み合わせで、それぞれ自分らしく生きるプチを作れます。
+
+### m5-mcp（M5Stack 専用）
+
+M5Stack の目・感情・センサーを操作する MCP サーバー。
+
+```bash
+cd m5-mcp
+uv sync
+```
+
+| ツール | 説明 |
+|--------|------|
+| `take_snapshot` | M5カメラで撮影 |
+| `look` | 視線を動かす (x/y: -100〜100) |
+| `blink` | ウィンクする |
+| `show_face` | 顔画像を表示（SDカードのJPEG） |
+| `play_sound` | 効果音を再生 |
+| `play_icon` | アイコンを表示（love / cry） |
+| `get_sensor_data` | 近接・照度・加速度・バッテリー取得 |
+| `wait_for_touch` | タッチイベント待機 |
+| `set_volume` / `get_volume` | 音量設定 |
+| `mic_start` / `mic_stop` | マイク制御 |
+| `sleep` / `wake` | スリープ制御 |
+
+M5Stack の IP アドレスは環境変数 `M5_HOST` で切り替え可能（複数台対応）。
+
+### キャラクターの構成
+
+各プチは `characters/{id}/` ディレクトリで管理されます。
+
+```
+characters/
+└── puchiko/                    # キャラクターID
+    ├── config.json             # 名前・カラー・M5のIPアドレス
+    ├── SOUL.md                 # 性格・価値観・行動原則
+    ├── settings.json           # アクティブタイム・カメラ/音/マイク設定
+    ├── autonomous-mcp.json     # このキャラ専用のMCP設定（M5_HOST含む）
+    ├── desires.json            # 現在の欲求レベル（自動更新）
+    └── chat_history.json       # 会話履歴
+```
+
+**config.json の例:**
+```json
+{
+  "name": "ぷちこ",
+  "id": "puchiko",
+  "color": "#cab8d9",
+  "color_name": "ラベンダー",
+  "m5_host": "10.42.138.100",
+  "m5_port": 8081,
+  "public": false
+}
+```
+
+**M5Stack用の欲求（desire_updater.py）:**
+
+| 欲求 | 間隔 | 行動 |
+|------|------|------|
+| `browse_curiosity` | 2時間 | WebSearchで調べ物をする |
+| `miss_companion` | 3時間 | 一緒にいる人に話しかける |
+| `observe_surroundings` | 10分 | M5カメラで周囲を観察 |
+| `go_outside` | 24時間 | お散歩に連れていってもらう |
+
+### ダッシュボード
+
+スマホからプチの状態確認・会話・設定ができる Web UI。
+
+```bash
+cd dashboard
+uv run python main.py
+# → http://0.0.0.0:8765
+```
+
+**機能:**
+- **欲求バー**: 各プチの現在の欲求レベルをリアルタイム表示
+- **チャット**: ダッシュボードからプチに直接話しかける
+- **M5 接続確認**: タブにインジケーター表示（接続済 / 未接続）
+- **グループチャット** (「みんなで」タブ): ありさんのメッセージを全プチに送信、順番に返答
+- **交流機能** (「ふたりで話させる」): プチ同士が自動で数往復会話
+- **会話履歴**: 個別・グループ・交流の履歴をポップアップで表示
+- **記憶一覧**: 日付別の記憶をポップアップで表示
+- **設定**: アクティブタイム・カメラ/音/マイクの ON/OFF
+- **テーマカラー**: キャラクターのカラーに合わせてUI全体が変化
+
+### 新しいプチを追加する
+
+1コマンドでキャラクターを追加できます：
+
+```bash
+uv run python create_character.py <id> <名前> <カラーコード> <M5のIPアドレス>
+```
+
+**例:**
+```bash
+uv run python create_character.py puchitaro ぷちたろう "#f5956e" 10.42.138.102
+```
+
+**自動でやってくれること:**
+- `characters/{id}/` に必要なファイルを全部作成
+- crontab に欲求更新（5分）・自律行動（20分）を追加
+- ダッシュボードをリロードすると即タブに出現
+
+**追加後にやること:**
+- `characters/{id}/SOUL.md` を編集して性格を書く
+
+### crontab 設定
+
+セットアップスクリプトが自動で追加しますが、手動で設定する場合：
+
+```bash
+# 欲求レベルを5分ごとに更新
+*/5  * * * * cd /path/to/embodied-claude/desire-system && /path/to/uv run python desire_updater.py puchiko >> ~/.autonomous-logs/desire-updater-puchiko.log 2>&1
+
+# 自律行動を20分ごとに実行
+*/20 * * * * /path/to/embodied-claude/autonomous-action.sh puchiko >> ~/.autonomous-logs/puchiko.log 2>&1
+```
+
+---
 
 ## 哲学的考察
 
