@@ -168,6 +168,41 @@ M5Stack のファームウェアセットアップは [m5_petit](https://github.
 - 設定: アクティブタイム・カメラ/音/マイクの ON/OFF
 - 記憶一覧: 日付別の記憶表示
 
+## ダッシュボードの常時起動（systemd）
+
+PC再起動後も自動でダッシュボードが起動するようにする。
+
+```bash
+# サービスファイルをコピー（User, WorkingDirectory, PATH を環境に合わせて編集）
+sudo cp dashboard/petit-dashboard.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable petit-dashboard
+sudo systemctl start petit-dashboard
+
+# 状態確認
+sudo systemctl status petit-dashboard
+
+# ログ確認
+journalctl -u petit-dashboard -f
+```
+
+## API利用量の管理
+
+Claude API の使いすぎを防ぐ設定:
+
+- **自律行動の頻度調整**: `autonomous-action.sh` のスケジュール制御で、アクティブ時間帯（毎回実行）と非アクティブ時間帯（確率実行）を制御。`characters/{id}/settings.json` の `active_hours` で時間帯を設定
+- **自律行動の停止**: crontab の該当行をコメントアウト（`#` を先頭に付ける）すれば即停止
+- **ダッシュボードの日記生成**: 手動ボタン or 1日1回（23:50）のみ。自動では頻繁に呼ばない
+- **Anthropic Console**: https://console.anthropic.com/settings/usage で利用量を確認、spending limit を設定できる
+
+```bash
+# 一時的に全自律行動を止める
+crontab -l | sed 's/^\(.*autonomous-action\)/#\1/' | crontab -
+
+# 再開する
+crontab -l | sed 's/^#\(.*autonomous-action\)/\1/' | crontab -
+```
+
 ## バックアップ・復元
 
 ```bash
@@ -182,16 +217,23 @@ cron で毎日4時に自動バックアップ（7日分保持）。詳細は `~/
 
 ## crontab
 
-`create_character.py` が自動設定するが、手動で確認・編集する場合:
+`create_character.py` がキャラ別のエントリを自動追加するが、手動で確認・編集する場合:
 
 ```bash
+# --- キャラ別（キャラごとに2行ずつ） ---
+
 # 欲求レベル更新（5分毎）
 */5  * * * * cd /path/to/embodied-claude/desire-system && uv run python desire_updater.py <char_id> >> ~/petit_claude/.autonomous-logs/<char_id>/desire-$(date +\%Y\%m\%d).log 2>&1
 
 # 自律行動（20分毎）
 */20 * * * * /path/to/embodied-claude/autonomous-action.sh <char_id>
 
-# バックアップ（毎日4時）
+# --- 共通 ---
+
+# 日記サマリー生成（毎日23:50、全キャラ分）
+50 23 * * * cd /path/to/embodied-claude/dashboard && uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1
+
+# バックアップ（毎日4:00、7日分保持）
 0 4 * * * bash ~/petit_claude/backup/save.sh && find ~/petit_claude/backup -maxdepth 1 -type d -name "[0-9]*" -mtime +7 -exec rm -rf {} \;
 ```
 

@@ -872,8 +872,8 @@ HTML = """<!DOCTYPE html>
       </section>
 
       <section id="memoriesSection">
-        <h2>今日の記憶</h2>
-        <div id="memories"></div>
+        <h2 style="cursor:pointer;user-select:none" onclick="toggleMemories()">今日の記憶 <span id="memoriesCount"></span> <span id="memoriesToggle">▼</span></h2>
+        <div id="memories" style="max-height:400px;overflow-y:auto"></div>
       </section>
     </div>
 
@@ -1116,12 +1116,14 @@ HTML = """<!DOCTYPE html>
         } else { desEl.innerHTML = '<div class="empty">データなし</div>'; }
 
         const memEl = document.getElementById("memories");
+        const memCount = document.getElementById("memoriesCount");
         if (memories.length > 0) {
+          memCount.textContent = `(${memories.length}件)`;
           memEl.innerHTML = memories.map(m => {
             const ts = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "";
             return `<div class="memory"><div class="memory-time">${ts}</div><div class="memory-text">${m.content}</div></div>`;
           }).join("");
-        } else { memEl.innerHTML = '<div class="empty">今日はまだ記憶がありません</div>'; }
+        } else { memCount.textContent = ""; memEl.innerHTML = '<div class="empty">今日はまだ記憶がありません</div>'; }
 
         // 日記パネル更新
         updateDiary();
@@ -1256,8 +1258,10 @@ HTML = """<!DOCTYPE html>
         }).join("") || '<div class="empty">記憶なし</div>';
         diaryEl.innerHTML = items;
       } else if (data.summary) {
+        const regen = data.date === _today && data.count > 0
+          ? `<button class="diary-nav-btn" style="width:100%;margin-top:8px" onclick="generateTodaySummary()">📝 再生成</button>` : "";
         diaryEl.innerHTML = `<div style="font-size:0.85rem;line-height:1.7;color:#333">${data.summary}</div>
-          <div style="font-size:0.7rem;color:#bbb;margin-top:6px">${data.count}件の記憶</div>`;
+          <div style="font-size:0.7rem;color:#bbb;margin-top:6px">${data.count}件の記憶</div>${regen}`;
       } else if (data.date === _today) {
         // 今日はボタンで手動生成
         const countText = data.count > 0 ? `${data.count}件の記憶` : "まだ記憶がありません";
@@ -1383,6 +1387,13 @@ HTML = """<!DOCTYPE html>
     }
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    function toggleMemories() {
+      const el = document.getElementById("memories");
+      const toggle = document.getElementById("memoriesToggle");
+      const isHidden = el.style.maxHeight === "0px";
+      if (isHidden) { el.style.maxHeight = "400px"; el.style.overflow = "auto"; toggle.textContent = "▼"; }
+      else { el.style.maxHeight = "0px"; el.style.overflow = "hidden"; toggle.textContent = "▶"; }
+    }
     function closeIfOverlay(e, id) { if (e.target === e.currentTarget) closePopup(id); }
 
     let currentHours = [];
