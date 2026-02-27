@@ -270,6 +270,48 @@ sudo systemctl status petit-dashboard
 journalctl -u petit-dashboard -f
 ```
 
+## 認証（オプション）
+
+ダッシュボードに Basic 認証 + 7日間セッションを追加できる。
+
+### ロール
+
+| ロール | 閲覧 | チャット・操作 | 設定変更 |
+|--------|------|---------------|---------|
+| admin | OK | OK | OK |
+| operator | OK | OK | NG |
+| viewer | OK | NG | NG |
+
+### 設定方法
+
+`~/petit_claude/auth.json` を作成:
+
+```bash
+cp dashboard/auth.json.example ~/petit_claude/auth.json
+vim ~/petit_claude/auth.json  # パスワードを設定
+```
+
+```json
+{
+  "users": {
+    "arisan": {"password": "あなたのパスワード", "role": "admin"},
+    "friend": {"password": "友達用パスワード", "role": "operator", "characters": ["puchiko"]},
+    "guest": {"password": "ゲスト用パスワード", "role": "viewer"}
+  }
+}
+```
+
+ダッシュボードを再起動すると認証が有効になる。`auth.json` がなければ認証なし（従来通り）。
+
+### キャラクター表示制限
+
+`characters` フィールドで、ユーザーごとに閲覧・操作可能なキャラクターを制限できる。
+
+- `characters` 未設定 or 空配列 → 全キャラ見える
+- `characters: ["puchiko"]` → puchiko のみ見える（タブ・チャット・記憶・日記すべて）
+- `admin` ロールは `characters` 設定を無視して常に全キャラ見える
+- グループチャットも許可キャラのみに送信される
+
 ## API利用量の管理
 
 Claude API の使いすぎを防ぐ設定:

@@ -1,0 +1,7 @@
+{
+  "users": {
+    "arisan": {"password": "パスワードをここに", "role": "admin"},
+    "friend": {"password": "パスワードをここに", "role": "operator", "characters": ["puchiko"]},
+    "guest": {"password": "パスワードをここに", "role": "viewer"}
+  }
+}
