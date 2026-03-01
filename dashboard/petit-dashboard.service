@@ -1,0 +1,16 @@
+[Unit]
+Description=Petit Claude Dashboard
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=%h/work/embodied-claude/dashboard
+ExecStart=%h/work/embodied-claude/dashboard/.venv/bin/python3 main.py
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=%h/petit_claude/.env.dashboard
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

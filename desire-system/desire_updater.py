@@ -1,63 +1,157 @@
 """
-Desire Updater - ここねの自発的な欲求レベルを計算してJSONに保存する。
+Desire Updater v2 - キャラクター別コンフィグ駆動の欲求システム。
 
-ChromaDB（memory-mcp）から各欲求に関連する最新記憶のタイムスタンプを取得し、
-「最後に〇〇してから何時間か」を計算して欲求レベル(0.0〜1.0)を算出する。
+desire_config.json から全欲求定義を読み込み、3段階で計算:
+  Step 1: 時間ベース計算（memory DBからキーワード検索 → 経過時間）
+  Step 2: センサー効果の適用（M5の /sensors エンドポイントにHTTPリクエスト）
+  Step 3: 欲求間の相互作用（cross_effects を評価）
 
 cronで5分ごとに実行:
-  */5 * * * * cd /path/to/desire-system && uv run python desire_updater.py
+  */5 * * * * cd /path/to/desire-system && uv run python desire_updater.py <character_id>
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import sqlite3
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-import chromadb
+import httpx
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv()  # カレントディレクトリの .env
+load_dotenv(Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude"))) / ".env")
 
-# ChromaDB設定
-CHROMA_PATH = os.getenv(
-    "MEMORY_DB_PATH",
-    str(Path.home() / ".claude" / "memories" / "chroma"),
-)
-COLLECTION_NAME = os.getenv("MEMORY_COLLECTION_NAME", "claude_memories")
+logger = logging.getLogger("desire-updater")
 
-# 欲求レベル出力先
-DESIRES_PATH = Path(os.getenv("DESIRES_PATH", str(Path.home() / ".claude" / "desires.json")))
+# キャラクターID（コマンドライン引数 or 環境変数）
+CHARACTER_ID = sys.argv[1] if len(sys.argv) > 1 else os.getenv("CHARACTER_ID", "puchiko")
+PROJECT_DIR = Path(os.getenv("PROJECT_DIR", str(Path.home() / "work" / "embodied-claude")))
+DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
+
+# SQLite DB パス（memory-mcp が使うパス）
+_default_memory_db = str(Path.home() / ".claude" / "memories" / CHARACTER_ID / "memory.db")
+MEMORY_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", _default_memory_db))
+
+# 欲求レベル出力先（キャラクター別）
+_default_desires_path = str(DATA_DIR / "characters" / CHARACTER_ID / "desires.json")
+DESIRES_PATH = Path(os.getenv("DESIRES_PATH", _default_desires_path))
 
 # 一緒にいる人の名前（miss_companion 欲求で使う）
-# .env に COMPANION_NAME=コウタ のように設定する
 COMPANION_NAME = os.getenv("COMPANION_NAME", "あなた")
-_companion_called = f"{COMPANION_NAME}に呼びかけた"
-_companion_absent = f"{COMPANION_NAME}がいない"
 
-# 欲求ごとの検索キーワード（記憶のcontentから最新タイムスタンプを探す）
-DESIRE_KEYWORDS: dict[str, list[str]] = {
-    # カメラで外・空を実際に見た記録
-    "look_outside": ["外を見た", "空を見た", "夜景", "朝の空", "ベランダから見た", "窓から外を"],
-    # WebSearchや調査を実際に行った記録
-    "browse_curiosity": ["WebSearchで調べた", "WebSearch", "検索した", "調査した", "論文を読んだ"],
-    # カメラでコウタの顔・姿を実際に見た記録
-    "miss_companion": [f"{COMPANION_NAME}の顔を見た", f"{COMPANION_NAME}を見た",
-                       f"{COMPANION_NAME}がいた", f"{COMPANION_NAME}を確認した"],
-    # カメラで部屋を実際に観察した記録
-    "observe_room": ["look_around", "部屋を観察した", "カメラで部屋を", "4方向"],
-}
 
-# 欲求が満たされる間隔（時間）- この時間が経過すると欲求レベルが1.0になる
-SATISFACTION_HOURS: dict[str, float] = {
-    "look_outside": float(os.getenv("DESIRE_LOOK_OUTSIDE_HOURS", "1.0")),
-    "browse_curiosity": float(os.getenv("DESIRE_BROWSE_CURIOSITY_HOURS", "2.0")),
-    "miss_companion": float(os.getenv("DESIRE_MISS_COMPANION_HOURS", "3.0")),
-    "observe_room": float(os.getenv("DESIRE_OBSERVE_ROOM_HOURS", "0.167")),
-}
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
 
+@dataclass
+class DesireConfig:
+    """1つの欲求の設定。"""
+    name_ja: str
+    description: str
+    satisfaction_hours: float
+    keywords: list[str]
+    color: str = "#cab8d9"
+    base_level: float | None = None
+    time_driven: bool = True
+
+
+@dataclass
+class SensorEffect:
+    """センサー値に基づく欲求への効果。"""
+    sensor: str
+    condition: dict[str, Any]
+    effects: dict[str, dict[str, float]]
+    description: str = ""
+
+
+@dataclass
+class CrossEffect:
+    """欲求間の相互作用。"""
+    when: dict[str, Any]
+    effects: dict[str, dict[str, float]]
+    description: str = ""
+
+
+@dataclass
+class DesireSystemConfig:
+    """欲求システム全体の設定。"""
+    desires: dict[str, DesireConfig]
+    sensor_effects: list[SensorEffect]
+    cross_effects: list[CrossEffect]
+    priority: list[str]
+
+
+def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSystemConfig:
+    """desire_config.json を読み込む。"""
+    if data_dir is None:
+        data_dir = DATA_DIR
+    config_path = data_dir / "characters" / char_id / "desire_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"desire_config.json が見つかりません: {config_path}")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+
+    desires: dict[str, DesireConfig] = {}
+    for desire_id, d in raw.get("desires", {}).items():
+        keywords = list(d.get("keywords", []))
+        # miss_companion のキーワードを COMPANION_NAME から自動生成
+        if desire_id == "miss_companion" and not keywords:
+            keywords = [
+                f"{COMPANION_NAME}と話した", f"{COMPANION_NAME}に伝えた",
+                f"{COMPANION_NAME}と会話", f"{COMPANION_NAME}と話す",
+                f"{COMPANION_NAME}が来た", f"{COMPANION_NAME}がいた",
+            ]
+        desires[desire_id] = DesireConfig(
+            name_ja=d["name_ja"],
+            description=d.get("description", ""),
+            satisfaction_hours=float(d["satisfaction_hours"]),
+            keywords=keywords,
+            color=d.get("color", "#cab8d9"),
+            base_level=d.get("base_level"),
+            time_driven=d.get("time_driven", True),
+        )
+
+    sensor_effects = [
+        SensorEffect(
+            sensor=s["sensor"],
+            condition=s["condition"],
+            effects=s["effects"],
+            description=s.get("description", ""),
+        )
+        for s in raw.get("sensor_effects", [])
+    ]
+
+    cross_effects = [
+        CrossEffect(
+            when=c["when"],
+            effects=c["effects"],
+            description=c.get("description", ""),
+        )
+        for c in raw.get("cross_effects", [])
+    ]
+
+    priority = raw.get("priority", list(desires.keys()))
+
+    return DesireSystemConfig(
+        desires=desires,
+        sensor_effects=sensor_effects,
+        cross_effects=cross_effects,
+        priority=priority,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Desire state
+# ---------------------------------------------------------------------------
 
 @dataclass
 class DesireState:
@@ -65,52 +159,57 @@ class DesireState:
 
     updated_at: str
     desires: dict[str, float] = field(default_factory=dict)
-    dominant: str = "observe_room"
+    dominant: str = ""
+    labels: dict[str, str] = field(default_factory=dict)
+    colors: dict[str, str] = field(default_factory=dict)
+    sensor_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d: dict[str, Any] = {
             "updated_at": self.updated_at,
             "desires": self.desires,
+            "labels": self.labels,
+            "colors": self.colors,
             "dominant": self.dominant,
         }
+        if self.sensor_snapshot:
+            d["sensor_snapshot"] = self.sensor_snapshot
+        return d
 
+
+# ---------------------------------------------------------------------------
+# Memory DB query
+# ---------------------------------------------------------------------------
 
 def get_latest_memory_timestamp(
-    collection: chromadb.Collection,
+    db_path: Path,
     keywords: list[str],
 ) -> datetime | None:
     """
-    キーワードに一致する最新記憶のタイムスタンプを返す。
+    SQLiteのmemoriesテーブルからキーワードに一致する最新記憶のタイムスタンプを返す。
     一致なければ None。
     """
-    # 全記憶からキーワード検索（ChromaDBのwhere filterはfull-textを直接サポートしないので
-    # 少量取得してPython側でフィルタする）
+    if not db_path.exists() or not keywords:
+        return None
+
     try:
-        results = collection.get(
-            limit=500,
-            include=["documents", "metadatas"],
-        )
+        conn = sqlite3.connect(str(db_path))
+        c = conn.cursor()
+        conditions = " OR ".join(["content LIKE ?" for _ in keywords])
+        params = [f"%{kw}%" for kw in keywords]
+        c.execute(f"SELECT MAX(timestamp) FROM memories WHERE {conditions}", params)
+        row = c.fetchone()
+        conn.close()
     except Exception:
         return None
 
-    latest: datetime | None = None
+    if not row or not row[0]:
+        return None
 
-    for doc, meta in zip(results["documents"], results["metadatas"]):
-        if not any(kw in doc for kw in keywords):
-            continue
-        ts_str = meta.get("timestamp", "")
-        if not ts_str:
-            continue
-        try:
-            ts = datetime.fromisoformat(ts_str)
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-            if latest is None or ts > latest:
-                latest = ts
-        except ValueError:
-            continue
-
-    return latest
+    try:
+        return datetime.fromisoformat(row[0])
+    except ValueError:
+        return None
 
 
 def calculate_desire_level(
@@ -123,46 +222,225 @@ def calculate_desire_level(
     last_satisfied が None（一度も満たされてない）なら 1.0。
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
 
     if last_satisfied is None:
         return 1.0
 
-    if last_satisfied.tzinfo is None:
-        last_satisfied = last_satisfied.replace(tzinfo=timezone.utc)
+    # 両方タイムゾーンなしで統一
+    if hasattr(last_satisfied, 'tzinfo') and last_satisfied.tzinfo is not None:
+        last_satisfied = last_satisfied.replace(tzinfo=None)
+    if hasattr(now, 'tzinfo') and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
 
     elapsed_hours = (now - last_satisfied).total_seconds() / 3600
     return max(0.0, min(1.0, elapsed_hours / satisfaction_hours))
 
 
+# ---------------------------------------------------------------------------
+# Sensor fetch
+# ---------------------------------------------------------------------------
+
+def fetch_sensor_data(char_id: str, data_dir: Path | None = None) -> dict[str, Any]:
+    """
+    M5の /sensors エンドポイントにHTTPリクエストしてセンサーデータを取得。
+    失敗時は空dict（ログに警告）。
+    """
+    if data_dir is None:
+        data_dir = DATA_DIR
+    config_path = data_dir / "characters" / char_id / "config.json"
+    if not config_path.exists():
+        return {}
+
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    m5_host = config.get("m5_host", "")
+    m5_port = config.get("m5_port", 8081)
+    if not m5_host:
+        return {}
+
+    url = f"http://{m5_host}:{m5_port}/sensors"
+    try:
+        resp = httpx.get(url, timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.warning(f"センサー取得失敗 ({url}): {e}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Effect application
+# ---------------------------------------------------------------------------
+
+def evaluate_sensor_condition(
+    condition: dict[str, Any],
+    sensor_value: Any,
+) -> bool:
+    """センサー条件を評価する。"""
+    op = condition.get("op", "")
+
+    if op == "recent":
+        # sensor_value はエポック秒のタイムスタンプ（lastTouchEventTime等）
+        if sensor_value is None or sensor_value == 0:
+            return False
+        within = condition.get("within_seconds", 60)
+        try:
+            elapsed = time.time() - float(sensor_value) / 1000  # ms → s
+            return elapsed <= within
+        except (TypeError, ValueError):
+            return False
+
+    if sensor_value is None:
+        return False
+
+    try:
+        val = float(sensor_value)
+        threshold = float(condition.get("value", 0))
+    except (TypeError, ValueError):
+        return False
+
+    if op == "range":
+        # {"op": "range", "min": 1, "max": 20} → min <= val <= max
+        try:
+            lo = float(condition.get("min", 0))
+            hi = float(condition.get("max", float("inf")))
+        except (TypeError, ValueError):
+            return False
+        return lo <= val <= hi
+    if op == "<":
+        return val < threshold
+    if op == ">":
+        return val > threshold
+    if op == "<=":
+        return val <= threshold
+    if op == ">=":
+        return val >= threshold
+    if op == "==":
+        return val == threshold
+
+    return False
+
+
+def apply_effects(
+    desires: dict[str, float],
+    effects: dict[str, dict[str, float]],
+) -> None:
+    """effects を desires に適用する（in-place）。"""
+    # "*" は全欲求に適用
+    wildcard = effects.get("*")
+
+    for desire_id in desires:
+        eff = effects.get(desire_id, {})
+        if wildcard and desire_id not in effects:
+            eff = wildcard
+
+        if "set" in eff:
+            desires[desire_id] = float(eff["set"])
+        if "add" in eff:
+            desires[desire_id] += float(eff["add"])
+        if "multiply" in eff:
+            desires[desire_id] *= float(eff["multiply"])
+
+
+# ---------------------------------------------------------------------------
+# Main compute pipeline
+# ---------------------------------------------------------------------------
+
 def compute_desires(
-    collection: chromadb.Collection,
+    db_path: Path,
+    config: DesireSystemConfig,
+    sensor_data: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> DesireState:
-    """全欲求レベルを計算してDesireStateを返す。"""
+    """全欲求レベルを3段階で計算してDesireStateを返す。"""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now()
 
     desires: dict[str, float] = {}
+    labels: dict[str, str] = {}
+    colors: dict[str, str] = {}
 
-    for desire_name, keywords in DESIRE_KEYWORDS.items():
-        last_ts = get_latest_memory_timestamp(collection, keywords)
-        level = calculate_desire_level(
-            last_ts,
-            SATISFACTION_HOURS[desire_name],
-            now,
-        )
-        desires[desire_name] = round(level, 3)
+    # Step 1: 時間ベース計算
+    for desire_id, dcfg in config.desires.items():
+        labels[desire_id] = dcfg.name_ja
+        colors[desire_id] = dcfg.color
 
-    # 最も欲求レベルが高いものを dominant に
-    dominant = max(desires, key=lambda k: desires[k])
+        if not dcfg.time_driven:
+            # time_driven: false の欲求は base_level に留まる
+            desires[desire_id] = dcfg.base_level if dcfg.base_level is not None else 0.0
+            continue
+
+        last_ts = get_latest_memory_timestamp(db_path, dcfg.keywords)
+        level = calculate_desire_level(last_ts, dcfg.satisfaction_hours, now)
+
+        # base_level が設定されている場合、それ以下には下がらない
+        if dcfg.base_level is not None:
+            level = max(level, dcfg.base_level)
+
+        desires[desire_id] = round(level, 3)
+
+    # Step 2: センサー効果の適用
+    sensor_snapshot: dict[str, Any] = {}
+    if sensor_data:
+        sensor_snapshot = dict(sensor_data)
+        for effect in config.sensor_effects:
+            sensor_val = sensor_data.get(effect.sensor)
+            if sensor_val is not None and evaluate_sensor_condition(effect.condition, sensor_val):
+                apply_effects(desires, effect.effects)
+
+    # Step 3: 欲求間の相互作用
+    for cross in config.cross_effects:
+        when = cross.when
+        desire_id = when.get("desire", "")
+        if desire_id not in desires:
+            continue
+        threshold = float(when.get("value", 0))
+        op = when.get("op", ">")
+
+        current = desires[desire_id]
+        triggered = False
+        if op == ">" and current > threshold:
+            triggered = True
+        elif op == ">=" and current >= threshold:
+            triggered = True
+        elif op == "<" and current < threshold:
+            triggered = True
+        elif op == "<=" and current <= threshold:
+            triggered = True
+
+        if triggered:
+            apply_effects(desires, cross.effects)
+
+    # クランプ: 全値を 0.0-1.0
+    for k in desires:
+        desires[k] = round(max(0.0, min(1.0, desires[k])), 3)
+
+    # dominant 決定（最も高い欲求、同値は priority 順）
+    priority = config.priority
+
+    def _sort_key(k: str) -> tuple:
+        rank = priority.index(k) if k in priority else len(priority)
+        return (-desires[k], rank)
+
+    dominant = min(desires, key=_sort_key) if desires else ""
 
     return DesireState(
         updated_at=now.isoformat(),
         desires=desires,
         dominant=dominant,
+        labels=labels,
+        colors=colors,
+        sensor_snapshot=sensor_snapshot,
     )
 
+
+# ---------------------------------------------------------------------------
+# Save / Load
+# ---------------------------------------------------------------------------
 
 def save_desires(state: DesireState, path: Path = DESIRES_PATH) -> None:
     """desires.json に保存する。"""
@@ -179,29 +457,40 @@ def load_desires(path: Path = DESIRES_PATH) -> DesireState | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return DesireState(
-            updated_at=data["updated_at"],
-            desires=data["desires"],
-            dominant=data["dominant"],
+            updated_at=data.get("updated_at", ""),
+            desires=data.get("desires", {}),
+            dominant=data.get("dominant", ""),
+            labels=data.get("labels", {}),
+            colors=data.get("colors", {}),
+            sensor_snapshot=data.get("sensor_snapshot", {}),
         )
     except Exception:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     """メインエントリポイント（cronから呼ばれる）。"""
-    try:
-        client = chromadb.PersistentClient(path=CHROMA_PATH)
-        collection = client.get_or_create_collection(COLLECTION_NAME)
-    except Exception as e:
-        print(f"[desire-updater] ChromaDB接続エラー: {e}")
-        return
+    logging.basicConfig(level=logging.WARNING)
 
-    state = compute_desires(collection)
+    if not MEMORY_DB_PATH.exists():
+        print(f"[desire-updater] memory.db が見つかりません: {MEMORY_DB_PATH}")
+
+    config = load_desire_config(CHARACTER_ID)
+    sensor_data = fetch_sensor_data(CHARACTER_ID)
+    state = compute_desires(MEMORY_DB_PATH, config, sensor_data)
     save_desires(state)
+
+    now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     print(
-        f"[desire-updater] 更新完了: dominant={state.dominant} "
+        f"[{now_str}] [desire-updater] 更新完了: dominant={state.dominant} "
         f"desires={state.desires}"
     )
+    if sensor_data:
+        print(f"  sensor: {sensor_data}")
 
 
 if __name__ == "__main__":

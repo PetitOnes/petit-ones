@@ -279,6 +279,79 @@ Inspect associative expansion diagnostics without committing activation updates.
 { "context": "night sky", "sample_size": 20 }
 ```
 
+### sleep
+
+Memory consolidation — compress similar old memories, decay low-retention ones, forget unimportant ones. Protected memories (high importance, strong emotions, first experiences, episode members) are never deleted.
+
+```json
+{
+  "dry_run": true,
+  "min_age_days": 14,
+  "similarity_threshold": 0.85
+}
+```
+
+**Three phases:**
+
+1. **Merge** — Group old memories in the same category with cosine similarity > threshold, combine into a single summary memory
+2. **Decay** — Lower the importance of memories with low retention scores (but never below 1)
+3. **Forget** — Delete memories that are importance=1, emotion=neutral, no episode, old enough, and rarely accessed
+
+**Protection rules (never touched):**
+- `importance >= 4`
+- Emotion is `happy`, `moved`, `excited`, or `surprised`
+- Content contains "初めて" / "はじめて" / "first time" (first experiences)
+- Episode members (deletion only; decay is allowed)
+
+**Retention score formula:**
+```
+retention = (importance/5)*0.3 + emotion_strength*0.2 + recency*0.3 + access_frequency*0.2
+```
+- `recency = exp(-age_days / 30)`
+- `access_frequency = min(1.0, access_count / 10)`
+
+**Thresholds (SleepConfig defaults):**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `min_age_days` | 14 | Memories younger than this are not eligible |
+| `similarity_threshold` | 0.85 | Cosine similarity required for merge grouping |
+| `decay_retention_threshold` | 0.4 | Retention score below this triggers decay |
+| `forget_min_age_days` | 14 | Minimum age for forgetting |
+| `forget_max_access` | 3 | Maximum access count for forgetting |
+| `protected_importance` | 4 | Importance >= this is always protected |
+| `protected_emotions` | happy, moved, excited, surprised | These emotions are always protected |
+
+**Cron setup (recommended: run nightly):**
+
+```bash
+# crontab -e
+# 毎日 AM 4:00 に sleep を実行（dry_run=false）
+0 4 * * * cd /path/to/memory-mcp && uv run python -c "
+import asyncio, json
+from memory_mcp.config import MemoryConfig
+from memory_mcp.store import MemoryStore
+from memory_mcp.sleep import SleepEngine
+
+async def main():
+    store = MemoryStore(MemoryConfig.from_env())
+    await store.connect()
+    try:
+        engine = SleepEngine(store)
+        stats = await engine.run(dry_run=False)
+        print(json.dumps({
+            'merged': len(stats.merged),
+            'decayed': len(stats.decayed),
+            'forgotten': len(stats.forgotten),
+            'protected': stats.protected,
+        }))
+    finally:
+        await store.disconnect()
+
+asyncio.run(main())
+" >> /var/log/memory-sleep.log 2>&1
+```
+
 ## Emotion Labels
 
 `happy`, `sad`, `surprised`, `moved`, `excited`, `nostalgic`, `curious`, `neutral`

@@ -43,17 +43,21 @@ export HOME="/Users/yourname"
 # 確認方法: "which claude" "which jq" でパスを確認
 export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:$PATH"
 
-# ★ プロジェクトディレクトリ（SOUL.md, TODO.md, ROUTINES.md などが存在する場所）
+# ★ プロジェクトディレクトリ（コード配置場所。MCP起動・subprocess cwd用）
 # 例: /Users/yourname/workspace/yourproject
 # ⚠️ 重要: test-autonomous.sh の L129 と設定を一致させる必要があります（必須）
 PROJECT_DIR="$HOME/yourproject"
+
+# ★ データディレクトリ（キャラデータ・ログなどプライベートデータ）
+# デフォルト: ~/petit_claude  環境変数 PETIT_DATA_DIR で上書き可能
+DATA_DIR="${PETIT_DATA_DIR:-$HOME/petit_claude}"
 
 # ★ .env ファイルのパス（プロジェクトディレクトリ配下）
 # .env には以下の環境変数が含まれる:
 #   - ELEVENLABS_API_KEY: ElevenLabs TTS の API キー
 #   - TAPO_USERNAME, TAPO_PASSWORD: Wi-Fi カメラの認証情報
 #   - その他 MCP サーバーが必要とする環境変数
-ENV_FILE="$PROJECT_DIR/.env"
+ENV_FILE="$DATA_DIR/.env"
 set -a
 source "$ENV_FILE"
 set +a
@@ -67,8 +71,9 @@ USER_ROOM="${USER_NAME}の部屋"
 # ★ allowedTools で許可するディレクトリパス
 # セキュリティ: 必要最小限のディレクトリのみ指定すること（.env ファイルなど機密情報も読める）
 # メモ：シークレットとenvを別で監理するのはまだ実装されていない
-# 通常は PROJECT_DIR と同じでOK
+# PROJECT_DIR: コードの読み取り、DATA_DIR: キャラデータ・ログの読み書き
 ALLOWED_DIR="$PROJECT_DIR"
+ALLOWED_DATA_DIR="$DATA_DIR"
 
 # ログディレクトリ名（プロジェクトディレクトリ配下に作成される）
 # ⚠️ 重要: test-autonomous.sh の L129 と設定を一致させる必要があります（必須）
@@ -253,7 +258,7 @@ cd "$PROJECT_DIR" || {
 }
 
 # ログディレクトリをプロジェクト配下に作成
-LOG_DIR="$PROJECT_DIR/$LOG_DIR_NAME"
+LOG_DIR="$DATA_DIR/$LOG_DIR_NAME"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/$TIMESTAMP.log"
 
@@ -273,9 +278,11 @@ fi
 # セキュリティ: 必要最小限のディレクトリのみ指定すること（.env ファイルなど機密情報も読める）
 ALLOWED_TOOLS=$(cat <<TOOLS
 Read($ALLOWED_DIR/**),
-Write($ALLOWED_DIR/**),
-Edit($ALLOWED_DIR/**),
+Read($ALLOWED_DATA_DIR/**),
+Write($ALLOWED_DATA_DIR/**),
+Edit($ALLOWED_DATA_DIR/**),
 Glob($ALLOWED_DIR/**),
+Glob($ALLOWED_DATA_DIR/**),
 Skill(notify:*),
 Skill(slack:*),
 Skill(read:*),

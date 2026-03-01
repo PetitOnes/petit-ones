@@ -283,3 +283,14 @@ class MemoryStats:
     by_emotion: dict[str, int]
     oldest_timestamp: str | None
     newest_timestamp: str | None
+
+
+@dataclass(frozen=True)
+class SleepStats:
+    """Sleep（記憶整理）の実行結果."""
+
+    merged: list[dict[str, Any]]  # [{"group": [id...], "into": "preview"}]
+    decayed: list[dict[str, Any]]  # [{"id": ..., "importance": "3→2"}]
+    forgotten: list[dict[str, Any]]  # [{"id": ..., "content": "..."}]
+    protected: int
+    dry_run: bool

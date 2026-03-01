@@ -32,6 +32,19 @@ class MemoryConfig:
 
 
 @dataclass(frozen=True)
+class SleepConfig:
+    """Sleep (memory consolidation/forgetting) configuration."""
+
+    min_age_days: int = 14  # 対象の最低経過日数
+    similarity_threshold: float = 0.85  # 圧縮時の類似度閾値
+    decay_retention_threshold: float = 0.4  # この保持スコア以下で減衰
+    forget_min_age_days: int = 14  # 忘却の最低経過日数
+    forget_max_access: int = 3  # 忘却対象の最大アクセス回数
+    protected_importance: int = 4  # この値以上は絶対保護
+    protected_emotions: tuple[str, ...] = ("happy", "moved", "excited", "surprised")
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     """MCP Server configuration."""
 

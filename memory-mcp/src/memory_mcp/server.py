@@ -607,6 +607,28 @@ class MemoryMCPServer:
                         "required": ["situation"],
                     },
                 ),
+                Tool(
+                    name="sleep",
+                    description="Memory consolidation: compress similar old memories, decay low-retention ones, and forget unimportant ones. Use dry_run=true (default) to preview what would happen.",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "dry_run": {
+                                "type": "boolean",
+                                "description": "If true (default), preview only — no changes are made",
+                                "default": True,
+                            },
+                            "min_age_days": {
+                                "type": "integer",
+                                "description": "Minimum age in days for memories to be eligible (default: 14)",
+                            },
+                            "similarity_threshold": {
+                                "type": "number",
+                                "description": "Cosine similarity threshold for merging (default: 0.85)",
+                            },
+                        },
+                    },
+                ),
             ]
 
         @self._server.call_tool()
@@ -1277,6 +1299,39 @@ Date Range:
                         )
 
                         return [TextContent(type="text", text=output)]
+
+                    case "sleep":
+                        from .config import SleepConfig
+                        from .sleep import SleepEngine
+
+                        overrides: dict[str, Any] = {}
+                        if "min_age_days" in arguments:
+                            overrides["min_age_days"] = arguments["min_age_days"]
+                        if "similarity_threshold" in arguments:
+                            overrides["similarity_threshold"] = arguments["similarity_threshold"]
+
+                        config = SleepConfig(**overrides) if overrides else SleepConfig()
+                        engine = SleepEngine(self._memory_store, config)
+                        dry_run = arguments.get("dry_run", True)
+                        stats = await engine.run(dry_run=dry_run)
+
+                        result = {
+                            "merged": stats.merged,
+                            "decayed": stats.decayed,
+                            "forgotten": stats.forgotten,
+                            "protected": stats.protected,
+                            "dry_run": stats.dry_run,
+                        }
+                        mode = "DRY RUN" if dry_run else "EXECUTED"
+                        summary = (
+                            f"Sleep {mode}:\n"
+                            f"  Merged: {len(stats.merged)} groups\n"
+                            f"  Decayed: {len(stats.decayed)} memories\n"
+                            f"  Forgotten: {len(stats.forgotten)} memories\n"
+                            f"  Protected: {stats.protected} memories\n\n"
+                            f"{json.dumps(result, indent=2, ensure_ascii=False)}"
+                        )
+                        return [TextContent(type="text", text=summary)]
 
                     case _:
                         return [TextContent(type="text", text=f"Unknown tool: {name}")]

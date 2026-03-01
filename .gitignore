@@ -77,3 +77,7 @@ snapshot.json
 tinytuya.json
 tuya-raw.json
 devices.json
+
+dashboard/.chat-session-id
+
+dashboard/chat_history.json
