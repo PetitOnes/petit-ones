@@ -2261,6 +2261,22 @@ KANKEI_HTML = """<!DOCTYPE html>
     .tooltip .gauge-bar { background: #2a2a4a; border-radius: 4px; height: 8px; overflow: hidden; }
     .tooltip .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
     .tooltip .gauge-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+    .mail-section { max-width: 640px; margin: 0 auto; padding: 20px 20px 30px; }
+    .mail-section h2 { font-size: 1rem; color: #e0e0e0; margin-bottom: 12px; }
+    .mail-thread { display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; padding-right: 4px; }
+    .mail-thread::-webkit-scrollbar { width: 6px; }
+    .mail-thread::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .mail-thread::-webkit-scrollbar-track { background: transparent; }
+    .mail-bubble {
+      max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 0.85rem;
+      line-height: 1.5; white-space: pre-wrap; position: relative;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    .mail-bubble.left { align-self: flex-start; background: #16213e; border: 1px solid #0f3460; }
+    .mail-bubble.right { align-self: flex-end; background: #2a1a3e; border: 1px solid #4a2a6e; }
+    .mail-meta { font-size: 0.7rem; color: #888; margin-top: 4px; }
+    .mail-sender { font-size: 0.75rem; font-weight: 600; margin-bottom: 4px; }
+    .mail-empty { color: #666; font-size: 0.85rem; text-align: center; padding: 20px; }
     .cards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; padding: 0 20px 30px; }
     .card {
       background: #16213e; border-radius: 12px; padding: 16px; width: 260px;
@@ -2305,6 +2321,10 @@ KANKEI_HTML = """<!DOCTYPE html>
     <div class="detail-panel" id="detailPanel"></div>
   </div>
   <div class="cards" id="cards"></div>
+  <div class="mail-section">
+    <h2>📮 おてがみ</h2>
+    <div id="mailThread" class="mail-thread"></div>
+  </div>
   <script>
     const SVG_NS = "http://www.w3.org/2000/svg";
     const CX = 350, CY = 350, RADIUS = 220, NODE_R = 40;
@@ -2515,6 +2535,75 @@ KANKEI_HTML = """<!DOCTYPE html>
     }
 
     load();
+
+    function parseMail(mail) {
+      const parts = mail.filename.replace(".md", "").split("_");
+      const fromIdx = parts.indexOf("from");
+      const toIdx = parts.indexOf("to");
+      let sender = "", recipient = "";
+      if (fromIdx >= 0 && toIdx > fromIdx) {
+        sender = parts.slice(fromIdx + 1, toIdx).join("_");
+        const afterTo = parts.slice(toIdx + 1);
+        const dateIdx = afterTo.findIndex(p => /^\\d{8}$/.test(p));
+        recipient = dateIdx > 0 ? afterTo.slice(0, dateIdx).join("_") : afterTo[0];
+      }
+      const dateMatch = mail.filename.match(/(\\d{8})_(\\d{4})/);
+      let dateStr = "", sortKey = "";
+      if (dateMatch) {
+        const d = dateMatch[1], t = dateMatch[2];
+        sortKey = d + t;
+        dateStr = d.slice(0,4) + "/" + d.slice(4,6) + "/" + d.slice(6,8) + " " + t.slice(0,2) + ":" + t.slice(2,4);
+      }
+      return { sender, recipient, dateStr, sortKey, content: mail.content };
+    }
+
+    async function loadMails() {
+      const thread = document.getElementById("mailThread");
+      try {
+        const res = await fetch("/api/mailbox/all");
+        const mails = await res.json();
+
+        const charMails = mails.filter(m => m.filename.startsWith("from_"));
+        if (!charMails.length) {
+          thread.innerHTML = '<div class="mail-empty">まだおてがみはありません</div>';
+          return;
+        }
+
+        const nameMap = {};
+        if (_nodes) _nodes.forEach(n => { nameMap[n.id] = n.name; });
+
+        const parsed = charMails.map(m => parseMail(m));
+        // Sort by date (oldest first)
+        parsed.sort((a, b) => (a.sortKey > b.sortKey ? 1 : a.sortKey < b.sortKey ? -1 : 0));
+
+        parsed.forEach(mail => {
+          let body = mail.content.trim();
+          const lines = body.split("\\n");
+          if (lines[0].startsWith("#")) lines.shift();
+          while (lines.length && !lines[0].trim()) lines.shift();
+          while (lines.length && !lines[lines.length-1].trim()) lines.pop();
+          const lastLine = lines[lines.length-1]?.trim();
+          if (lastLine && (lastLine === mail.sender || lastLine === (nameMap[mail.sender] || ""))) lines.pop();
+          body = lines.join("\\n").trim();
+
+          const isLeft = mail.sender === "puchiko";
+          const senderName = nameMap[mail.sender] || mail.sender;
+          const recipientName = nameMap[mail.recipient] || mail.recipient;
+          const senderColor = _nodes?.find(n => n.id === mail.sender)?.color || "#cab8d9";
+
+          const bubble = document.createElement("div");
+          bubble.className = "mail-bubble " + (isLeft ? "left" : "right");
+          bubble.innerHTML =
+            '<div class="mail-sender" style="color:' + senderColor + '">' + senderName + ' → ' + recipientName + '</div>' +
+            body.replace(/</g, "&lt;").replace(/\\n/g, "<br>") +
+            '<div class="mail-meta">' + mail.dateStr + '</div>';
+          thread.appendChild(bubble);
+        });
+      } catch(e) {
+        thread.innerHTML = '<div class="mail-empty">読み込めませんでした</div>';
+      }
+    }
+    loadMails();
   </script>
 </body>
 </html>

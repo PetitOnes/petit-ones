@@ -1,7 +1,7 @@
 ---
 description: "Web ページの本文をリーダーモードで読み取る。WebFetch と違い、AI による要約を挟まず生テキストを返す。物語や記事をじっくり読むときに使う。"
 argument-hint: "<URL>"
-allowed-tools: Bash(bun run scripts/reader.ts:*)
+allowed-tools: Bash(uv run scripts/reader.py:*)
 ---
 
 Web ページの本文をリーダーモードで読み取る。WebFetch と違い、AI による要約を挟まず生テキストを返す。物語や記事をじっくり読むときに使う。
@@ -13,17 +13,17 @@ Web ページの本文をリーダーモードで読み取る。WebFetch と違�
 
 ## 実行方法
 
-`bun run scripts/reader.ts` を実行する。
+`uv run scripts/reader.py` を実行する。
 
 ```bash
 # 全文取得
-bun run scripts/reader.ts "<URL>"
+uv run scripts/reader.py "<URL>"
 
 # ページ情報のみ
-bun run scripts/reader.ts "<URL>" --info
+uv run scripts/reader.py "<URL>" --info
 
 # 特定ページだけ取得（長い場合）
-bun run scripts/reader.ts "<URL>" --page 1
+uv run scripts/reader.py "<URL>" --page 1
 ```
 
 ## 手順
