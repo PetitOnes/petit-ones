@@ -649,13 +649,22 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     restriction_text = "\n".join(restrictions)
     mailbox_dir = DATA_DIR / "mailbox"
     char_data_dir = char_dir(character_id)
+    scripts_dir = PROJECT_DIR / "scripts"
     system_prompt = (
         f"あなたは{character_id}です。以下があなたの魂の定義です。\n\n{soul}\n\n"
         f"ありさんと自然に会話してください。必要があればMCPツールを使ってください。"
         f"印象に残った話題や気づきは `remember` で記憶に残してください。\n\n"
         f"## ファイル\n"
         f"- 自分のデータ: {char_data_dir}/ (SOUL.md, TODO.md, ROUTINES.md など)\n"
-        f"- メールボックス: {mailbox_dir}/ (メッセージ交換。to_相手ID_日時.md で送信。相手ID: puchiko, puchiteya, arisan)\n"
+        f"- メールボックス: {mailbox_dir}/\n"
+        f"\n## メールの送受信\n"
+        f"- 送信: `python3 {scripts_dir}/write_mailbox.py {character_id} <宛先ID> '<内容>'`\n"
+        f"- 未読確認: `python3 {scripts_dir}/list_unread_mail.py {character_id}`\n"
+        f"- 既読にする: `python3 {scripts_dir}/mark_mail_read.py {character_id} <ファイル名>`\n"
+        f"- 全既読: `python3 {scripts_dir}/mark_mail_read.py {character_id} --all`\n"
+        f"- 宛先ID: puchiko, puchiteya, arisan\n"
+        f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
+        f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
         + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
     )
 
@@ -1119,6 +1128,7 @@ def api_mailbox(filter: str = "inbox"):
             "sender": sender,
             "archived": meta["archived"],
             "starred": meta["starred"],
+            "read_by": meta.get("read_by", []),
         })
     return mails
 
@@ -1141,16 +1151,38 @@ def api_mailbox_all(filter: str = "all"):
         if filter == "starred" and not meta["starred"]:
             continue
         content = f.read_text(encoding="utf-8")
-        parts = f.stem.split("_")
+        name = f.stem
+        parts = name.split("_")
         date_str = ""
-        recipient = parts[1] if len(parts) >= 2 else ""
-        if len(parts) >= 4:
-            date_str = parts[2]
-            time_str = parts[3] if len(parts) > 3 else ""
-            if len(date_str) == 8 and len(time_str) >= 4:
-                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
-        lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
-        sender = lines[-1] if lines else ""
+        sender = ""
+        recipient = ""
+        if parts[0] == "from" and "to" in parts:
+            # 新形式: from_送信元_to_宛先_YYYYMMDD_HHMM
+            ti = parts.index("to")
+            sender = "_".join(parts[1:ti])
+            rest = parts[ti + 1:]
+            # rest = [宛先..., YYYYMMDD, HHMM, ...]
+            date_idx = next((i for i, p in enumerate(rest) if len(p) == 8 and p.isdigit()), -1)
+            if date_idx > 0:
+                recipient = "_".join(rest[:date_idx])
+                if date_idx + 1 < len(rest) and len(rest[date_idx + 1]) >= 4:
+                    d, t = rest[date_idx], rest[date_idx + 1]
+                    date_str = f"{d[:4]}-{d[4:6]}-{d[6:8]} {t[:2]}:{t[2:4]}"
+            elif date_idx == 0 and len(rest) >= 2:
+                recipient = sender  # fallback
+                d, t = rest[0], rest[1]
+                if len(d) == 8 and len(t) >= 4:
+                    date_str = f"{d[:4]}-{d[4:6]}-{d[6:8]} {t[:2]}:{t[2:4]}"
+        else:
+            # 旧形式: to_宛先_YYYYMMDD_HHMM
+            recipient = parts[1] if len(parts) >= 2 else ""
+            if len(parts) >= 4:
+                d = parts[2]
+                t = parts[3] if len(parts) > 3 else ""
+                if len(d) == 8 and len(t) >= 4:
+                    date_str = f"{d[:4]}-{d[4:6]}-{d[6:8]} {t[:2]}:{t[2:4]}"
+            lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
+            sender = lines[-1] if lines else ""
         mails.append({
             "filename": f.name,
             "content": content,
@@ -1159,6 +1191,7 @@ def api_mailbox_all(filter: str = "all"):
             "recipient": recipient,
             "archived": meta["archived"],
             "starred": meta["starred"],
+            "read_by": meta.get("read_by", []),
         })
     return mails
 
