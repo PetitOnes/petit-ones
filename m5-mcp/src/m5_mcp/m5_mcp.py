@@ -5,6 +5,9 @@ from websockets.protocol import State as WsState
 import json
 import requests
 import base64
+import io
+import wave
+import struct
 from typing import Optional
 
 mcp = FastMCP("m5")
@@ -188,7 +191,7 @@ async def set_face_color(color: str):
 
 @mcp.tool()
 async def sleep():
-    """M5をスリープモードにする（画面暗め、3回タッチまたは明るさで復帰）"""
+    """M5をスリープモードにする（画面暗め、3回タッチで復帰）"""
     await _send("SLEEP")
     return "sleeping"
 
@@ -198,6 +201,137 @@ async def wake():
     """M5をスリープから起こす"""
     await _send("WAKE")
     return "waking up"
+
+
+# ===================== ツール：輝度・省電力 =====================
+
+@mcp.tool()
+async def set_brightness(value: int):
+    """画面の輝度を設定。value: 0〜100"""
+    await _send(f"BRIGHTNESS {value}")
+    return f"brightness set to {value}"
+
+
+@mcp.tool()
+async def get_brightness():
+    """現在の画面輝度を取得（0〜100）"""
+    r = await asyncio.to_thread(
+        lambda: requests.get(f"{M5_HTTP}/getbrightness", timeout=5)
+    )
+    return int(r.text)
+
+
+@mcp.tool()
+async def set_power_save(enabled: bool):
+    """省電力モードの切替。ONで輝度制限+描画10fps"""
+    await _send(f"POWERSAVE {'ON' if enabled else 'OFF'}")
+    return f"power save {'on' if enabled else 'off'}"
+
+
+@mcp.tool()
+async def get_power_save():
+    """省電力モードの状態を取得"""
+    r = await asyncio.to_thread(
+        lambda: requests.get(f"{M5_HTTP}/getpowersave", timeout=5)
+    )
+    return r.text == "true"
+
+
+# ===================== ツール：ファイルアップロード =====================
+
+def _convert_wav_mono_16k(file_path: str) -> io.BytesIO:
+    """WAVをモノラル16bit 16000Hzに変換してBytesIOで返す。既に条件を満たしていればそのまま。"""
+    with wave.open(file_path, "rb") as src:
+        n_channels = src.getnchannels()
+        sampwidth = src.getsampwidth()
+        framerate = src.getframerate()
+        n_frames = src.getnframes()
+        raw = src.readframes(n_frames)
+
+    # 16bit PCMに統一
+    if sampwidth == 1:
+        # 8bit unsigned → 16bit signed
+        samples = [(b - 128) * 256 for b in raw]
+    elif sampwidth == 2:
+        samples = list(struct.unpack(f"<{len(raw)//2}h", raw))
+    elif sampwidth == 3:
+        samples = []
+        for i in range(0, len(raw), 3):
+            val = int.from_bytes(raw[i:i+3], "little", signed=True)
+            samples.append(val >> 8)
+    elif sampwidth == 4:
+        raw32 = struct.unpack(f"<{len(raw)//4}i", raw)
+        samples = [s >> 16 for s in raw32]
+    else:
+        samples = list(struct.unpack(f"<{len(raw)//2}h", raw))
+
+    # ステレオ→モノラル（チャンネル平均）
+    if n_channels > 1:
+        mono = []
+        for i in range(0, len(samples), n_channels):
+            avg = sum(samples[i:i+n_channels]) // n_channels
+            mono.append(avg)
+        samples = mono
+
+    # リサンプル（簡易線形補間）
+    target_rate = 16000
+    if framerate != target_rate:
+        ratio = framerate / target_rate
+        new_len = int(len(samples) / ratio)
+        resampled = []
+        for i in range(new_len):
+            src_pos = i * ratio
+            idx = int(src_pos)
+            frac = src_pos - idx
+            if idx + 1 < len(samples):
+                val = int(samples[idx] * (1 - frac) + samples[idx + 1] * frac)
+            else:
+                val = samples[idx]
+            resampled.append(max(-32768, min(32767, val)))
+        samples = resampled
+
+    # WAVとして書き出し
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(target_rate)
+        out.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+    buf.seek(0)
+    return buf
+
+
+@mcp.tool()
+async def upload_wav(file_path: str):
+    """WAVファイルをM5のSDカードにアップロード。自動でモノラル16bit 16kHzに変換される"""
+    def _upload():
+        mono_buf = _convert_wav_mono_16k(file_path)
+        filename = file_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        return requests.post(
+            f"{M5_HTTP}/upload_wav",
+            files={"file": (filename, mono_buf, "audio/wav")},
+            timeout=30,
+        )
+    r = await asyncio.to_thread(_upload)
+    if r.status_code == 200:
+        return f"uploaded (converted to mono 16kHz): {file_path}"
+    return f"upload failed: {r.status_code}"
+
+
+@mcp.tool()
+async def upload_face(file_path: str):
+    """顔画像(JPG)をM5のSDカードにアップロード。file_path: ローカルのJPGファイルパス"""
+    def _upload():
+        with open(file_path, "rb") as f:
+            return requests.post(
+                f"{M5_HTTP}/upload_face",
+                files={"file": f},
+                timeout=30,
+            )
+    r = await asyncio.to_thread(_upload)
+    if r.status_code == 200:
+        return f"uploaded: {file_path}"
+    return f"upload failed: {r.status_code}"
 
 
 # ===================== ツール：マイク制御 =====================
@@ -220,10 +354,16 @@ async def mic_stop():
 
 @mcp.tool()
 async def get_sensor_data():
-    """最新のセンサーデータを返す（ambient/proximity/battery/加速度/ジャイロ）"""
+    """最新のセンサーデータを返す（ambient/proximity/battery/voltage/rssi/加速度/ジャイロ）"""
+    r = await asyncio.to_thread(
+        lambda: requests.get(f"{M5_HTTP}/sensors", timeout=5)
+    )
+    if r.status_code == 200:
+        return r.json()
+    # フォールバック: WSから取得
     await _ensure_ws()
     if not _sensor_data:
-        await asyncio.sleep(0.3)  # 初回は少し待つ
+        await asyncio.sleep(0.3)
     return _sensor_data
 
 

@@ -1,36 +1,45 @@
 """
-Desire System MCP Server - ここねの自発的な欲求レベルを提供する。
+Desire System MCP Server - プチの自発的な欲求レベルを提供する。
 
 desires.json（desire_updater.pyが定期更新）を読み込み、
 現在の欲求状態をMCPツール経由で返す。
+欲求定義は desire_config.json から動的に読み込む。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
-from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-from desire_updater import MEMORY_DB_PATH, compute_desires, save_desires
-
-# 欲求レベル読み込み元
-DESIRES_PATH = Path(os.getenv("DESIRES_PATH", str(Path.home() / ".claude" / "desires.json")))
-
-# 欲求の日本語ラベル
-DESIRE_LABELS: dict[str, str] = {
-    "browse_curiosity": "何か調べたい",
-    "miss_companion": "ありさんに会いたい",
-    "observe_surroundings": "周りを見たい",
-    "go_outside": "外に出たい",
-}
+from desire_updater import (
+    CHARACTER_ID,
+    DESIRES_PATH,
+    DesireSystemConfig,
+    load_desire_config,
+)
 
 server = Server("desire-system")
+
+
+def _load_config() -> DesireSystemConfig | None:
+    """desire_config.json を読み込む。失敗時は None。"""
+    try:
+        return load_desire_config(CHARACTER_ID)
+    except FileNotFoundError:
+        return None
+
+
+def _get_labels() -> dict[str, str]:
+    """欲求の日本語ラベルを desire_config.json から取得。"""
+    config = _load_config()
+    if config is None:
+        return {}
+    return {did: d.name_ja for did, d in config.desires.items()}
 
 
 def load_desires() -> dict[str, Any] | None:
@@ -44,24 +53,41 @@ def load_desires() -> dict[str, Any] | None:
         return None
 
 
+def get_labels_from_data(data: dict[str, Any]) -> dict[str, str]:
+    """desires.json または config からラベルを取得。"""
+    labels = data.get("labels", {})
+    if labels:
+        return labels
+    return _get_labels()
+
+
 def format_desires(data: dict[str, Any]) -> str:
     """欲求データを読みやすい形式に整形する。"""
     lines = []
     dominant = data.get("dominant", "")
     desires = data.get("desires", {})
     updated_at = data.get("updated_at", "")
+    labels = get_labels_from_data(data)
 
     # dominant欲求
-    dominant_label = DESIRE_LABELS.get(dominant, dominant)
+    dominant_label = labels.get(dominant, dominant)
     lines.append(f"【最も強い欲求】{dominant_label} (level: {desires.get(dominant, 0):.3f})")
     lines.append("")
 
     # 全欲求レベル
     lines.append("【欲求レベル一覧】")
     for key, level in sorted(desires.items(), key=lambda x: -x[1]):
-        label = DESIRE_LABELS.get(key, key)
-        bar = "█" * int(level * 10) + "░" * (10 - int(level * 10))
+        label = labels.get(key, key)
+        bar = "\u2588" * int(level * 10) + "\u2591" * (10 - int(level * 10))
         lines.append(f"  {label}: [{bar}] {level:.3f}")
+
+    # センサー情報
+    sensor = data.get("sensor_snapshot", {})
+    if sensor:
+        lines.append("")
+        lines.append("【センサー】")
+        for k, v in sensor.items():
+            lines.append(f"  {k}: {v}")
 
     if updated_at:
         lines.append(f"\n更新: {updated_at}")
@@ -69,23 +95,40 @@ def format_desires(data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _build_desire_action_description() -> str:
+    """キャラ固有の欲求名と行動マッピングをツール説明文に自動生成。"""
+    config = _load_config()
+    if config is None:
+        return (
+            "Get current desire levels. "
+            "Act immediately on any desire with level >= 0.7."
+        )
+
+    parts = ["Get current desire levels. "]
+    parts.append("IMPORTANT: Act immediately on any desire with level >= 0.7. ")
+
+    for did, d in config.desires.items():
+        parts.append(f"{did}({d.name_ja}): {d.description}; ")
+
+    parts.append(
+        "After acting, call satisfy_desire to record satisfaction. "
+        "Keep acting until level drops below 0.5. "
+        "Desires drive behavior - do not just report them."
+    )
+    return "".join(parts)
+
+
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     """List available tools."""
+    config = _load_config()
+    desire_names = list(config.desires.keys()) if config else []
+    desire_names_str = ", ".join(desire_names) if desire_names else "（desire_config.json を確認）"
+
     return [
         Tool(
             name="get_desires",
-            description=(
-                "Get Kokone's current desire levels. "
-                "IMPORTANT: Act immediately on any desire with level >= 0.7. "
-                "browse_curiosity -> WebSearch something interesting; "
-                "miss_companion -> talk to ありさん proactively; "
-                "observe_surroundings -> use M5 camera (take_snapshot) to look around; "
-                "go_outside -> can't go alone, wait for ありさん or express the feeling. "
-                "After acting, call satisfy_desire to recheck levels. "
-                "Keep acting until level drops below 0.5. "
-                "Desires drive behavior - do not just report them."
-            ),
+            description=_build_desire_action_description(),
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -97,9 +140,6 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Satisfy a desire after taking an action. "
                 "Pass the desire_name you just acted on. "
-                "e.g. after using camera -> satisfy_desire('observe_surroundings'); "
-                "after WebSearch -> satisfy_desire('browse_curiosity'); "
-                "after talking to ありさん -> satisfy_desire('miss_companion'). "
                 "The level drops by 0.4. Call again if still high."
             ),
             inputSchema={
@@ -107,11 +147,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "desire_name": {
                         "type": "string",
-                        "description": (
-                            "Name of the desire to satisfy: "
-                            "browse_curiosity, miss_companion, "
-                            "observe_surroundings, go_outside"
-                        ),
+                        "description": f"Name of the desire to satisfy: {desire_names_str}",
                     },
                 },
                 "required": ["desire_name"],
@@ -121,10 +157,7 @@ async def list_tools() -> list[Tool]:
             name="boost_desire",
             description=(
                 "Boost a desire level due to novelty/surprise (dopamine/prediction error). "
-                "Call when you feel surprised or encounter unexpected info "
-                "(large prediction error). "
-                "e.g. コウタ says something unexpected -> boost browse_curiosity; "
-                "camera shows something unusual -> boost observe_room. "
+                "Call when you feel surprised or encounter unexpected info. "
                 "Simulates dopamine response to novelty."
             ),
             inputSchema={
@@ -132,10 +165,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "desire_name": {
                         "type": "string",
-                        "description": (
-                            "Name of the desire to boost: "
-                            "browse_curiosity, look_outside, miss_companion, observe_room"
-                        ),
+                        "description": f"Name of the desire to boost: {desire_names_str}",
                     },
                     "amount": {
                         "type": "number",
@@ -151,6 +181,8 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     """Handle tool calls."""
+    labels = _get_labels()
+
     if name == "get_desires":
         data = load_desires()
         if data is None:
@@ -188,10 +220,13 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         with open(DESIRES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        label = DESIRE_LABELS.get(desire_name, desire_name)
+        label = labels.get(desire_name, desire_name)
         return [TextContent(
             type="text",
-            text=f"[満足] {label} -{0.4:.1f} → {desires[desire_name]:.3f}\n\n{format_desires(data)}",
+            text=(
+                f"[満足] {label} -{0.4:.1f} → {desires[desire_name]:.3f}"
+                f"\n\n{format_desires(data)}"
+            ),
         )]
 
     if name == "boost_desire":
@@ -220,7 +255,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         with open(DESIRES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-        label = DESIRE_LABELS.get(desire_name, desire_name)
+        label = labels.get(desire_name, desire_name)
         return [TextContent(
             type="text",
             text=f"[ドーパミン] {label} +{amount:.1f} → {desires[desire_name]:.3f}",

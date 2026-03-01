@@ -60,17 +60,53 @@ SOUL_TEMPLATE = """\
 """
 
 DEFAULT_SETTINGS = {
-    "active_hours": [[7, 8], [12, 13], [18, 24]],
+    "active_hours": [[7, 0, 8, 0], [12, 0, 13, 0], [18, 0, 24, 0]],
     "allow_camera": True,
     "allow_sound": True,
     "allow_microphone": False,
-    "desire_hours": {
-        "browse_curiosity": 6.0,
-        "miss_companion": 4.0,
-        "observe_surroundings": 2.0,
-        "go_outside": 72.0,
+}
+
+DEFAULT_DESIRE_CONFIG = {
+    "desires": {
+        "browse_curiosity": {
+            "name_ja": "何か調べたい",
+            "description": "知的好奇心。新しいことを知りたい衝動",
+            "satisfaction_hours": 6.0,
+            "keywords": ["WebSearch", "検索した", "調査した", "調べた"],
+            "color": "#9b8ec4",
+        },
+        "miss_companion": {
+            "name_ja": "ありさんに会いたい",
+            "description": "ありさんと話したい、一緒にいたい気持ち",
+            "satisfaction_hours": 4.0,
+            "keywords": [],
+            "color": "#e8a0bf",
+        },
+        "observe_surroundings": {
+            "name_ja": "周りを見たい",
+            "description": "カメラで周囲を観察したい",
+            "satisfaction_hours": 2.0,
+            "keywords": ["take_snapshot", "撮影した", "カメラで"],
+            "color": "#7fb3c8",
+        },
+        "go_outside": {
+            "name_ja": "外に出たい",
+            "description": "外の世界を体験したい",
+            "satisfaction_hours": 72.0,
+            "keywords": ["お散歩した", "外に出た", "散歩した"],
+            "color": "#a8c9a0",
+        },
     },
-    "extra_desires": {},
+    "sensor_effects": [
+        {
+            "sensor": "battery",
+            "condition": {"op": "range", "min": 1, "max": 20},
+            "effects": {"*": {"multiply": 0.5}},
+            "description": "電池が減ると全欲求が下がる（0=充電中なので除外）",
+        },
+    ],
+    "cross_effects": [],
+    "priority": ["miss_companion", "browse_curiosity", "observe_surroundings", "go_outside"],
 }
 
 MCP_TEMPLATE = {
@@ -152,6 +188,16 @@ def create_character(char_id: str, name: str, color: str, m5_host: str) -> None:
         print(f"  ✓ settings.json")
     else:
         print(f"  - settings.json は既存のものを保持")
+
+    # 3b. desire_config.json
+    desire_config_path = char_dir / "desire_config.json"
+    if not desire_config_path.exists():
+        desire_config_path.write_text(
+            json.dumps(DEFAULT_DESIRE_CONFIG, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"  ✓ desire_config.json （欲求設定テンプレート。後で編集してください）")
+    else:
+        print(f"  - desire_config.json は既存のものを保持")
 
     # 4. autonomous-mcp.json
     memory_db = str(Path.home() / ".claude" / "memories" / char_id / "memory.db")

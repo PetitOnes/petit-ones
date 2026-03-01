@@ -16,6 +16,8 @@ import hmac
 import secrets
 import time
 
+import base64
+
 from fastapi import Cookie, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image
@@ -291,11 +293,35 @@ def memory_db_path(character_id: str) -> Path:
     return Path.home() / ".claude" / "memories" / character_id / "memory.db"
 
 DEFAULT_SETTINGS = {
-    "active_hours": [[7, 8], [12, 13], [18, 24]],
+    "active_hours": {
+        "weekday": [[7, 0, 8, 0], [12, 0, 13, 0], [18, 0, 24, 0]],
+        "weekend": [[7, 0, 8, 0], [12, 0, 13, 0], [18, 0, 24, 0]],
+    },
     "allow_camera": True,
     "allow_sound": True,
     "allow_microphone": False,
+    "day_type_override": None,
 }
+
+
+def _normalize_hour_entry(entry):
+    """旧形式 [h1, h2] を新形式 [h1, m1, h2, m2] に変換する。"""
+    if isinstance(entry, list) and len(entry) == 2:
+        return [entry[0], 0, entry[1], 0]
+    return entry
+
+
+def _normalize_active_hours(raw):
+    """旧形式(配列)を新形式(weekday/weekend dict, 4要素)に変換する。"""
+    if isinstance(raw, dict) and "weekday" in raw and "weekend" in raw:
+        return {
+            "weekday": [_normalize_hour_entry(e) for e in raw["weekday"]],
+            "weekend": [_normalize_hour_entry(e) for e in raw["weekend"]],
+        }
+    if isinstance(raw, list):
+        normalized = [_normalize_hour_entry(e) for e in raw]
+        return {"weekday": normalized, "weekend": normalized}
+    return DEFAULT_SETTINGS["active_hours"]
 
 
 async def check_m5_online(host: str, port: int = 80, timeout: float = 2.0) -> bool:
@@ -374,6 +400,16 @@ SOUND_TOOLS = ["mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon"]
 MIC_TOOLS = ["mcp__m5-mcp__mic_start", "mcp__m5-mcp__mic_stop"]
 
 
+FILE_TOOLS = [
+    f"Read({DATA_DIR}/**)",
+    f"Write({DATA_DIR}/**)",
+    f"Edit({DATA_DIR}/**)",
+    f"Glob({DATA_DIR}/**)",
+    f"Read({PROJECT_DIR}/**)",
+    f"Glob({PROJECT_DIR}/**)",
+]
+
+
 def build_allowed_tools(settings: dict) -> str:
     tools = BASE_TOOLS.copy()
     if settings.get("allow_camera", True):
@@ -382,6 +418,7 @@ def build_allowed_tools(settings: dict) -> str:
         tools += SOUND_TOOLS
     if settings.get("allow_microphone", False):
         tools += MIC_TOOLS
+    tools += FILE_TOOLS
     return ",".join(tools)
 
 
@@ -424,22 +461,37 @@ def _query_memories(character_id: str, limit: int, date_filter: str | None = Non
         conn.row_factory = sqlite3.Row
         if date_filter:
             rows = conn.execute(
-                "SELECT content, timestamp, category, emotion, importance FROM memories "
+                "SELECT content, timestamp, category, emotion, importance, sensory_data FROM memories "
                 "WHERE timestamp LIKE ? ORDER BY timestamp DESC LIMIT ?",
                 (f"{date_filter}%", limit)
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT content, timestamp, category, emotion, importance FROM memories "
+                "SELECT content, timestamp, category, emotion, importance, sensory_data FROM memories "
                 "ORDER BY timestamp DESC LIMIT ?", (limit,)
             ).fetchall()
         conn.close()
-        return [{"content": r["content"], "metadata": {
-            "timestamp": r["timestamp"],
-            "category": r["category"],
-            "emotion": r["emotion"],
-            "importance": r["importance"],
-        }} for r in rows]
+        results = []
+        for r in rows:
+            meta = {
+                "timestamp": r["timestamp"],
+                "category": r["category"],
+                "emotion": r["emotion"],
+                "importance": r["importance"],
+            }
+            # sensory_data から image_data を抽出
+            sd_raw = r["sensory_data"]
+            if sd_raw:
+                try:
+                    sd_list = json.loads(sd_raw)
+                    for sd in sd_list:
+                        if sd.get("sensory_type") == "visual" and sd.get("image_data"):
+                            meta["image_data"] = sd["image_data"]
+                            break
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            results.append({"content": r["content"], "metadata": meta})
+        return results
     except Exception:
         return []
 
@@ -467,6 +519,7 @@ def get_settings(character_id: str) -> dict:
             data = json.load(f)
         for k, v in DEFAULT_SETTINGS.items():
             data.setdefault(k, v)
+        data["active_hours"] = _normalize_active_hours(data["active_hours"])
         return data
     except Exception:
         return DEFAULT_SETTINGS.copy()
@@ -561,24 +614,31 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         restrictions.append("マイク（mic_start）は今は使わないこと。")
 
     restriction_text = "\n".join(restrictions)
+    mailbox_dir = DATA_DIR / "mailbox"
+    char_data_dir = char_dir(character_id)
     system_prompt = (
         f"あなたは{character_id}です。以下があなたの魂の定義です。\n\n{soul}\n\n"
         f"ありさんと自然に会話してください。必要があればMCPツールを使ってください。"
-        f"印象に残った話題や気づきは `remember` で記憶に残してください。"
-        + (f"\n\n## 現在の制限\n{restriction_text}" if restriction_text else "")
+        f"印象に残った話題や気づきは `remember` で記憶に残してください。\n\n"
+        f"## ファイル\n"
+        f"- 自分のデータ: {char_data_dir}/ (SOUL.md, TODO.md, ROUTINES.md など)\n"
+        f"- メールボックス: {mailbox_dir}/ (メッセージ交換。to_相手ID_日時.md で送信。相手ID: puchiko, puchiteya, arisan)\n"
+        + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
     )
 
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     sf = session_file(character_id)
 
     if sf.exists():
         sid = sf.read_text().strip()
         cmd = ["claude", "-p", "--resume", sid,
                "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+               "--dangerously-skip-permissions",
                "--output-format", "json"]
     else:
         cmd = ["claude", "-p", "--append-system-prompt", system_prompt,
                "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+               "--dangerously-skip-permissions",
                "--output-format", "json"]
 
     try:
@@ -627,7 +687,7 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
         "この日を自分の口調で2〜3文の日記にまとめて。余計な前置きなしで日記の文章だけ書いて。"
     )
 
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     try:
         proc = await asyncio.create_subprocess_exec(
             "claude", "-p", prompt,
@@ -932,6 +992,129 @@ async def api_m5_wake(character_id: str):
     return {"ok": True}
 
 
+class PhotoSaveRequest(BaseModel):
+    image_data: str
+    filename: str | None = None
+
+
+@app.post("/api/{character_id}/photos/save")
+async def api_photo_save(character_id: str, req: PhotoSaveRequest):
+    photos_dir = char_dir(character_id) / "photos"
+    photos_dir.mkdir(parents=True, exist_ok=True)
+    if req.filename:
+        # サニタイズ: ファイル名のディレクトリトラバーサル防止
+        safe_name = Path(req.filename).name
+        if not safe_name.lower().endswith(".jpg"):
+            safe_name += ".jpg"
+    else:
+        safe_name = datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
+    try:
+        data = base64.b64decode(req.image_data)
+    except Exception:
+        return JSONResponse({"error": "invalid base64"}, status_code=400)
+    (photos_dir / safe_name).write_bytes(data)
+    return {"ok": True, "filename": safe_name}
+
+
+@app.get("/api/{character_id}/photos")
+def api_photos_list(character_id: str):
+    photos_dir = char_dir(character_id) / "photos"
+    if not photos_dir.exists():
+        return []
+    files = sorted(
+        [f.name for f in photos_dir.iterdir() if f.suffix.lower() in (".jpg", ".jpeg", ".png")],
+        reverse=True,
+    )
+    return files
+
+
+@app.get("/api/{character_id}/photos/{filename}")
+def api_photo_serve(character_id: str, filename: str):
+    # ディレクトリトラバーサル防止
+    safe_name = Path(filename).name
+    photo_path = char_dir(character_id) / "photos" / safe_name
+    if not photo_path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response(content=photo_path.read_bytes(), media_type="image/jpeg")
+
+
+@app.get("/api/mailbox")
+def api_mailbox():
+    """ありさん宛のメール一覧を返す"""
+    mailbox_dir = DATA_DIR / "mailbox"
+    if not mailbox_dir.exists():
+        return []
+    mails = []
+    for f in sorted(mailbox_dir.iterdir(), reverse=True):
+        if not f.name.endswith(".md"):
+            continue
+        name = f.stem
+        # 新形式: from_送信元_to_arisan_日時 / 旧形式: to_arisan_日時
+        if not (name.startswith("to_arisan") or "_to_arisan_" in name):
+            continue
+        content = f.read_text(encoding="utf-8")
+        parts = name.split("_")
+        date_str = ""
+        sender = ""
+        if parts[0] == "from" and "to" in parts:
+            # from_puchiko_to_arisan_20260228_0050
+            ti = parts.index("to")
+            sender = "_".join(parts[1:ti])
+            rest = parts[ti + 2:]  # after "arisan"
+            if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
+                date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
+        else:
+            # to_arisan_20260228_0050
+            if len(parts) >= 4:
+                date_str = parts[2]
+                time_str = parts[3] if len(parts) > 3 else ""
+                if len(date_str) == 8 and len(time_str) >= 4:
+                    date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
+        # sender が未確定なら最終行から推定
+        if not sender:
+            lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
+            if lines:
+                sender = lines[-1]
+        mails.append({
+            "filename": f.name,
+            "content": content,
+            "date": date_str,
+            "sender": sender,
+        })
+    return mails
+
+
+@app.get("/api/mailbox/all")
+def api_mailbox_all():
+    """全メール一覧（メールボックスにあるすべて）"""
+    mailbox_dir = DATA_DIR / "mailbox"
+    if not mailbox_dir.exists():
+        return []
+    mails = []
+    for f in sorted(mailbox_dir.iterdir(), reverse=True):
+        if not f.name.endswith(".md"):
+            continue
+        content = f.read_text(encoding="utf-8")
+        parts = f.stem.split("_")
+        date_str = ""
+        recipient = parts[1] if len(parts) >= 2 else ""
+        if len(parts) >= 4:
+            date_str = parts[2]
+            time_str = parts[3] if len(parts) > 3 else ""
+            if len(date_str) == 8 and len(time_str) >= 4:
+                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
+        lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
+        sender = lines[-1] if lines else ""
+        mails.append({
+            "filename": f.name,
+            "content": content,
+            "date": date_str,
+            "sender": sender,
+            "recipient": recipient,
+        })
+    return mails
+
+
 class InteractRequest(BaseModel):
     from_id: str
     to_id: str
@@ -1006,7 +1189,7 @@ HTML = """<!DOCTYPE html>
       --char-btn-text: white;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 600px; margin: 0 auto; transition: background 0.4s; }
+    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
@@ -1038,6 +1221,15 @@ HTML = """<!DOCTYPE html>
     .memory:last-child { border-bottom: none; }
     .memory-time { font-size: 0.75rem; color: #aaa; margin-bottom: 2px; }
     .memory-text { font-size: 0.875rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .memory-img-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .memory-thumb { width: 80px; height: 60px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid var(--char-border); }
+    .photo-save-btn { background: none; border: 1px solid var(--char-border); border-radius: 6px; padding: 2px 8px; font-size: 0.8rem; cursor: pointer; color: #888; }
+    .photo-save-btn:hover { background: var(--char-soft); }
+    .photo-save-btn:disabled { opacity: 0.5; cursor: default; }
+    .mail-item { padding: 12px; border: 1px solid #e0e0e0; border-radius: 10px; margin-bottom: 10px; background: #fafafa; }
+    .mail-item .mail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.75rem; color: #999; }
+    .mail-item .mail-sender { font-weight: 600; color: #666; }
+    .mail-item .mail-body { font-size: 0.85rem; line-height: 1.6; white-space: pre-wrap; color: #333; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -1071,9 +1263,14 @@ HTML = """<!DOCTYPE html>
     .hours-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
     .hour-row { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; }
     .hour-row input[type=number] { width: 52px; padding: 4px 8px; border: 1px solid var(--char-border); border-radius: 8px; font-size: 0.875rem; text-align: center; }
+    .hour-row select { padding: 4px 4px; border: 1px solid var(--char-border); border-radius: 8px; font-size: 0.875rem; text-align: center; background: var(--card-bg); color: #ddd; }
+    .hour-row .time-group { display: flex; align-items: center; gap: 2px; }
     .hour-del { background: none; border: none; color: #ccc; cursor: pointer; font-size: 1rem; }
     .add-hour-btn { font-size: 0.8rem; color: var(--char-mid); background: none; border: 1px dashed var(--char); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
     .save-settings-btn { width: 100%; margin-top: 12px; background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px; font-size: 0.9rem; cursor: pointer; }
+    .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
+    .day-tab.active { background: var(--char); color: var(--char-btn-text); border-color: var(--char); }
 
     /* ポップアップ */
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
@@ -1110,6 +1307,7 @@ HTML = """<!DOCTYPE html>
   <div class="header">
     <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
     <div style="display:flex;gap:4px;">
+      <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
       <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
     </div>
@@ -1170,6 +1368,7 @@ HTML = """<!DOCTYPE html>
           <span class="diary-date-label" id="diaryDateLabel">—</span>
           <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
         </div>
+        <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
         <div id="diaryContent"><div class="empty">読み込み中...</div></div>
       </div>
     </div>
@@ -1194,10 +1393,25 @@ HTML = """<!DOCTYPE html>
         <button class="popup-close" onclick="closePopup('settingsOverlay')">✕</button>
       </div>
       <div class="popup-body">
-        <div style="font-size:0.8rem;color:#9b8ec4;margin-bottom:8px;font-weight:600;">アクティブタイム（毎回動く時間帯）</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <span style="font-size:0.8rem;color:#9b8ec4;font-weight:600;" id="activeTimeLabel">アクティブタイム（毎回動く時間帯）</span>
+          <span id="dayTypeLabel" style="font-size:0.75rem;padding:2px 8px;border-radius:8px;font-weight:600;"></span>
+        </div>
+        <div class="day-tabs">
+          <button class="day-tab active" id="tabWeekday" onclick="switchDayTab('weekday')">平日</button>
+          <button class="day-tab" id="tabWeekend" onclick="switchDayTab('weekend')">休日</button>
+        </div>
         <div class="hours-list" id="hoursList"></div>
         <button class="add-hour-btn" onclick="addHourRow()">＋ 追加</button>
         <div style="margin-top:16px;">
+          <div class="setting-row">
+            <span class="setting-label">🕺 今日のスケジュール</span>
+            <select id="dayTypeOverride" onchange="updateDayTypeLabel()" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
+              <option value="">自動（曜日通り）</option>
+              <option value="weekday">平日扱い</option>
+              <option value="weekend">休日扱い</option>
+            </select>
+          </div>
           <div class="setting-row">
             <span class="setting-label">📷 カメラ</span>
             <label class="toggle"><input type="checkbox" id="allowCamera"><span class="toggle-slider"></span></label>
@@ -1216,6 +1430,17 @@ HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- メールボックスポップアップ -->
+  <div class="overlay" id="mailboxOverlay" onclick="closeIfOverlay(event,'mailboxOverlay')">
+    <div class="popup">
+      <div class="popup-header">
+        <span class="popup-title">📬 メールボックス</span>
+        <button class="popup-close" onclick="closePopup('mailboxOverlay')">✕</button>
+      </div>
+      <div class="popup-body" id="mailboxBody"></div>
+    </div>
+  </div>
+
   <!-- 記憶一覧ポップアップ -->
   <div class="overlay" id="memoriesOverlay" onclick="closeIfOverlay(event,'memoriesOverlay')">
     <div class="popup">
@@ -1228,20 +1453,33 @@ HTML = """<!DOCTYPE html>
   </div>
 
   <script>
-    const DESIRE_LABELS = {
-      browse_curiosity:"何か調べたい", miss_companion:"ありさんに会いたい",
-      observe_surroundings:"周りを見たい", go_outside:"外に出たい",
-      want_to_learn:"新しいことを知りたい", want_attention:"注目されたい",
-    };
-    const DESIRE_COLORS = {
-      browse_curiosity:"#9b8ec4", miss_companion:"#e8a0bf",
-      observe_surroundings:"#7fb3c8", go_outside:"#a8c9a0",
-      want_to_learn:"#f0c040", want_attention:"#f5956e",
-    };
+    // labels と colors は desires.json から動的に取得（desire_config.json 由来）
+    let DESIRE_LABELS = {};
+    let DESIRE_COLORS = {};
 
     let currentCharId = "puchiko";
     let characters = [];
     const chatStates = {};
+    let _memoryImages = {};
+    let _diaryImages = {};
+    let _popupImages = {};
+
+    async function savePhoto(btn, idx, source) {
+      const store = source === true ? _diaryImages : source === 'popup' ? _popupImages : _memoryImages;
+      const imageData = store[idx];
+      if (!imageData) return;
+      btn.disabled = true;
+      btn.textContent = "保存中…";
+      try {
+        const res = await fetch(`/api/${currentCharId}/photos/save`, {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({image_data: imageData})
+        });
+        if (res.ok) { btn.textContent = "✅"; }
+        else { btn.textContent = "❌"; btn.disabled = false; }
+      } catch { btn.textContent = "❌"; btn.disabled = false; }
+    }
 
     function brightness(hex) {
       const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
@@ -1382,6 +1620,10 @@ HTML = """<!DOCTYPE html>
         document.getElementById("sleepBtn").style.display = (m5_online && !m5_sleeping) ? "" : "none";
         document.getElementById("wakeBtn").style.display  = (m5_online && m5_sleeping)  ? "" : "none";
 
+        // desires.json の labels/colors を動的に取得
+        if (desires.labels) DESIRE_LABELS = desires.labels;
+        if (desires.colors) DESIRE_COLORS = desires.colors;
+
         if (desires.updated_at) {
           document.getElementById("updated").textContent = "更新: " + new Date(desires.updated_at).toLocaleString("ja-JP");
         }
@@ -1401,9 +1643,15 @@ HTML = """<!DOCTYPE html>
         const memCount = document.getElementById("memoriesCount");
         if (memories.length > 0) {
           memCount.textContent = `(${memories.length}件)`;
-          memEl.innerHTML = memories.map(m => {
+          _memoryImages = {};
+          memEl.innerHTML = memories.map((m, i) => {
             const ts = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "";
-            return `<div class="memory"><div class="memory-time">${ts}</div><div class="memory-text">${m.content}</div></div>`;
+            let imgRow = "";
+            if (m.metadata?.image_data) {
+              _memoryImages[i] = m.metadata.image_data;
+              imgRow = `<div class="memory-img-row"><img class="memory-thumb" src="data:image/jpeg;base64,${m.metadata.image_data}" onclick="window.open(this.src,'_blank')"><button class="photo-save-btn" onclick="savePhoto(this,${i})">💾</button></div>`;
+            }
+            return `<div class="memory"><div class="memory-time">${ts}</div><div class="memory-text">${m.content}</div>${imgRow}</div>`;
           }).join("");
         } else { memCount.textContent = ""; memEl.innerHTML = '<div class="empty">今日はまだ記憶がありません</div>'; }
 
@@ -1512,6 +1760,7 @@ HTML = """<!DOCTYPE html>
       labelEl.textContent = date;
       document.getElementById("diaryPrev").disabled = _diaryIdx >= _diaryDates.length - 1;
       document.getElementById("diaryNext").disabled = _diaryIdx <= 0;
+      document.getElementById("diaryTodayBar").style.display = _diaryIdx === 0 ? "none" : "block";
       loadDiaryDate(date);
     }
 
@@ -1534,9 +1783,15 @@ HTML = """<!DOCTYPE html>
     function renderDiaryContent(data) {
       const diaryEl = document.getElementById("diaryContent");
       if (_diaryShowDetail) {
+        _diaryImages = {};
         const items = (data.memories || []).map((m, i) => {
           const t = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP", {hour:"2-digit",minute:"2-digit"}) : "";
-          return `<div class="diary-entry"><div class="diary-time">${t}</div><div class="diary-summary expanded">${m.content}</div></div>`;
+          let imgRow = "";
+          if (m.metadata?.image_data) {
+            _diaryImages[i] = m.metadata.image_data;
+            imgRow = `<div class="memory-img-row"><img class="memory-thumb" src="data:image/jpeg;base64,${m.metadata.image_data}" onclick="window.open(this.src,'_blank')"><button class="photo-save-btn" onclick="savePhoto(this,${i},true)">💾</button></div>`;
+          }
+          return `<div class="diary-entry"><div class="diary-time">${t}</div><div class="diary-summary expanded">${m.content}</div>${imgRow}</div>`;
         }).join("") || '<div class="empty">記憶なし</div>';
         diaryEl.innerHTML = items;
       } else if (data.summary) {
@@ -1566,7 +1821,13 @@ HTML = """<!DOCTYPE html>
     }
 
     function diaryNav(dir) {
-      _diaryIdx = Math.max(0, Math.min(_diaryDates.length - 1, _diaryIdx + dir));
+      _diaryIdx = Math.max(0, Math.min(_diaryDates.length - 1, _diaryIdx - dir));
+      _diaryShowDetail = false;
+      renderDiaryPage();
+    }
+
+    function diaryGoToday() {
+      _diaryIdx = 0;  // 日付は降順なので0が最新（今日）
       _diaryShowDetail = false;
       renderDiaryPage();
     }
@@ -1578,15 +1839,22 @@ HTML = """<!DOCTYPE html>
       if (_diaryDates.length > 0) renderDiaryContent(_diaryCache[_diaryDates[_diaryIdx]] || {});
     }
 
-    async function updateDiary() {
+    async function updateDiary(resetToToday = false) {
       if (currentCharId === "group") return;
+      const prevDate = _diaryDates.length > 0 ? _diaryDates[_diaryIdx] : null;
       _diaryCache = {};
       try {
         const res = await fetch(`/api/${currentCharId}/memories/all`);
         const byDate = await res.json();
         _diaryDates = Object.keys(byDate).sort().reverse();
-        _diaryIdx = 0;
-        _diaryShowDetail = false;
+        if (resetToToday || !prevDate) {
+          _diaryIdx = 0;
+          _diaryShowDetail = false;
+        } else {
+          // 以前見ていた日付を維持
+          const found = _diaryDates.indexOf(prevDate);
+          _diaryIdx = found >= 0 ? found : 0;
+        }
         renderDiaryPage();
       } catch(e) {}
     }
@@ -1656,11 +1924,19 @@ HTML = """<!DOCTYPE html>
       if (dates.length === 0) {
         body.innerHTML = '<div class="empty">まだ記憶がありません</div>';
       } else {
+        _popupImages = {};
+        let imgIdx = 0;
         body.innerHTML = dates.map(date => {
           const items = byDate[date];
           const rows = items.map(m => {
             const ts = m.metadata?.timestamp ? new Date(m.metadata.timestamp).toLocaleTimeString("ja-JP") : "";
-            return `<div class="mem-item"><div class="mem-time">${ts}</div><div class="mem-text">${m.content}</div></div>`;
+            let imgRow = "";
+            if (m.metadata?.image_data) {
+              const idx = imgIdx++;
+              _popupImages[idx] = m.metadata.image_data;
+              imgRow = `<div class="memory-img-row"><img class="memory-thumb" src="data:image/jpeg;base64,${m.metadata.image_data}" onclick="window.open(this.src,'_blank')"><button class="photo-save-btn" onclick="savePhoto(this,${idx},'popup')">💾</button></div>`;
+            }
+            return `<div class="mem-item"><div class="mem-time">${ts}</div><div class="mem-text">${m.content}</div>${imgRow}</div>`;
           }).join("");
           return `<div class="date-group"><div class="date-label">${date}</div>${rows}</div>`;
         }).join("");
@@ -1678,37 +1954,121 @@ HTML = """<!DOCTYPE html>
     }
     function closeIfOverlay(e, id) { if (e.target === e.currentTarget) closePopup(id); }
 
-    let currentHours = [];
+    let currentSchedule = { weekday: [], weekend: [] };
+    let currentDayTab = "weekday";
 
-    function renderHours() {
-      const list = document.getElementById("hoursList");
-      list.innerHTML = currentHours.map((h, i) => `
-        <div class="hour-row">
-          <input type="number" min="0" max="23" value="${h[0]}" onchange="currentHours[${i}][0]=+this.value" />
-          <span>〜</span>
-          <input type="number" min="0" max="24" value="${h[1]}" onchange="currentHours[${i}][1]=+this.value" />
-          <span>時</span>
-          <button class="hour-del" onclick="removeHour(${i})">✕</button>
-        </div>`).join("");
+    function updateDayTypeLabel() {
+      const dow = new Date().getDay(); // 0=日,6=土
+      const override = document.getElementById("dayTypeOverride").value;
+      let isWeekend;
+      if (override === "weekday") isWeekend = false;
+      else if (override === "weekend") isWeekend = true;
+      else isWeekend = (dow === 0 || dow === 6);
+      const lbl = document.getElementById("dayTypeLabel");
+      if (isWeekend) {
+        lbl.textContent = "🏖 今日: 休日スケジュール";
+        lbl.style.background = "#2d1f4e"; lbl.style.color = "#c4a8ff";
+      } else {
+        lbl.textContent = "📅 今日: 平日スケジュール";
+        lbl.style.background = "#1f2d4e"; lbl.style.color = "#a8c4ff";
+      }
     }
 
-    function addHourRow() { currentHours.push([8, 12]); renderHours(); }
-    function removeHour(i) { currentHours.splice(i, 1); renderHours(); }
+    function switchDayTab(tab) {
+      currentDayTab = tab;
+      document.getElementById("tabWeekday").classList.toggle("active", tab === "weekday");
+      document.getElementById("tabWeekend").classList.toggle("active", tab === "weekend");
+      renderHours();
+    }
+
+    function makeHourOpts(sel, max) {
+      let o = "";
+      for (let h = 0; h <= max; h++) o += `<option value="${h}" ${h===sel?"selected":""}>${String(h).padStart(2,"0")}</option>`;
+      return o;
+    }
+    function makeMinOpts(sel) {
+      let o = "";
+      for (let m = 0; m < 60; m += 10) o += `<option value="${m}" ${m===sel?"selected":""}>${String(m).padStart(2,"0")}</option>`;
+      return o;
+    }
+    function renderHours() {
+      const hours = currentSchedule[currentDayTab];
+      const list = document.getElementById("hoursList");
+      list.innerHTML = hours.map((h, i) => {
+        const sh = h[0], sm = h[1], eh = h[2], em = h[3];
+        return `<div class="hour-row">
+          <div class="time-group">
+            <select onchange="currentSchedule[currentDayTab][${i}][0]=+this.value">${makeHourOpts(sh,23)}</select>
+            <span>:</span>
+            <select onchange="currentSchedule[currentDayTab][${i}][1]=+this.value">${makeMinOpts(sm)}</select>
+          </div>
+          <span>〜</span>
+          <div class="time-group">
+            <select onchange="currentSchedule[currentDayTab][${i}][2]=+this.value">${makeHourOpts(eh,24)}</select>
+            <span>:</span>
+            <select onchange="currentSchedule[currentDayTab][${i}][3]=+this.value">${makeMinOpts(em)}</select>
+          </div>
+          <button class="hour-del" onclick="removeHour(${i})">✕</button>
+        </div>`;
+      }).join("");
+    }
+
+    function addHourRow() { currentSchedule[currentDayTab].push([8, 0, 12, 0]); renderHours(); }
+    function removeHour(i) { currentSchedule[currentDayTab].splice(i, 1); renderHours(); }
+
+    async function openMailbox() {
+      const body = document.getElementById("mailboxBody");
+      body.innerHTML = "<div class='empty'>読み込み中...</div>";
+      document.getElementById("mailboxOverlay").classList.add("open");
+      try {
+        const res = await fetch("/api/mailbox");
+        const mails = await res.json();
+        if (!mails.length) {
+          body.innerHTML = "<div class='empty'>まだメールはありません</div>";
+          return;
+        }
+        body.innerHTML = mails.map(m => {
+          const bodyText = m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+          return `<div class="mail-item">
+            <div class="mail-header">
+              <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
+              <span>${m.date}</span>
+            </div>
+            <div class="mail-body">${bodyText}</div>
+          </div>`;
+        }).join("");
+      } catch(e) {
+        body.innerHTML = "<div class='empty'>読み込みに失敗しました</div>";
+      }
+    }
 
     async function openSettings() {
       const res = await fetch(`/api/${currentCharId}/settings`);
       const s = await res.json();
-      currentHours = JSON.parse(JSON.stringify(s.active_hours || []));
+      const ah = s.active_hours || {};
+      currentSchedule = {
+        weekday: JSON.parse(JSON.stringify(ah.weekday || [])),
+        weekend: JSON.parse(JSON.stringify(ah.weekend || [])),
+      };
+      currentDayTab = "weekday";
+      document.getElementById("tabWeekday").classList.add("active");
+      document.getElementById("tabWeekend").classList.remove("active");
+      const cur = characters.find(c=>c.id===currentCharId);
+      const charName = cur ? (cur.name||cur.id) : currentCharId;
+      document.getElementById("activeTimeLabel").textContent = `${charName}のアクティブタイム（毎回動く時間帯）`;
       renderHours();
+      document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
       document.getElementById("allowCamera").checked = s.allow_camera ?? true;
       document.getElementById("allowSound").checked = s.allow_sound ?? true;
       document.getElementById("allowMic").checked = s.allow_microphone ?? false;
+      updateDayTypeLabel();
       document.getElementById("settingsOverlay").classList.add("open");
     }
 
     async function saveSettings() {
       const data = {
-        active_hours: currentHours,
+        active_hours: currentSchedule,
+        day_type_override: document.getElementById("dayTypeOverride").value || null,
         allow_camera: document.getElementById("allowCamera").checked,
         allow_sound: document.getElementById("allowSound").checked,
         allow_microphone: document.getElementById("allowMic").checked,

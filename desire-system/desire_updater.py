@@ -1,8 +1,10 @@
 """
-Desire Updater - プチの自発的な欲求レベルを計算してJSONに保存する。
+Desire Updater v2 - キャラクター別コンフィグ駆動の欲求システム。
 
-SQLite（memory-mcp）から各欲求に関連する最新記憶のタイムスタンプを取得し、
-「最後に〇〇してから何時間か」を計算して欲求レベル(0.0〜1.0)を算出する。
+desire_config.json から全欲求定義を読み込み、3段階で計算:
+  Step 1: 時間ベース計算（memory DBからキーワード検索 → 経過時間）
+  Step 2: センサー効果の適用（M5の /sensors エンドポイントにHTTPリクエスト）
+  Step 3: 欲求間の相互作用（cross_effects を評価）
 
 cronで5分ごとに実行:
   */5 * * * * cd /path/to/desire-system && uv run python desire_updater.py <character_id>
@@ -11,19 +13,25 @@ cronで5分ごとに実行:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
+import httpx
 from dotenv import load_dotenv
 
 load_dotenv()  # カレントディレクトリの .env
-load_dotenv(Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude"))) / ".env")  # DATA_DIR の .env
+load_dotenv(Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude"))) / ".env")
+
+logger = logging.getLogger("desire-updater")
 
 # キャラクターID（コマンドライン引数 or 環境変数）
-import sys
 CHARACTER_ID = sys.argv[1] if len(sys.argv) > 1 else os.getenv("CHARACTER_ID", "puchiko")
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", str(Path.home() / "work" / "embodied-claude")))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
@@ -36,67 +44,114 @@ MEMORY_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", _default_memory_db))
 _default_desires_path = str(DATA_DIR / "characters" / CHARACTER_ID / "desires.json")
 DESIRES_PATH = Path(os.getenv("DESIRES_PATH", _default_desires_path))
 
-# キャラクター設定（settings.json）を読む
-def _load_char_settings() -> dict:
-    p = DATA_DIR / "characters" / CHARACTER_ID / "settings.json"
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-_CHAR_SETTINGS = _load_char_settings()
-
 # 一緒にいる人の名前（miss_companion 欲求で使う）
-# .env に COMPANION_NAME=コウタ のように設定する
 COMPANION_NAME = os.getenv("COMPANION_NAME", "あなた")
-_companion_called = f"{COMPANION_NAME}に呼びかけた"
-_companion_absent = f"{COMPANION_NAME}がいない"
 
-# 欲求ごとの検索キーワード（記憶のcontentから最新タイムスタンプを探す）
-# ★ 「その欲求を満たした行動」の記録だけにマッチするよう、具体的なキーワードにすること
-DESIRE_KEYWORDS: dict[str, list[str]] = {
-    # 実際に調査・探索した記録（ただの「考えた」は除外）
-    "browse_curiosity": [
-        "WebSearch", "検索した", "調査した", "論文を", "調べた",
-        "発見した", "探した", "調べて",
-    ],
-    # ありさんと実際に会話・交流した記録
-    "miss_companion": [
-        f"{COMPANION_NAME}と話した", f"{COMPANION_NAME}に伝えた",
-        f"{COMPANION_NAME}と会話", f"{COMPANION_NAME}と話す",
-        f"{COMPANION_NAME}が来た", f"{COMPANION_NAME}がいた",
-    ],
-    # カメラで実際に周囲を撮影した記録
-    "observe_surroundings": [
-        "take_snapshot", "M5カメラで撮影", "スナップショットを", "カメラで部屋",
-        "写真を撮", "周囲を撮", "撮影した",
-    ],
-    # 実際に外に出た記録
-    "go_outside": ["お散歩した", "外に出た", "散歩した", "外出した", "外へ出た"],
-}
 
-# 欲求が満たされる間隔（時間）- デフォルト値
-# キャラ別の値は settings.json の "desire_hours" で上書きできる
-_DEFAULT_SATISFACTION_HOURS: dict[str, float] = {
-    "browse_curiosity": 6.0,
-    "miss_companion": 4.0,
-    "observe_surroundings": 2.0,
-    "go_outside": 72.0,
-}
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
 
-# settings.json の desire_hours でマージ
-SATISFACTION_HOURS: dict[str, float] = {
-    **_DEFAULT_SATISFACTION_HOURS,
-    **{k: float(v) for k, v in _CHAR_SETTINGS.get("desire_hours", {}).items()},
-}
+@dataclass
+class DesireConfig:
+    """1つの欲求の設定。"""
+    name_ja: str
+    description: str
+    satisfaction_hours: float
+    keywords: list[str]
+    color: str = "#cab8d9"
+    base_level: float | None = None
+    time_driven: bool = True
 
-# キャラ固有の追加欲求を DESIRE_KEYWORDS / SATISFACTION_HOURS に追加
-for _name, _cfg in _CHAR_SETTINGS.get("extra_desires", {}).items():
-    DESIRE_KEYWORDS[_name] = _cfg.get("keywords", [])
-    SATISFACTION_HOURS[_name] = float(_cfg.get("hours", 8.0))
 
+@dataclass
+class SensorEffect:
+    """センサー値に基づく欲求への効果。"""
+    sensor: str
+    condition: dict[str, Any]
+    effects: dict[str, dict[str, float]]
+    description: str = ""
+
+
+@dataclass
+class CrossEffect:
+    """欲求間の相互作用。"""
+    when: dict[str, Any]
+    effects: dict[str, dict[str, float]]
+    description: str = ""
+
+
+@dataclass
+class DesireSystemConfig:
+    """欲求システム全体の設定。"""
+    desires: dict[str, DesireConfig]
+    sensor_effects: list[SensorEffect]
+    cross_effects: list[CrossEffect]
+    priority: list[str]
+
+
+def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSystemConfig:
+    """desire_config.json を読み込む。"""
+    if data_dir is None:
+        data_dir = DATA_DIR
+    config_path = data_dir / "characters" / char_id / "desire_config.json"
+    if not config_path.exists():
+        raise FileNotFoundError(f"desire_config.json が見つかりません: {config_path}")
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+
+    desires: dict[str, DesireConfig] = {}
+    for desire_id, d in raw.get("desires", {}).items():
+        keywords = list(d.get("keywords", []))
+        # miss_companion のキーワードを COMPANION_NAME から自動生成
+        if desire_id == "miss_companion" and not keywords:
+            keywords = [
+                f"{COMPANION_NAME}と話した", f"{COMPANION_NAME}に伝えた",
+                f"{COMPANION_NAME}と会話", f"{COMPANION_NAME}と話す",
+                f"{COMPANION_NAME}が来た", f"{COMPANION_NAME}がいた",
+            ]
+        desires[desire_id] = DesireConfig(
+            name_ja=d["name_ja"],
+            description=d.get("description", ""),
+            satisfaction_hours=float(d["satisfaction_hours"]),
+            keywords=keywords,
+            color=d.get("color", "#cab8d9"),
+            base_level=d.get("base_level"),
+            time_driven=d.get("time_driven", True),
+        )
+
+    sensor_effects = [
+        SensorEffect(
+            sensor=s["sensor"],
+            condition=s["condition"],
+            effects=s["effects"],
+            description=s.get("description", ""),
+        )
+        for s in raw.get("sensor_effects", [])
+    ]
+
+    cross_effects = [
+        CrossEffect(
+            when=c["when"],
+            effects=c["effects"],
+            description=c.get("description", ""),
+        )
+        for c in raw.get("cross_effects", [])
+    ]
+
+    priority = raw.get("priority", list(desires.keys()))
+
+    return DesireSystemConfig(
+        desires=desires,
+        sensor_effects=sensor_effects,
+        cross_effects=cross_effects,
+        priority=priority,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Desire state
+# ---------------------------------------------------------------------------
 
 @dataclass
 class DesireState:
@@ -104,15 +159,27 @@ class DesireState:
 
     updated_at: str
     desires: dict[str, float] = field(default_factory=dict)
-    dominant: str = "observe_room"
+    dominant: str = ""
+    labels: dict[str, str] = field(default_factory=dict)
+    colors: dict[str, str] = field(default_factory=dict)
+    sensor_snapshot: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        d: dict[str, Any] = {
             "updated_at": self.updated_at,
             "desires": self.desires,
+            "labels": self.labels,
+            "colors": self.colors,
             "dominant": self.dominant,
         }
+        if self.sensor_snapshot:
+            d["sensor_snapshot"] = self.sensor_snapshot
+        return d
 
+
+# ---------------------------------------------------------------------------
+# Memory DB query
+# ---------------------------------------------------------------------------
 
 def get_latest_memory_timestamp(
     db_path: Path,
@@ -122,13 +189,12 @@ def get_latest_memory_timestamp(
     SQLiteのmemoriesテーブルからキーワードに一致する最新記憶のタイムスタンプを返す。
     一致なければ None。
     """
-    if not db_path.exists():
+    if not db_path.exists() or not keywords:
         return None
 
     try:
         conn = sqlite3.connect(str(db_path))
         c = conn.cursor()
-        # LIKE句でキーワード検索してtimestamp最大値を取得
         conditions = " OR ".join(["content LIKE ?" for _ in keywords])
         params = [f"%{kw}%" for kw in keywords]
         c.execute(f"SELECT MAX(timestamp) FROM memories WHERE {conditions}", params)
@@ -141,8 +207,6 @@ def get_latest_memory_timestamp(
         return None
 
     try:
-        # memory-mcp は datetime.now()（ローカル時刻・タイムゾーンなし）で保存するので
-        # タイムゾーン情報は付けずにそのまま返す
         return datetime.fromisoformat(row[0])
     except ValueError:
         return None
@@ -156,10 +220,8 @@ def calculate_desire_level(
     """
     欲求レベルを 0.0〜1.0 で計算する。
     last_satisfied が None（一度も満たされてない）なら 1.0。
-    memory-mcp はローカル時刻（タイムゾーンなし）で保存するので now も同様に扱う。
     """
     if now is None:
-        # memory-mcp に合わせてローカル時刻（タイムゾーンなし）を使う
         now = datetime.now()
 
     if last_satisfied is None:
@@ -175,38 +237,210 @@ def calculate_desire_level(
     return max(0.0, min(1.0, elapsed_hours / satisfaction_hours))
 
 
+# ---------------------------------------------------------------------------
+# Sensor fetch
+# ---------------------------------------------------------------------------
+
+def fetch_sensor_data(char_id: str, data_dir: Path | None = None) -> dict[str, Any]:
+    """
+    M5の /sensors エンドポイントにHTTPリクエストしてセンサーデータを取得。
+    失敗時は空dict（ログに警告）。
+    """
+    if data_dir is None:
+        data_dir = DATA_DIR
+    config_path = data_dir / "characters" / char_id / "config.json"
+    if not config_path.exists():
+        return {}
+
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    m5_host = config.get("m5_host", "")
+    m5_port = config.get("m5_port", 8081)
+    if not m5_host:
+        return {}
+
+    url = f"http://{m5_host}:{m5_port}/sensors"
+    try:
+        resp = httpx.get(url, timeout=5.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logger.warning(f"センサー取得失敗 ({url}): {e}")
+        return {}
+
+
+# ---------------------------------------------------------------------------
+# Effect application
+# ---------------------------------------------------------------------------
+
+def evaluate_sensor_condition(
+    condition: dict[str, Any],
+    sensor_value: Any,
+) -> bool:
+    """センサー条件を評価する。"""
+    op = condition.get("op", "")
+
+    if op == "recent":
+        # sensor_value はエポック秒のタイムスタンプ（lastTouchEventTime等）
+        if sensor_value is None or sensor_value == 0:
+            return False
+        within = condition.get("within_seconds", 60)
+        try:
+            elapsed = time.time() - float(sensor_value) / 1000  # ms → s
+            return elapsed <= within
+        except (TypeError, ValueError):
+            return False
+
+    if sensor_value is None:
+        return False
+
+    try:
+        val = float(sensor_value)
+        threshold = float(condition.get("value", 0))
+    except (TypeError, ValueError):
+        return False
+
+    if op == "range":
+        # {"op": "range", "min": 1, "max": 20} → min <= val <= max
+        try:
+            lo = float(condition.get("min", 0))
+            hi = float(condition.get("max", float("inf")))
+        except (TypeError, ValueError):
+            return False
+        return lo <= val <= hi
+    if op == "<":
+        return val < threshold
+    if op == ">":
+        return val > threshold
+    if op == "<=":
+        return val <= threshold
+    if op == ">=":
+        return val >= threshold
+    if op == "==":
+        return val == threshold
+
+    return False
+
+
+def apply_effects(
+    desires: dict[str, float],
+    effects: dict[str, dict[str, float]],
+) -> None:
+    """effects を desires に適用する（in-place）。"""
+    # "*" は全欲求に適用
+    wildcard = effects.get("*")
+
+    for desire_id in desires:
+        eff = effects.get(desire_id, {})
+        if wildcard and desire_id not in effects:
+            eff = wildcard
+
+        if "set" in eff:
+            desires[desire_id] = float(eff["set"])
+        if "add" in eff:
+            desires[desire_id] += float(eff["add"])
+        if "multiply" in eff:
+            desires[desire_id] *= float(eff["multiply"])
+
+
+# ---------------------------------------------------------------------------
+# Main compute pipeline
+# ---------------------------------------------------------------------------
+
 def compute_desires(
     db_path: Path,
+    config: DesireSystemConfig,
+    sensor_data: dict[str, Any] | None = None,
     now: datetime | None = None,
 ) -> DesireState:
-    """全欲求レベルを計算してDesireStateを返す。"""
+    """全欲求レベルを3段階で計算してDesireStateを返す。"""
     if now is None:
-        now = datetime.now()  # memory-mcp に合わせてローカル時刻
+        now = datetime.now()
 
     desires: dict[str, float] = {}
+    labels: dict[str, str] = {}
+    colors: dict[str, str] = {}
 
-    for desire_name, keywords in DESIRE_KEYWORDS.items():
-        last_ts = get_latest_memory_timestamp(db_path, keywords)
-        level = calculate_desire_level(
-            last_ts,
-            SATISFACTION_HOURS[desire_name],
-            now,
-        )
-        desires[desire_name] = round(level, 3)
+    # Step 1: 時間ベース計算
+    for desire_id, dcfg in config.desires.items():
+        labels[desire_id] = dcfg.name_ja
+        colors[desire_id] = dcfg.color
 
-    # 最も欲求レベルが高いものを dominant に（同値はキャラの priority 順で決める）
-    priority: list[str] = _CHAR_SETTINGS.get("desire_priority", [])
+        if not dcfg.time_driven:
+            # time_driven: false の欲求は base_level に留まる
+            desires[desire_id] = dcfg.base_level if dcfg.base_level is not None else 0.0
+            continue
+
+        last_ts = get_latest_memory_timestamp(db_path, dcfg.keywords)
+        level = calculate_desire_level(last_ts, dcfg.satisfaction_hours, now)
+
+        # base_level が設定されている場合、それ以下には下がらない
+        if dcfg.base_level is not None:
+            level = max(level, dcfg.base_level)
+
+        desires[desire_id] = round(level, 3)
+
+    # Step 2: センサー効果の適用
+    sensor_snapshot: dict[str, Any] = {}
+    if sensor_data:
+        sensor_snapshot = dict(sensor_data)
+        for effect in config.sensor_effects:
+            sensor_val = sensor_data.get(effect.sensor)
+            if sensor_val is not None and evaluate_sensor_condition(effect.condition, sensor_val):
+                apply_effects(desires, effect.effects)
+
+    # Step 3: 欲求間の相互作用
+    for cross in config.cross_effects:
+        when = cross.when
+        desire_id = when.get("desire", "")
+        if desire_id not in desires:
+            continue
+        threshold = float(when.get("value", 0))
+        op = when.get("op", ">")
+
+        current = desires[desire_id]
+        triggered = False
+        if op == ">" and current > threshold:
+            triggered = True
+        elif op == ">=" and current >= threshold:
+            triggered = True
+        elif op == "<" and current < threshold:
+            triggered = True
+        elif op == "<=" and current <= threshold:
+            triggered = True
+
+        if triggered:
+            apply_effects(desires, cross.effects)
+
+    # クランプ: 全値を 0.0-1.0
+    for k in desires:
+        desires[k] = round(max(0.0, min(1.0, desires[k])), 3)
+
+    # dominant 決定（最も高い欲求、同値は priority 順）
+    priority = config.priority
+
     def _sort_key(k: str) -> tuple:
         rank = priority.index(k) if k in priority else len(priority)
         return (-desires[k], rank)
-    dominant = min(desires, key=_sort_key)
+
+    dominant = min(desires, key=_sort_key) if desires else ""
 
     return DesireState(
         updated_at=now.isoformat(),
         desires=desires,
         dominant=dominant,
+        labels=labels,
+        colors=colors,
+        sensor_snapshot=sensor_snapshot,
     )
 
+
+# ---------------------------------------------------------------------------
+# Save / Load
+# ---------------------------------------------------------------------------
 
 def save_desires(state: DesireState, path: Path = DESIRES_PATH) -> None:
     """desires.json に保存する。"""
@@ -223,26 +457,40 @@ def load_desires(path: Path = DESIRES_PATH) -> DesireState | None:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return DesireState(
-            updated_at=data["updated_at"],
-            desires=data["desires"],
-            dominant=data["dominant"],
+            updated_at=data.get("updated_at", ""),
+            desires=data.get("desires", {}),
+            dominant=data.get("dominant", ""),
+            labels=data.get("labels", {}),
+            colors=data.get("colors", {}),
+            sensor_snapshot=data.get("sensor_snapshot", {}),
         )
     except Exception:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 def main() -> None:
     """メインエントリポイント（cronから呼ばれる）。"""
+    logging.basicConfig(level=logging.WARNING)
+
     if not MEMORY_DB_PATH.exists():
         print(f"[desire-updater] memory.db が見つかりません: {MEMORY_DB_PATH}")
 
-    state = compute_desires(MEMORY_DB_PATH)
+    config = load_desire_config(CHARACTER_ID)
+    sensor_data = fetch_sensor_data(CHARACTER_ID)
+    state = compute_desires(MEMORY_DB_PATH, config, sensor_data)
     save_desires(state)
+
     now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     print(
         f"[{now_str}] [desire-updater] 更新完了: dominant={state.dominant} "
         f"desires={state.desires}"
     )
+    if sensor_data:
+        print(f"  sensor: {sensor_data}")
 
 
 if __name__ == "__main__":
