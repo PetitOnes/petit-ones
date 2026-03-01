@@ -142,6 +142,7 @@ uv run pytest -v       # テストが通ること
 | `get_association_diagnostics` | context, sample_size? | 連想探索の診断情報 |
 | `link_memories` | source_id, target_id, link_type?, note? | 記憶をリンク |
 | `get_causal_chain` | memory_id, direction?, max_depth? | 因果チェーン取得 |
+| `sleep` | dry_run?, min_age_days?, similarity_threshold? | 記憶整理（圧縮・減衰・忘却） |
 
 **Emotion**: happy, sad, surprised, moved, excited, nostalgic, curious, neutral
 **Category**: daily, philosophical, technical, memory, observation, feeling, conversation

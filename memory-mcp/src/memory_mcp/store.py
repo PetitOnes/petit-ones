@@ -715,6 +715,122 @@ class MemoryStore:
 
         return await asyncio.to_thread(_fetch)
 
+    # ── delete_memory ──────────────────────────
+
+    async def delete_memory(self, memory_id: str) -> bool:
+        """Delete a memory and clean up references.
+
+        Embeddings and coactivation rows are CASCADE-deleted by SQLite.
+        linked_ids and links JSON in other memories are cleaned up manually.
+        """
+        db = self._ensure_connected()
+
+        def _delete() -> bool:
+            # Check existence
+            row = db.execute("SELECT id FROM memories WHERE id = ?", (memory_id,)).fetchone()
+            if row is None:
+                return False
+
+            # Remove from other memories' linked_ids
+            referencing = db.execute(
+                "SELECT id, linked_ids FROM memories WHERE linked_ids LIKE ?",
+                (f"%{memory_id}%",),
+            ).fetchall()
+            for ref_row in referencing:
+                current = _parse_linked_ids(ref_row["linked_ids"] or "")
+                updated = tuple(lid for lid in current if lid != memory_id)
+                db.execute(
+                    "UPDATE memories SET linked_ids = ? WHERE id = ?",
+                    (",".join(updated), ref_row["id"]),
+                )
+
+            # Remove from other memories' links JSON
+            linking = db.execute(
+                "SELECT id, links FROM memories WHERE links LIKE ?",
+                (f"%{memory_id}%",),
+            ).fetchall()
+            for link_row in linking:
+                links = _parse_links(link_row["links"] or "")
+                updated_links = tuple(lk for lk in links if lk.target_id != memory_id)
+                links_json = json.dumps([lk.to_dict() for lk in updated_links])
+                db.execute(
+                    "UPDATE memories SET links = ? WHERE id = ?",
+                    (links_json, link_row["id"]),
+                )
+
+            # Delete the memory (CASCADE handles embeddings & coactivation)
+            db.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            db.commit()
+            return True
+
+        result = await asyncio.to_thread(_delete)
+        if result:
+            self._bm25_index.mark_dirty()
+        return result
+
+    # ── merge_memories ─────────────────────────
+
+    async def merge_memories(
+        self,
+        source_ids: list[str],
+        merged_content: str,
+        importance: int,
+        emotion: str,
+        category: str,
+    ) -> Memory:
+        """Merge multiple memories into one.
+
+        Creates a new memory with merged_content, transfers links from sources,
+        then deletes the source memories.
+        """
+        # Collect links from all sources before deletion
+        all_links: list[MemoryLink] = []
+        all_linked_ids: set[str] = set()
+        source_set = set(source_ids)
+
+        for sid in source_ids:
+            mem = await self.get_by_id(sid)
+            if mem is None:
+                continue
+            for lk in mem.links:
+                if lk.target_id not in source_set:
+                    all_links.append(lk)
+            for lid in mem.linked_ids:
+                if lid not in source_set:
+                    all_linked_ids.add(lid)
+
+        # Save new merged memory
+        new_memory = await self.save(
+            content=merged_content,
+            emotion=emotion,
+            importance=importance,
+            category=category,
+        )
+
+        # Transfer links and linked_ids to new memory
+        if all_links or all_linked_ids:
+            deduped_links: list[MemoryLink] = []
+            seen_link_keys: set[tuple[str, str]] = set()
+            for lk in all_links:
+                key = (lk.target_id, lk.link_type)
+                if key not in seen_link_keys:
+                    seen_link_keys.add(key)
+                    deduped_links.append(lk)
+
+            links_json = json.dumps([lk.to_dict() for lk in deduped_links])
+            linked_ids_str = ",".join(all_linked_ids)
+            await self.update_memory_fields(
+                new_memory.id,
+                links=links_json,
+                linked_ids=linked_ids_str,
+            )
+
+        # Delete source memories
+        for sid in source_ids:
+            await self.delete_memory(sid)
+
+        return new_memory
+
     # ── update_access ───────────────────────────
 
     async def update_access(self, memory_id: str) -> None:
@@ -762,7 +878,7 @@ class MemoryStore:
             "access_count", "last_accessed", "linked_ids", "episode_id",
             "sensory_data", "camera_position", "tags", "links",
             "novelty_score", "prediction_error", "activation_count",
-            "last_activated", "reading",
+            "last_activated", "reading", "importance",
         }
         valid = {k: v for k, v in fields.items() if k in valid_cols}
         if not valid:
