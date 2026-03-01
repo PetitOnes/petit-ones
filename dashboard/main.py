@@ -225,8 +225,8 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"error": "認証が必要です"}, status_code=401)
         # ログインページを返す
         return HTMLResponse(_login_html(), status_code=401)
-    # ロールチェック（POST系はoperator以上、設定変更はadmin）
-    if request.method == "POST":
+    # ロールチェック（POST/PATCH系はoperator以上、設定変更はadmin）
+    if request.method in ("POST", "PATCH"):
         if "/settings" in path:
             if not _has_role(request, "admin"):
                 return JSONResponse({"error": "admin権限が必要です"}, status_code=403)
@@ -240,7 +240,7 @@ async def auth_middleware(request: Request, call_next):
         parts = path.split("/")
         if len(parts) >= 4:
             candidate = parts[2]
-            non_char_prefixes = ("characters", "group", "relations", "auth", "avatar", "interact")
+            non_char_prefixes = ("characters", "group", "relations", "auth", "avatar", "interact", "mailbox")
             if candidate not in non_char_prefixes:
                 if not _check_char_access(request, candidate):
                     return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
@@ -289,6 +289,33 @@ document.getElementById("password").addEventListener("keydown", e => { if (e.key
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
+MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
+
+
+def _load_mailbox_metadata() -> dict:
+    if MAILBOX_METADATA_FILE.exists():
+        try:
+            return json.loads(MAILBOX_METADATA_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"version": 1, "mails": {}}
+
+
+def _save_mailbox_metadata(data: dict) -> None:
+    MAILBOX_METADATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    MAILBOX_METADATA_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _get_mail_meta(filename: str) -> dict:
+    meta = _load_mailbox_metadata()
+    return meta.get("mails", {}).get(filename, {"archived": False, "starred": False})
+
+
+class MailMetaUpdate(BaseModel):
+    archived: bool | None = None
+    starred: bool | None = None
+
+
 def memory_db_path(character_id: str) -> Path:
     return Path.home() / ".claude" / "memories" / character_id / "memory.db"
 
@@ -394,6 +421,12 @@ BASE_TOOLS = [
     "mcp__desire-system__get_desires",
     "mcp__desire-system__satisfy_desire",
     "mcp__desire-system__boost_desire",
+    # notes
+    "mcp__notes__list_notes",
+    "mcp__notes__read_note",
+    "mcp__notes__write_note",
+    "mcp__notes__append_note",
+    "mcp__notes__delete_note",
 ]
 CAMERA_TOOLS = ["mcp__m5-mcp__take_snapshot"]
 SOUND_TOOLS = ["mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon"]
@@ -1039,8 +1072,8 @@ def api_photo_serve(character_id: str, filename: str):
 
 
 @app.get("/api/mailbox")
-def api_mailbox():
-    """ありさん宛のメール一覧を返す"""
+def api_mailbox(filter: str = "inbox"):
+    """ありさん宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
         return []
@@ -1052,25 +1085,29 @@ def api_mailbox():
         # 新形式: from_送信元_to_arisan_日時 / 旧形式: to_arisan_日時
         if not (name.startswith("to_arisan") or "_to_arisan_" in name):
             continue
+        meta = _get_mail_meta(f.name)
+        if filter == "inbox" and meta["archived"]:
+            continue
+        if filter == "archived" and not meta["archived"]:
+            continue
+        if filter == "starred" and not meta["starred"]:
+            continue
         content = f.read_text(encoding="utf-8")
         parts = name.split("_")
         date_str = ""
         sender = ""
         if parts[0] == "from" and "to" in parts:
-            # from_puchiko_to_arisan_20260228_0050
             ti = parts.index("to")
             sender = "_".join(parts[1:ti])
-            rest = parts[ti + 2:]  # after "arisan"
+            rest = parts[ti + 2:]
             if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
                 date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
         else:
-            # to_arisan_20260228_0050
             if len(parts) >= 4:
                 date_str = parts[2]
                 time_str = parts[3] if len(parts) > 3 else ""
                 if len(date_str) == 8 and len(time_str) >= 4:
                     date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
-        # sender が未確定なら最終行から推定
         if not sender:
             lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
             if lines:
@@ -1080,12 +1117,14 @@ def api_mailbox():
             "content": content,
             "date": date_str,
             "sender": sender,
+            "archived": meta["archived"],
+            "starred": meta["starred"],
         })
     return mails
 
 
 @app.get("/api/mailbox/all")
-def api_mailbox_all():
+def api_mailbox_all(filter: str = "all"):
     """全メール一覧（メールボックスにあるすべて）"""
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
@@ -1093,6 +1132,13 @@ def api_mailbox_all():
     mails = []
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
+            continue
+        meta = _get_mail_meta(f.name)
+        if filter == "inbox" and meta["archived"]:
+            continue
+        if filter == "archived" and not meta["archived"]:
+            continue
+        if filter == "starred" and not meta["starred"]:
             continue
         content = f.read_text(encoding="utf-8")
         parts = f.stem.split("_")
@@ -1111,8 +1157,29 @@ def api_mailbox_all():
             "date": date_str,
             "sender": sender,
             "recipient": recipient,
+            "archived": meta["archived"],
+            "starred": meta["starred"],
         })
     return mails
+
+
+@app.patch("/api/mailbox/{filename}/meta")
+def api_mailbox_update_meta(filename: str, body: MailMetaUpdate):
+    """メールのメタデータ（starred/archived）を更新"""
+    safe_name = Path(filename).name
+    mailbox_dir = DATA_DIR / "mailbox"
+    if not (mailbox_dir / safe_name).exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = _load_mailbox_metadata()
+    mails = data.setdefault("mails", {})
+    current = mails.get(safe_name, {"archived": False, "starred": False})
+    if body.archived is not None:
+        current["archived"] = body.archived
+    if body.starred is not None:
+        current["starred"] = body.starred
+    mails[safe_name] = current
+    _save_mailbox_metadata(data)
+    return current
 
 
 class InteractRequest(BaseModel):
@@ -1230,6 +1297,13 @@ HTML = """<!DOCTYPE html>
     .mail-item .mail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.75rem; color: #999; }
     .mail-item .mail-sender { font-weight: 600; color: #666; }
     .mail-item .mail-body { font-size: 0.85rem; line-height: 1.6; white-space: pre-wrap; color: #333; }
+    .mailbox-tabs { display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 1px solid #e0e0e0; padding-bottom: 8px; }
+    .mailbox-tab { padding: 6px 14px; border-radius: 16px; border: none; background: #f0f0f0; font-size: 0.8rem; cursor: pointer; color: #666; transition: all 0.2s; }
+    .mailbox-tab.active { background: var(--char, #cab8d9); color: var(--char-btn-text, #333); font-weight: 600; }
+    .mail-actions { display: flex; gap: 6px; align-items: center; }
+    .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
+    .mail-action-btn:hover { opacity: 0.8; }
+    .mail-action-btn.active { opacity: 1; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -1437,7 +1511,14 @@ HTML = """<!DOCTYPE html>
         <span class="popup-title">📬 メールボックス</span>
         <button class="popup-close" onclick="closePopup('mailboxOverlay')">✕</button>
       </div>
-      <div class="popup-body" id="mailboxBody"></div>
+      <div class="popup-body">
+        <div class="mailbox-tabs">
+          <button class="mailbox-tab active" id="mailTabInbox" onclick="switchMailTab('inbox')">受信</button>
+          <button class="mailbox-tab" id="mailTabStarred" onclick="switchMailTab('starred')">⭐</button>
+          <button class="mailbox-tab" id="mailTabArchived" onclick="switchMailTab('archived')">📦</button>
+        </div>
+        <div id="mailboxBody"></div>
+      </div>
     </div>
   </div>
 
@@ -2016,30 +2097,80 @@ HTML = """<!DOCTYPE html>
     function addHourRow() { currentSchedule[currentDayTab].push([8, 0, 12, 0]); renderHours(); }
     function removeHour(i) { currentSchedule[currentDayTab].splice(i, 1); renderHours(); }
 
-    async function openMailbox() {
+    let currentMailTab = "inbox";
+
+    function openMailbox() {
+      currentMailTab = "inbox";
+      document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
+      document.getElementById("mailTabInbox").classList.add("active");
+      document.getElementById("mailboxOverlay").classList.add("open");
+      loadMailbox();
+    }
+
+    function switchMailTab(filter) {
+      currentMailTab = filter;
+      document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
+      const tabId = {inbox:"mailTabInbox", starred:"mailTabStarred", archived:"mailTabArchived"}[filter];
+      document.getElementById(tabId).classList.add("active");
+      loadMailbox();
+    }
+
+    async function loadMailbox() {
       const body = document.getElementById("mailboxBody");
       body.innerHTML = "<div class='empty'>読み込み中...</div>";
-      document.getElementById("mailboxOverlay").classList.add("open");
       try {
-        const res = await fetch("/api/mailbox");
+        const res = await fetch(`/api/mailbox?filter=${currentMailTab}`);
         const mails = await res.json();
         if (!mails.length) {
-          body.innerHTML = "<div class='empty'>まだメールはありません</div>";
+          const labels = {inbox:"メールはありません", starred:"スター付きメールはありません", archived:"アーカイブはありません"};
+          body.innerHTML = `<div class='empty'>${labels[currentMailTab] || "メールはありません"}</div>`;
           return;
         }
-        body.innerHTML = mails.map(m => {
+        body.innerHTML = mails.map((m, i) => {
           const bodyText = m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
-          return `<div class="mail-item">
+          const starCls = m.starred ? "active" : "";
+          const archiveIcon = m.archived ? "📤" : "📥";
+          const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
+          return `<div class="mail-item" id="mail-${i}">
             <div class="mail-header">
               <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
-              <span>${m.date}</span>
+              <div class="mail-actions">
+                <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${m.filename}',${i})">⭐</button>
+                <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${m.filename}',${!m.archived},${i})">${archiveIcon}</button>
+              </div>
             </div>
+            <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
             <div class="mail-body">${bodyText}</div>
           </div>`;
         }).join("");
       } catch(e) {
         body.innerHTML = "<div class='empty'>読み込みに失敗しました</div>";
       }
+    }
+
+    async function toggleStar(filename, index) {
+      const btn = document.querySelector(`#mail-${index} .mail-action-btn`);
+      const isActive = btn.classList.contains("active");
+      try {
+        await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({starred: !isActive})
+        });
+        if (currentMailTab === "starred") { loadMailbox(); }
+        else { btn.classList.toggle("active"); }
+      } catch(e) {}
+    }
+
+    async function toggleArchive(filename, archive, index) {
+      try {
+        await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
+          method: "PATCH",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({archived: archive})
+        });
+        loadMailbox();
+      } catch(e) {}
     }
 
     async function openSettings() {

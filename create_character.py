@@ -129,6 +129,11 @@ MCP_TEMPLATE = {
             "args": ["run", "--directory", str(PROJECT_DIR / "m5-mcp"), "m5-mcp"],
             "env": {"M5_HOST": ""},  # あとで埋める
         },
+        "notes": {
+            "command": UV,
+            "args": ["run", "--directory", str(PROJECT_DIR / "notes-mcp"), "notes-mcp"],
+            "env": {"CHARACTER_ID": ""},  # あとで埋める
+        },
         "relations": {
             "command": UV,
             "args": ["run", "--directory", str(PROJECT_DIR / "relations-mcp"), "relations-mcp"],
@@ -204,6 +209,7 @@ def create_character(char_id: str, name: str, color: str, m5_host: str) -> None:
     mcp = json.loads(json.dumps(MCP_TEMPLATE))  # deep copy
     mcp["mcpServers"]["memory"]["env"]["MEMORY_DB_PATH"] = memory_db
     mcp["mcpServers"]["m5-mcp"]["env"]["M5_HOST"] = m5_host
+    mcp["mcpServers"]["notes"]["env"]["CHARACTER_ID"] = char_id
     relations_path = str(DATA_DIR / "characters" / char_id / "relations.json")
     mcp["mcpServers"]["relations"]["env"]["CHARACTER_ID"] = char_id
     mcp["mcpServers"]["relations"]["env"]["RELATIONS_PATH"] = relations_path
