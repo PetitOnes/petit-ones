@@ -13,9 +13,60 @@ from typing import Optional
 mcp = FastMCP("m5")
 
 import os
-M5_HOST = os.environ["M5_HOST"]
-M5_HTTP = f"http://{M5_HOST}"
-M5_WS_URL = f"ws://{M5_HOST}:8080"
+
+# Support comma-separated hosts for fallback (e.g. "puchiteya.local,10.42.138.101")
+_m5_hosts: list[str] = []
+_active_host: Optional[str] = None
+
+def _init_hosts():
+    global _m5_hosts
+    raw = os.environ.get("M5_HOSTS", "") or os.environ.get("M5_HOST", "")
+    _m5_hosts = [h.strip() for h in raw.split(",") if h.strip()]
+    if not _m5_hosts:
+        raise ValueError("M5_HOST or M5_HOSTS environment variable must be set")
+
+_init_hosts()
+
+
+def _http_get(path: str, timeout: int = 5, **kwargs) -> requests.Response:
+    """HTTP GET with host fallback."""
+    global _active_host
+    hosts = []
+    if _active_host:
+        hosts.append(_active_host)
+    hosts.extend(h for h in _m5_hosts if h != _active_host)
+
+    last_exc: Optional[Exception] = None
+    for host in hosts:
+        try:
+            r = requests.get(f"http://{host}{path}", timeout=timeout, **kwargs)
+            _active_host = host
+            return r
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            continue
+    raise last_exc or ConnectionError(f"All hosts unreachable: {hosts}")
+
+
+def _http_post(path: str, timeout: int = 5, **kwargs) -> requests.Response:
+    """HTTP POST with host fallback."""
+    global _active_host
+    hosts = []
+    if _active_host:
+        hosts.append(_active_host)
+    hosts.extend(h for h in _m5_hosts if h != _active_host)
+
+    last_exc: Optional[Exception] = None
+    for host in hosts:
+        try:
+            r = requests.post(f"http://{host}{path}", timeout=timeout, **kwargs)
+            _active_host = host
+            return r
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exc = e
+            continue
+    raise last_exc or ConnectionError(f"All hosts unreachable: {hosts}")
+
 
 # ===================== WS状態 =====================
 _ws: Optional[websockets.WebSocketClientProtocol] = None
@@ -26,13 +77,30 @@ _touch_queue: asyncio.Queue = asyncio.Queue(maxsize=20)
 
 
 async def _ensure_ws():
-    global _ws, _reader_task
+    global _ws, _reader_task, _active_host
     if _ws is not None and _ws.state == WsState.OPEN:
         return
     async with _ws_lock:
         if _ws is not None and _ws.state == WsState.OPEN:
             return
-        _ws = await websockets.connect(M5_WS_URL)
+        # Try each host for WebSocket connection
+        hosts = []
+        if _active_host:
+            hosts.append(_active_host)
+        hosts.extend(h for h in _m5_hosts if h != _active_host)
+
+        last_exc: Optional[Exception] = None
+        for host in hosts:
+            try:
+                _ws = await websockets.connect(f"ws://{host}:8080")
+                _active_host = host
+                break
+            except Exception as e:
+                last_exc = e
+                continue
+        else:
+            raise last_exc or ConnectionError(f"WS: all hosts unreachable: {hosts}")
+
         if _reader_task is not None:
             _reader_task.cancel()
         _reader_task = asyncio.create_task(_ws_reader())
@@ -75,9 +143,7 @@ async def _send(cmd: str):
 @mcp.tool()
 async def take_snapshot():
     """M5カメラで写真を撮る"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/snapshot", timeout=10)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/snapshot", timeout=10))
     if r.status_code != 200:
         return "camera failed"
     img_b64 = base64.b64encode(r.content).decode()
@@ -87,9 +153,7 @@ async def take_snapshot():
 @mcp.tool()
 async def list_faces():
     """SDカードの顔画像ファイル一覧を取得"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/face_list", timeout=5)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/face_list"))
     return r.json()
 
 
@@ -97,7 +161,7 @@ async def list_faces():
 async def show_face(name: str):
     """顔画像を表示（5秒間）。nameはlist_facesで取得したファイル名"""
     await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/face_play?name={name}", timeout=5)
+        lambda: _http_get(f"/face_play?name={name}")
     )
     return f"showing face: {name}"
 
@@ -105,18 +169,14 @@ async def show_face(name: str):
 @mcp.tool()
 async def list_sounds():
     """SDカードの効果音ファイル一覧を取得"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/se_list", timeout=5)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/se_list"))
     return r.json()
 
 
 @mcp.tool()
 async def get_volume():
     """現在の音量を取得（0〜100）"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/getvolume", timeout=5)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/getvolume"))
     return int(r.text)
 
 
@@ -215,9 +275,7 @@ async def set_brightness(value: int):
 @mcp.tool()
 async def get_brightness():
     """現在の画面輝度を取得（0〜100）"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/getbrightness", timeout=5)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/getbrightness"))
     return int(r.text)
 
 
@@ -231,9 +289,7 @@ async def set_power_save(enabled: bool):
 @mcp.tool()
 async def get_power_save():
     """省電力モードの状態を取得"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/getpowersave", timeout=5)
-    )
+    r = await asyncio.to_thread(lambda: _http_get("/getpowersave"))
     return r.text == "true"
 
 
@@ -307,10 +363,10 @@ async def upload_wav(file_path: str):
     def _upload():
         mono_buf = _convert_wav_mono_16k(file_path)
         filename = file_path.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
-        return requests.post(
-            f"{M5_HTTP}/upload_wav",
-            files={"file": (filename, mono_buf, "audio/wav")},
+        return _http_post(
+            "/upload_wav",
             timeout=30,
+            files={"file": (filename, mono_buf, "audio/wav")},
         )
     r = await asyncio.to_thread(_upload)
     if r.status_code == 200:
@@ -323,11 +379,7 @@ async def upload_face(file_path: str):
     """顔画像(JPG)をM5のSDカードにアップロード。file_path: ローカルのJPGファイルパス"""
     def _upload():
         with open(file_path, "rb") as f:
-            return requests.post(
-                f"{M5_HTTP}/upload_face",
-                files={"file": f},
-                timeout=30,
-            )
+            return _http_post("/upload_face", timeout=30, files={"file": f})
     r = await asyncio.to_thread(_upload)
     if r.status_code == 200:
         return f"uploaded: {file_path}"
@@ -355,11 +407,12 @@ async def mic_stop():
 @mcp.tool()
 async def get_sensor_data():
     """最新のセンサーデータを返す（ambient/proximity/battery/voltage/rssi/加速度/ジャイロ）"""
-    r = await asyncio.to_thread(
-        lambda: requests.get(f"{M5_HTTP}/sensors", timeout=5)
-    )
-    if r.status_code == 200:
-        return r.json()
+    try:
+        r = await asyncio.to_thread(lambda: _http_get("/sensors"))
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
     # フォールバック: WSから取得
     await _ensure_ws()
     if not _sensor_data:

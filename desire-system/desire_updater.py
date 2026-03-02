@@ -257,19 +257,27 @@ def fetch_sensor_data(char_id: str, data_dir: Path | None = None) -> dict[str, A
     except Exception:
         return {}
 
-    m5_host = config.get("m5_host", "")
-    m5_port = config.get("m5_port", 8081)
-    if not m5_host:
+    # m5_hosts (リスト) があれば順に試す、なければ m5_host (単体) を使う
+    m5_hosts = config.get("m5_hosts")
+    if isinstance(m5_hosts, list):
+        hosts = [h for h in m5_hosts if h]
+    else:
+        h = config.get("m5_host", "")
+        hosts = [h] if h else []
+    if not hosts:
         return {}
 
-    url = f"http://{m5_host}:{m5_port}/sensors"
-    try:
-        resp = httpx.get(url, timeout=5.0)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logger.warning(f"センサー取得失敗 ({url}): {e}")
-        return {}
+    m5_port = config.get("m5_port", 80)
+    for host in hosts:
+        url = f"http://{host}:{m5_port}/sensors"
+        try:
+            resp = httpx.get(url, timeout=3.0)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception:
+            continue
+    logger.warning(f"センサー取得失敗: 全ホスト応答なし {hosts}")
+    return {}
 
 
 # ---------------------------------------------------------------------------

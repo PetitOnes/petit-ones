@@ -366,6 +366,23 @@ async def check_m5_online(host: str, port: int = 80, timeout: float = 2.0) -> bo
         return False
 
 
+def get_m5_hosts(cfg: dict) -> list[str]:
+    """config から M5 ホスト候補リストを取得する。m5_hosts (list) > m5_host (str)。"""
+    hosts = cfg.get("m5_hosts")
+    if isinstance(hosts, list):
+        return [h for h in hosts if h]
+    host = cfg.get("m5_host", "")
+    return [host] if host else []
+
+
+async def resolve_m5_host(cfg: dict, port: int = 80, timeout: float = 2.0) -> str | None:
+    """M5ホスト候補を順に試し、最初に応答したホストを返す。全滅なら None。"""
+    for host in get_m5_hosts(cfg):
+        if await check_m5_online(host, port, timeout):
+            return host
+    return None
+
+
 def get_char_config(character_id: str) -> dict:
     cfg_path = char_dir(character_id) / "config.json"
     if cfg_path.exists():
@@ -624,11 +641,11 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     soul = get_soul(character_id)
     settings = get_settings(character_id)
 
-    # M5オフライン時はM5ツールを強制除外
+    # M5ホスト解決 — 応答する候補を探す
+    cfg = get_char_config(character_id)
+    resolved_host = await resolve_m5_host(cfg)
     if m5_online is None:
-        cfg = get_char_config(character_id)
-        host = cfg.get("m5_host", "")
-        m5_online = await check_m5_online(host) if host else False
+        m5_online = resolved_host is not None
 
     effective_settings = settings.copy()
     if not m5_online:
@@ -669,6 +686,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     )
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    # 解決したM5ホストを環境変数で渡す（MCP サーバーが使う）
+    if resolved_host:
+        env["M5_HOST"] = resolved_host
     sf = session_file(character_id)
 
     if sf.exists():
@@ -910,8 +930,8 @@ def api_characters(request: Request):
 async def api_status(character_id: str):
     import requests as req
     cfg = get_char_config(character_id)
-    host = cfg.get("m5_host", "")
-    m5_online = await check_m5_online(host) if host else False
+    host = await resolve_m5_host(cfg)
+    m5_online = host is not None
     m5_sleeping = False
     if m5_online:
         try:
@@ -921,6 +941,28 @@ async def api_status(character_id: str):
             pass
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping}
+
+
+@app.get("/api/{character_id}/config/m5_hosts")
+def api_get_m5_hosts(character_id: str):
+    cfg = get_char_config(character_id)
+    return {"m5_hosts": get_m5_hosts(cfg)}
+
+
+@app.post("/api/{character_id}/config/m5_hosts")
+def api_set_m5_hosts(character_id: str, data: dict):
+    hosts = data.get("m5_hosts", [])
+    if not isinstance(hosts, list):
+        return {"ok": False, "error": "m5_hosts must be a list"}
+    hosts = [h.strip() for h in hosts if isinstance(h, str) and h.strip()]
+    cfg_path = char_dir(character_id) / "config.json"
+    cfg = get_char_config(character_id)
+    cfg["m5_hosts"] = hosts
+    if hosts:
+        cfg["m5_host"] = hosts[0]
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "m5_hosts": hosts}
 
 
 @app.get("/api/{character_id}/settings")
@@ -1015,7 +1057,7 @@ def reset_session(character_id: str):
 @app.post("/api/{character_id}/m5/sleep")
 async def api_m5_sleep(character_id: str):
     cfg = get_char_config(character_id)
-    host = cfg.get("m5_host", "")
+    host = await resolve_m5_host(cfg)
     if not host:
         return {"ok": False, "error": "no m5_host"}
     import requests as req
@@ -1026,7 +1068,7 @@ async def api_m5_sleep(character_id: str):
 @app.post("/api/{character_id}/m5/wake")
 async def api_m5_wake(character_id: str):
     cfg = get_char_config(character_id)
-    host = cfg.get("m5_host", "")
+    host = await resolve_m5_host(cfg)
     if not host:
         return {"ok": False, "error": "no m5_host"}
     import requests as req
@@ -1080,6 +1122,18 @@ def api_photo_serve(character_id: str, filename: str):
     return Response(content=photo_path.read_bytes(), media_type="image/jpeg")
 
 
+def _char_display_name(char_id: str) -> str:
+    """キャラクターIDから表示名を取得する。"""
+    config_path = CHARACTERS_DIR / char_id / "config.json"
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            return cfg.get("name", char_id)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return char_id
+
+
 @app.get("/api/mailbox")
 def api_mailbox(filter: str = "inbox"):
     """ありさん宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
@@ -1107,7 +1161,8 @@ def api_mailbox(filter: str = "inbox"):
         sender = ""
         if parts[0] == "from" and "to" in parts:
             ti = parts.index("to")
-            sender = "_".join(parts[1:ti])
+            sender_id = "_".join(parts[1:ti])
+            sender = _char_display_name(sender_id)
             rest = parts[ti + 2:]
             if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
                 date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
@@ -1130,6 +1185,7 @@ def api_mailbox(filter: str = "inbox"):
             "starred": meta["starred"],
             "read_by": meta.get("read_by", []),
         })
+    mails.sort(key=lambda m: m["date"], reverse=True)
     return mails
 
 
@@ -1159,7 +1215,7 @@ def api_mailbox_all(filter: str = "all"):
         if parts[0] == "from" and "to" in parts:
             # 新形式: from_送信元_to_宛先_YYYYMMDD_HHMM
             ti = parts.index("to")
-            sender = "_".join(parts[1:ti])
+            sender = _char_display_name("_".join(parts[1:ti]))
             rest = parts[ti + 1:]
             # rest = [宛先..., YYYYMMDD, HHMM, ...]
             date_idx = next((i for i, p in enumerate(rest) if len(p) == 8 and p.isdigit()), -1)
@@ -1193,6 +1249,7 @@ def api_mailbox_all(filter: str = "all"):
             "starred": meta["starred"],
             "read_by": meta.get("read_by", []),
         })
+    mails.sort(key=lambda m: m["date"], reverse=True)
     return mails
 
 
@@ -1531,6 +1588,11 @@ HTML = """<!DOCTYPE html>
             <span class="setting-label">🎤 マイク</span>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
           </div>
+        </div>
+        <div style="margin-top:16px;">
+          <span style="font-size:0.8rem;color:#9b8ec4;font-weight:600;">M5 接続先（上から順に試す）</span>
+          <div id="m5HostsList" style="margin-top:8px;"></div>
+          <button class="add-hour-btn" onclick="addM5HostRow('')">＋ 追加</button>
         </div>
         <button class="save-settings-btn" onclick="saveSettings()">保存</button>
       </div>
@@ -2206,9 +2268,33 @@ HTML = """<!DOCTYPE html>
       } catch(e) {}
     }
 
+    function renderM5Hosts(hosts) {
+      const el = document.getElementById("m5HostsList");
+      el.innerHTML = hosts.map((h, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+        <input type="text" class="m5-host-input" value="${h}" placeholder="IP or hostname" style="flex:1;font-size:0.85rem;padding:6px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
+        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#f44336;font-size:1rem;cursor:pointer;">✕</button>
+      </div>`).join("");
+    }
+    function addM5HostRow(val) {
+      const el = document.getElementById("m5HostsList");
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px;";
+      row.innerHTML = `<input type="text" class="m5-host-input" value="${val||''}" placeholder="IP or hostname" style="flex:1;font-size:0.85rem;padding:6px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
+        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#f44336;font-size:1rem;cursor:pointer;">✕</button>`;
+      el.appendChild(row);
+      row.querySelector("input").focus();
+    }
+    function getM5Hosts() {
+      return [...document.querySelectorAll(".m5-host-input")].map(el => el.value.trim()).filter(Boolean);
+    }
+
     async function openSettings() {
-      const res = await fetch(`/api/${currentCharId}/settings`);
+      const [res, m5Res] = await Promise.all([
+        fetch(`/api/${currentCharId}/settings`),
+        fetch(`/api/${currentCharId}/config/m5_hosts`),
+      ]);
       const s = await res.json();
+      const m5 = await m5Res.json();
       const ah = s.active_hours || {};
       currentSchedule = {
         weekday: JSON.parse(JSON.stringify(ah.weekday || [])),
@@ -2225,6 +2311,7 @@ HTML = """<!DOCTYPE html>
       document.getElementById("allowCamera").checked = s.allow_camera ?? true;
       document.getElementById("allowSound").checked = s.allow_sound ?? true;
       document.getElementById("allowMic").checked = s.allow_microphone ?? false;
+      renderM5Hosts(m5.m5_hosts || []);
       updateDayTypeLabel();
       document.getElementById("settingsOverlay").classList.add("open");
     }
@@ -2237,7 +2324,10 @@ HTML = """<!DOCTYPE html>
         allow_sound: document.getElementById("allowSound").checked,
         allow_microphone: document.getElementById("allowMic").checked,
       };
-      await fetch(`/api/${currentCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) });
+      await Promise.all([
+        fetch(`/api/${currentCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) }),
+        fetch(`/api/${currentCharId}/config/m5_hosts`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({m5_hosts: getM5Hosts()}) }),
+      ]);
       closePopup("settingsOverlay");
     }
 
