@@ -890,6 +890,130 @@ def kankei_page():
     return HTMLResponse(KANKEI_HTML)
 
 
+@app.get("/notes", response_class=HTMLResponse)
+def notes_page():
+    return HTMLResponse(NOTES_HTML)
+
+
+def _notes_dir(character_id: str) -> Path:
+    """キャラ or ありさんのノートディレクトリ"""
+    if character_id == "arisan":
+        return DATA_DIR / "notes"
+    return char_dir(character_id) / "notes"
+
+
+def _note_title(filename: str) -> str:
+    """ファイル名からタイトルを抽出: 20260303_093729_タイトル.md → タイトル"""
+    name = filename.rsplit(".", 1)[0] if "." in filename else filename
+    parts = name.split("_", 2)
+    if len(parts) >= 3 and len(parts[0]) == 8 and len(parts[1]) == 6:
+        return parts[2]
+    return name
+
+
+@app.get("/api/{character_id}/notes")
+async def api_notes_list(character_id: str):
+    """ノート一覧を返す"""
+    notes_dir = _notes_dir(character_id)
+    if not notes_dir.exists():
+        return []
+    result = []
+    for f in sorted(notes_dir.glob("*.md")):
+        stat = f.stat()
+        result.append({
+            "name": f.name,
+            "title": _note_title(f.name),
+            "size": stat.st_size,
+            "modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        })
+    return result
+
+
+@app.get("/api/{character_id}/notes/{name:path}")
+async def api_notes_content(character_id: str, name: str):
+    """ノート内容を返す"""
+    notes_dir = _notes_dir(character_id)
+    filepath = (notes_dir / name).resolve()
+    if not str(filepath).startswith(str(notes_dir.resolve())):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not filepath.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    content = filepath.read_text(encoding="utf-8")
+    return {"name": name, "title": _note_title(name), "content": content}
+
+
+import re
+
+
+@app.post("/api/my/notes")
+async def api_create_note(request: Request):
+    """ありさんのノートを作成"""
+    data = await request.json()
+    title = data.get("title", "無題")
+    content = data.get("content", "")
+    dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_title = re.sub(r'[/\\<>:"|?*]', "_", title)
+    filename = f"{dt}_{safe_title}.md"
+    notes_dir = DATA_DIR / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    (notes_dir / filename).write_text(content, encoding="utf-8")
+    return {"name": filename, "title": title}
+
+
+@app.put("/api/my/notes/{name:path}")
+async def api_update_note(name: str, request: Request):
+    """ありさんのノート内容を更新"""
+    notes_dir = DATA_DIR / "notes"
+    filepath = (notes_dir / name).resolve()
+    if not str(filepath).startswith(str(notes_dir.resolve())):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not filepath.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = await request.json()
+    filepath.write_text(data.get("content", ""), encoding="utf-8")
+    return {"ok": True}
+
+
+@app.patch("/api/my/notes/{name:path}")
+async def api_rename_note(name: str, request: Request):
+    """ありさんのノートタイトルを変更（ファイル名のタイトル部分をリネーム）"""
+    notes_dir = DATA_DIR / "notes"
+    filepath = (notes_dir / name).resolve()
+    if not str(filepath).startswith(str(notes_dir.resolve())):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not filepath.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    data = await request.json()
+    new_title = data.get("title", "")
+    if not new_title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+    # 日時プレフィックスを保持してタイトル部分だけ変更
+    old_name = name.rsplit(".", 1)[0] if "." in name else name
+    parts = old_name.split("_", 2)
+    safe_title = re.sub(r'[/\\<>:"|?*]', "_", new_title)
+    if len(parts) >= 2 and len(parts[0]) == 8 and len(parts[1]) == 6:
+        new_name = f"{parts[0]}_{parts[1]}_{safe_title}.md"
+    else:
+        dt = datetime.now().strftime("%Y%m%d_%H%M%S")
+        new_name = f"{dt}_{safe_title}.md"
+    new_path = notes_dir / new_name
+    filepath.rename(new_path)
+    return {"name": new_name, "title": new_title}
+
+
+@app.delete("/api/my/notes/{name:path}")
+async def api_delete_note(name: str):
+    """ありさんのノートを削除"""
+    notes_dir = DATA_DIR / "notes"
+    filepath = (notes_dir / name).resolve()
+    if not str(filepath).startswith(str(notes_dir.resolve())):
+        return JSONResponse({"error": "invalid path"}, status_code=400)
+    if not filepath.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    filepath.unlink()
+    return {"ok": True}
+
+
 @app.get("/api/{character_id}/diary/{date}")
 async def api_diary(character_id: str, date: str):
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -1710,6 +1834,7 @@ HTML = """<!DOCTYPE html>
         style="${isGroup?"opacity:1":"opacity:0.8"}"
         onclick="switchChar('group')">みんなで 🌟</button>`;
       tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
+      tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -2447,6 +2572,9 @@ KANKEI_HTML = """<!DOCTYPE html>
   <div class="mail-section">
     <h2>📮 おてがみ</h2>
     <div id="mailThread" class="mail-thread"></div>
+    <div id="mailMore" style="text-align:center;padding:10px;display:none">
+      <button onclick="showMoreMails()" style="background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 20px;border-radius:8px;cursor:pointer;font-size:0.85rem">もっと見る ↓</button>
+    </div>
   </div>
   <script>
     const SVG_NS = "http://www.w3.org/2000/svg";
@@ -2680,6 +2808,48 @@ KANKEI_HTML = """<!DOCTYPE html>
       return { sender, recipient, dateStr, sortKey, content: mail.content };
     }
 
+    const MAIL_PAGE_SIZE = 20;
+    let _allParsedMails = [];
+    let _mailShown = 0;
+
+    function renderMailBubble(mail) {
+      const nameMap = {};
+      if (_nodes) _nodes.forEach(n => { nameMap[n.id] = n.name; });
+
+      let body = mail.content.trim();
+      const lines = body.split("\\n");
+      if (lines[0].startsWith("#")) lines.shift();
+      while (lines.length && !lines[0].trim()) lines.shift();
+      while (lines.length && !lines[lines.length-1].trim()) lines.pop();
+      const lastLine = lines[lines.length-1]?.trim();
+      if (lastLine && (lastLine === mail.sender || lastLine === (nameMap[mail.sender] || ""))) lines.pop();
+      body = lines.join("\\n").trim();
+
+      const isLeft = mail.sender === "puchiko";
+      const senderName = nameMap[mail.sender] || mail.sender;
+      const recipientName = nameMap[mail.recipient] || mail.recipient;
+      const senderColor = _nodes?.find(n => n.id === mail.sender)?.color || "#cab8d9";
+
+      const bubble = document.createElement("div");
+      bubble.className = "mail-bubble " + (isLeft ? "left" : "right");
+      bubble.innerHTML =
+        '<div class="mail-sender" style="color:' + senderColor + '">' + senderName + ' → ' + recipientName + '</div>' +
+        body.replace(/</g, "&lt;").replace(/\\n/g, "<br>") +
+        '<div class="mail-meta">' + mail.dateStr + '</div>';
+      return bubble;
+    }
+
+    function showMoreMails() {
+      const thread = document.getElementById("mailThread");
+      const end = Math.min(_mailShown + MAIL_PAGE_SIZE, _allParsedMails.length);
+      for (let i = _mailShown; i < end; i++) {
+        thread.appendChild(renderMailBubble(_allParsedMails[i]));
+      }
+      _mailShown = end;
+      document.getElementById("mailMore").style.display =
+        _mailShown < _allParsedMails.length ? "" : "none";
+    }
+
     async function loadMails() {
       const thread = document.getElementById("mailThread");
       try {
@@ -2692,41 +2862,271 @@ KANKEI_HTML = """<!DOCTYPE html>
           return;
         }
 
-        const nameMap = {};
-        if (_nodes) _nodes.forEach(n => { nameMap[n.id] = n.name; });
-
         const parsed = charMails.map(m => parseMail(m));
-        // Sort by date (oldest first)
-        parsed.sort((a, b) => (a.sortKey > b.sortKey ? 1 : a.sortKey < b.sortKey ? -1 : 0));
+        // ありさん宛を除外
+        const filtered = parsed.filter(m => m.recipient !== "arisan");
+        // 最新が上
+        filtered.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
 
-        parsed.forEach(mail => {
-          let body = mail.content.trim();
-          const lines = body.split("\\n");
-          if (lines[0].startsWith("#")) lines.shift();
-          while (lines.length && !lines[0].trim()) lines.shift();
-          while (lines.length && !lines[lines.length-1].trim()) lines.pop();
-          const lastLine = lines[lines.length-1]?.trim();
-          if (lastLine && (lastLine === mail.sender || lastLine === (nameMap[mail.sender] || ""))) lines.pop();
-          body = lines.join("\\n").trim();
+        _allParsedMails = filtered;
+        _mailShown = 0;
 
-          const isLeft = mail.sender === "puchiko";
-          const senderName = nameMap[mail.sender] || mail.sender;
-          const recipientName = nameMap[mail.recipient] || mail.recipient;
-          const senderColor = _nodes?.find(n => n.id === mail.sender)?.color || "#cab8d9";
+        if (!filtered.length) {
+          thread.innerHTML = '<div class="mail-empty">まだおてがみはありません</div>';
+          return;
+        }
 
-          const bubble = document.createElement("div");
-          bubble.className = "mail-bubble " + (isLeft ? "left" : "right");
-          bubble.innerHTML =
-            '<div class="mail-sender" style="color:' + senderColor + '">' + senderName + ' → ' + recipientName + '</div>' +
-            body.replace(/</g, "&lt;").replace(/\\n/g, "<br>") +
-            '<div class="mail-meta">' + mail.dateStr + '</div>';
-          thread.appendChild(bubble);
-        });
+        showMoreMails();
       } catch(e) {
         thread.innerHTML = '<div class="mail-empty">読み込めませんでした</div>';
       }
     }
     loadMails();
+  </script>
+</body>
+</html>
+"""
+
+
+NOTES_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📓 ノート</title>
+  <script async src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
+    .top-bar { display: flex; align-items: center; gap: 16px; padding: 16px 20px 0; }
+    .top-bar h1 { font-size: 1.2rem; color: white; }
+    .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+    .back-btn:hover { background: #0f3460; }
+    .layout { display: flex; flex: 1; padding: 16px; gap: 16px; min-height: 0; }
+    .sidebar { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+    .char-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+    .char-tab-btn { flex: 1; padding: 6px 0; border: 1px solid #0f3460; background: #16213e; color: #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+    .char-tab-btn.active { background: #0f3460; color: white; }
+    .note-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .note-list::-webkit-scrollbar { width: 6px; }
+    .note-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .note-item { padding: 8px 12px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; display: flex; align-items: center; gap: 6px; }
+    .note-item:hover { background: #1a2a4e; }
+    .note-item.active { background: #0f3460; border-color: #4a7abf; }
+    .note-item .note-info { flex: 1; min-width: 0; }
+    .note-item .note-name { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
+    .note-item .note-meta { font-size: 0.75rem; color: #888; }
+    .note-item .note-actions { display: flex; gap: 2px; flex-shrink: 0; }
+    .note-item .note-actions button { background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; opacity: 0.6; }
+    .note-item .note-actions button:hover { opacity: 1; }
+    .create-btn { padding: 8px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.85rem; text-align: center; }
+    .create-btn:hover { background: #1a4a7a; }
+    .main-content { flex: 1; background: #16213e; border: 1px solid #0f3460; border-radius: 12px; padding: 24px; overflow-y: auto; min-height: 0; }
+    .main-content::-webkit-scrollbar { width: 6px; }
+    .main-content::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: #666; font-size: 0.95rem; }
+    .edit-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+    .edit-toolbar button { background: #0f3460; border: 1px solid #4a7abf; color: white; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+    .edit-toolbar button:hover { background: #1a4a7a; }
+    .edit-toolbar button.danger { background: #4a1020; border-color: #8a2040; }
+    .edit-toolbar button.danger:hover { background: #6a1830; }
+    .title-input { background: #2a2a4a; border: 1px solid #0f3460; color: #e0e0e0; padding: 8px 12px; border-radius: 8px; font-size: 1rem; width: 100%; margin-bottom: 10px; }
+    .editor-area { background: #2a2a4a; border: 1px solid #0f3460; color: #e0e0e0; padding: 12px; border-radius: 8px; font-size: 0.9rem; width: 100%; min-height: 400px; resize: vertical; font-family: monospace; line-height: 1.6; }
+    /* markdown styles */
+    .md-body h1 { font-size: 1.4rem; color: white; margin: 0 0 12px; border-bottom: 1px solid #2a2a4a; padding-bottom: 8px; }
+    .md-body h2 { font-size: 1.15rem; color: #ccc; margin: 20px 0 8px; }
+    .md-body h3 { font-size: 1rem; color: #bbb; margin: 16px 0 6px; }
+    .md-body p { margin: 8px 0; line-height: 1.7; }
+    .md-body ul, .md-body ol { margin: 8px 0 8px 20px; }
+    .md-body li { margin: 4px 0; line-height: 1.6; }
+    .md-body code { background: #2a2a4a; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    .md-body pre { background: #2a2a4a; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body blockquote { border-left: 3px solid #4a7abf; padding-left: 12px; color: #aaa; margin: 10px 0; }
+    .md-body a { color: #6ab0f3; }
+    .md-body hr { border: none; border-top: 1px solid #2a2a4a; margin: 16px 0; }
+    .md-body table { border-collapse: collapse; margin: 10px 0; }
+    .md-body th, .md-body td { border: 1px solid #2a2a4a; padding: 6px 10px; font-size: 0.9rem; }
+    .md-body th { background: #2a2a4a; }
+    @media (max-width: 640px) {
+      .layout { flex-direction: column; }
+      .sidebar { width: 100%; max-height: 240px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <a href="/" class="back-btn">← もどる</a>
+    <h1>📓 ノート</h1>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="char-tabs" id="charTabs"></div>
+      <div id="createArea"></div>
+      <div class="note-list" id="noteList"></div>
+    </div>
+    <div class="main-content" id="mainContent">
+      <div class="empty-state">ノートを選んでね</div>
+    </div>
+  </div>
+  <script>
+    const chars = [
+      { id: "puchiteya", name: "ぷちてゃ" },
+      { id: "puchiko", name: "ぷちこ" },
+      { id: "arisan", name: "ありさん", editable: true }
+    ];
+    let currentChar = new URLSearchParams(location.search).get("char") || chars[0].id;
+    let currentNote = null;
+    let currentNoteTitle = null;
+    let currentNoteContent = null;
+
+    function isEditable() {
+      const c = chars.find(x => x.id === currentChar);
+      return c && c.editable;
+    }
+
+    function renderCharTabs() {
+      const el = document.getElementById("charTabs");
+      el.innerHTML = chars.map(c =>
+        `<button class="char-tab-btn${c.id === currentChar ? " active" : ""}" onclick="switchChar('${c.id}')">${c.name}</button>`
+      ).join("");
+      const createArea = document.getElementById("createArea");
+      createArea.innerHTML = isEditable()
+        ? '<button class="create-btn" onclick="createNote()">＋ 新規作成</button>'
+        : '';
+    }
+
+    function switchChar(id) {
+      currentChar = id;
+      currentNote = null;
+      currentNoteTitle = null;
+      currentNoteContent = null;
+      history.replaceState(null, "", "/notes?char=" + id);
+      renderCharTabs();
+      loadNotes();
+      document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
+    }
+
+    async function loadNotes() {
+      const list = document.getElementById("noteList");
+      try {
+        const res = await fetch(`/api/${currentChar}/notes`);
+        const notes = await res.json();
+        if (!notes.length) {
+          list.innerHTML = '<div style="color:#666;font-size:0.85rem;padding:8px">ノートがありません</div>';
+          return;
+        }
+        const editable = isEditable();
+        list.innerHTML = notes.map(n => {
+          const d = new Date(n.modified);
+          const dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,"0")}/${d.getDate().toString().padStart(2,"0")}`;
+          const sizeStr = n.size < 1024 ? n.size + " B" : (n.size / 1024).toFixed(1) + " KB";
+          const dispName = n.title || n.name.replace(/\\.md$/, "");
+          const actions = editable
+            ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${n.name.replace(/'/g,"\\\\'")}','${dispName.replace(/'/g,"\\\\'")}')">🗑</button></div>`
+            : '';
+          return `<div class="note-item${currentNote === n.name ? " active" : ""}" onclick="loadNote('${n.name.replace(/'/g, "\\\\'")}')">
+            <div class="note-info">
+              <div class="note-name">${dispName}</div>
+              <div class="note-meta">${dateStr} · ${sizeStr}</div>
+            </div>
+            ${actions}
+          </div>`;
+        }).join("");
+      } catch(e) {
+        list.innerHTML = '<div style="color:#888;font-size:0.85rem;padding:8px">読み込めませんでした</div>';
+      }
+    }
+
+    async function loadNote(name) {
+      currentNote = name;
+      loadNotes(); // refresh active state
+      const content = document.getElementById("mainContent");
+      try {
+        const res = await fetch(`/api/${currentChar}/notes/${encodeURIComponent(name)}`);
+        const data = await res.json();
+        currentNoteTitle = data.title;
+        currentNoteContent = data.content;
+        showViewMode(data);
+      } catch(e) {
+        content.innerHTML = '<div class="empty-state">読み込めませんでした</div>';
+      }
+    }
+
+    function showViewMode(data) {
+      const content = document.getElementById("mainContent");
+      const toolbar = isEditable()
+        ? `<div class="edit-toolbar"><button onclick="startEdit()">✏️ 編集</button></div>`
+        : '';
+      // 連続空行を保持: 余分な空行を&nbsp;行に変換してmarkedに渡す
+      const md = data.content.replace(/\\r\\n/g, '\\n').replace(/\\n{3,}/g,
+        m => '\\n\\n' + '&nbsp;\\n\\n'.repeat(m.length - 2));
+      const html = (typeof marked !== 'undefined') ? marked.parse(md) : md.split('&').join('&amp;').split('\\x3c').join('&lt;').split('\\n').join('<br>');
+      content.innerHTML = toolbar + '<div class="md-body">' + html + '</div>';
+    }
+
+    function startEdit() {
+      const content = document.getElementById("mainContent");
+      content.innerHTML = `
+        <input class="title-input" id="editTitle" value="${(currentNoteTitle||'').replace(/"/g,'&quot;')}" placeholder="タイトル">
+        <textarea class="editor-area" id="editArea">${currentNoteContent||''}</textarea>
+        <div class="edit-toolbar" style="margin-top:10px">
+          <button onclick="saveEdit()">💾 保存</button>
+          <button onclick="loadNote(currentNote)">キャンセル</button>
+        </div>`;
+    }
+
+    async function saveEdit() {
+      const newTitle = document.getElementById("editTitle").value.trim();
+      const newContent = document.getElementById("editArea").value;
+      // save content
+      await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`, {
+        method: "PUT", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ content: newContent })
+      });
+      // rename if title changed
+      if (newTitle && newTitle !== currentNoteTitle) {
+        const res = await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`, {
+          method: "PATCH", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ title: newTitle })
+        });
+        const data = await res.json();
+        if (data.name) currentNote = data.name;
+      }
+      currentNoteTitle = newTitle;
+      currentNoteContent = newContent;
+      loadNotes();
+      showViewMode({ content: newContent });
+    }
+
+    async function createNote() {
+      const title = prompt("ノートのタイトル:");
+      if (!title) return;
+      const res = await fetch("/api/my/notes", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ title, content: "" })
+      });
+      const data = await res.json();
+      await loadNotes();
+      currentNote = data.name;
+      currentNoteTitle = data.title;
+      currentNoteContent = "";
+      startEdit();
+    }
+
+    async function deleteNote(name, dispName) {
+      if (!confirm(`「${dispName}」を削除しますか？`)) return;
+      await fetch(`/api/my/notes/${encodeURIComponent(name)}`, { method: "DELETE" });
+      if (currentNote === name) {
+        currentNote = null;
+        document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
+      }
+      loadNotes();
+    }
+
+    if (typeof marked !== 'undefined') marked.use({ breaks: true });
+    renderCharTabs();
+    loadNotes();
   </script>
 </body>
 </html>
