@@ -290,6 +290,7 @@ PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
+NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
 
 
 def _load_mailbox_metadata() -> dict:
@@ -893,6 +894,106 @@ def kankei_page():
 @app.get("/notes", response_class=HTMLResponse)
 def notes_page():
     return HTMLResponse(NOTES_HTML)
+
+
+@app.get("/library", response_class=HTMLResponse)
+def library_page():
+    return HTMLResponse(LIBRARY_HTML)
+
+
+@app.get("/notebook", response_class=HTMLResponse)
+def notebook_page():
+    return HTMLResponse(NOTEBOOK_HTML)
+
+
+class NotebookEntry(BaseModel):
+    author: str
+    content: str
+
+
+@app.get("/api/notebook")
+async def api_notebook_list():
+    if not NOTEBOOK_FILE.exists():
+        return []
+    try:
+        entries = json.loads(NOTEBOOK_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    entries.reverse()
+    return entries
+
+
+@app.post("/api/notebook")
+async def api_notebook_add(entry: NotebookEntry):
+    if not NOTEBOOK_FILE.exists():
+        NOTEBOOK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        entries = []
+    else:
+        try:
+            entries = json.loads(NOTEBOOK_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            entries = []
+    now = datetime.now(timezone.utc).astimezone()
+    entries.append({
+        "author": entry.author,
+        "date": now.strftime("%Y/%m/%d %H:%M"),
+        "content": entry.content,
+    })
+    NOTEBOOK_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True}
+
+
+@app.get("/api/library")
+async def api_library_list():
+    lib_dir = DATA_DIR / "library"
+    if not lib_dir.exists():
+        return []
+    files = []
+    for f in sorted(lib_dir.iterdir()):
+        if f.is_file() and not f.name.startswith("."):
+            files.append({
+                "name": f.name,
+                "size": f.stat().st_size,
+                "modified": f.stat().st_mtime,
+            })
+    return files
+
+
+_BOOKMARKS_FILE = DATA_DIR / "library" / ".bookmarks.json"
+
+
+def _load_bookmarks() -> dict:
+    if _BOOKMARKS_FILE.exists():
+        try:
+            return json.loads(_BOOKMARKS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+@app.get("/api/library/bookmarks")
+async def api_library_bookmarks_get():
+    return _load_bookmarks()
+
+
+@app.put("/api/library/bookmarks")
+async def api_library_bookmarks_put(request: Request):
+    data = await request.json()
+    _BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _BOOKMARKS_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return {"ok": True}
+
+
+@app.get("/api/library/{name:path}")
+async def api_library_content(name: str):
+    lib_dir = DATA_DIR / "library"
+    filepath = (lib_dir / name).resolve()
+    if not str(filepath).startswith(str(lib_dir.resolve())):
+        return JSONResponse({"error": "invalid path"}, 403)
+    if not filepath.exists():
+        return JSONResponse({"error": "not found"}, 404)
+    content = filepath.read_text(encoding="utf-8")
+    return {"name": name, "content": content}
 
 
 def _notes_dir(character_id: str) -> Path:
@@ -1835,6 +1936,8 @@ HTML = """<!DOCTYPE html>
         onclick="switchChar('group')">みんなで 🌟</button>`;
       tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
       tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
+      tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
+      tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -3127,6 +3230,389 @@ NOTES_HTML = """<!DOCTYPE html>
     if (typeof marked !== 'undefined') marked.use({ breaks: true });
     renderCharTabs();
     loadNotes();
+  </script>
+</body>
+</html>
+"""
+
+
+LIBRARY_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📚 ライブラリ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100dvh; height: 100vh; overflow: hidden; }
+    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; flex-direction: column; }
+    .top-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; flex-shrink: 0; }
+    .top-bar h1 { font-size: 1.2rem; color: white; }
+    .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+    .back-btn:hover { background: #0f3460; }
+    .layout { display: flex; flex: 1; padding: 0 16px 16px; gap: 16px; min-height: 0; overflow: hidden; }
+    .sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+    .book-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+    .book-list::-webkit-scrollbar { width: 6px; }
+    .book-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .book-item { padding: 10px 12px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
+    .book-item:hover { background: #1a2a4e; }
+    .book-item.active { background: #0f3460; border-color: #4a7abf; }
+    .book-name { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
+    .book-meta { font-size: 0.75rem; color: #888; }
+    .bookmark-indicator { font-size: 0.75rem; color: #e8a040; margin-top: 2px; }
+    .main-content { flex: 1; background: #16213e; border: 1px solid #0f3460; border-radius: 12px; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .empty-state { display: flex; align-items: center; justify-content: center; flex: 1; color: #666; font-size: 0.95rem; }
+    .reading-toolbar { flex-shrink: 0; background: #16213e; border-bottom: 1px solid #0f3460; padding: 6px 16px; display: flex; justify-content: flex-end; align-items: center; gap: 6px; border-radius: 12px 12px 0 0; }
+    .scroll-area { flex: 1; overflow-y: auto; padding: 16px 24px 60vh; min-height: 0; }
+    .scroll-area::-webkit-scrollbar { width: 6px; }
+    .scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .book-content { white-space: pre-wrap; line-height: 1.8; color: #d0d0d0; font-family: "Noto Serif JP", "Yu Mincho", serif; }
+    .book-title-bar { font-size: 1.1rem; font-weight: 700; color: white; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid #2a2a4a; }
+    .tool-btn { background: #0f3460; border: 1px solid #4a7abf; color: #e0e0e0; padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; transition: background 0.15s; }
+    .tool-btn:hover { background: #1a4a7a; }
+    .font-size-group { display: flex; align-items: center; gap: 2px; }
+    .font-label { font-size: 0.75rem; color: #888; margin-right: 4px; }
+    .bookmark-line { border-left: 3px solid #e8a040; padding-left: 8px; background: rgba(232,160,64,0.06); }
+    .book-item.finished { opacity: 0.5; }
+    .book-item.finished.active { opacity: 0.8; }
+    .tool-btn.done { background: #2a5a2a; border-color: #4a8a4a; }
+    @media (max-width: 640px) {
+      .layout { flex-direction: column; }
+      .sidebar { width: 100%; max-height: 180px; }
+      .sidebar.hidden { display: none; }
+      .top-bar.reading-mode h1 { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <a href="/" class="back-btn">← もどる</a>
+    <h1>📚 ライブラリ</h1>
+  </div>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="book-list" id="bookList"></div>
+    </div>
+    <div class="main-content" id="mainContent">
+      <div class="empty-state">本を選んでね</div>
+    </div>
+  </div>
+  <script>
+    let currentBook = null;
+    let bookmarks = {};
+    let fontSize = 0.9;
+    let showFinished = false;
+    const FONT_SIZES = [0.8, 0.9, 1.0, 1.15, 1.3, 1.5];
+
+    function isFinished(name) {
+      const f = bookmarks._finished || {};
+      return name in f;
+    }
+    function finishedDate(name) {
+      const f = bookmarks._finished || {};
+      return f[name] || null;
+    }
+
+    async function loadBookmarks() {
+      try {
+        const res = await fetch("/api/library/bookmarks");
+        bookmarks = await res.json();
+      } catch(e) { bookmarks = {}; }
+    }
+
+    async function saveBookmarks() {
+      await fetch("/api/library/bookmarks", {
+        method: "PUT",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(bookmarks)
+      });
+    }
+
+    async function saveBookmark(name, line) {
+      bookmarks[name] = line;
+      await saveBookmarks();
+    }
+
+    async function toggleFinished(name) {
+      if (!bookmarks._finished || Array.isArray(bookmarks._finished)) bookmarks._finished = {};
+      if (name in bookmarks._finished) {
+        delete bookmarks._finished[name];
+      } else {
+        const now = new Date();
+        bookmarks._finished[name] = `${now.getFullYear()}/${(now.getMonth()+1).toString().padStart(2,"0")}/${now.getDate().toString().padStart(2,"0")}`;
+      }
+      await saveBookmarks();
+      loadBookList();
+    }
+
+    function toggleShowFinished() {
+      showFinished = !showFinished;
+      loadBookList();
+    }
+
+    async function loadBookList() {
+      const list = document.getElementById("bookList");
+      try {
+        const res = await fetch("/api/library");
+        const books = await res.json();
+        if (!books.length) {
+          list.innerHTML = '<div style="color:#666;font-size:0.85rem;padding:8px">本がありません</div>';
+          return;
+        }
+        const finished = bookmarks._finished || {};
+        const finishedCount = books.filter(b => b.name in finished).length;
+        let html = "";
+        if (finishedCount > 0) {
+          html += `<div style="padding:4px 8px;font-size:0.75rem">
+            <button class="tool-btn" style="width:100%;font-size:0.75rem" onclick="toggleShowFinished()">
+              ${showFinished ? "読了を隠す" : `読了した本 (${finishedCount})`}
+            </button></div>`;
+        }
+        html += books.filter(b => {
+          if (!showFinished && (b.name in finished) && currentBook !== b.name) return false;
+          return true;
+        }).map(b => {
+          const sizeStr = b.size < 1024 ? b.size + " B" : (b.size / 1024).toFixed(1) + " KB";
+          const dispName = b.name.replace(/\\.[^.]+$/, "");
+          const done = b.name in finished;
+          const bm = bookmarks[b.name];
+          const bmHtml = bm != null ? `<div class="bookmark-indicator">🔖 ${bm + 1}行目</div>` : "";
+          const doneHtml = done ? `<div class="bookmark-indicator">✓ 読了 ${finished[b.name]}</div>` : "";
+          return `<div class="book-item${currentBook === b.name ? " active" : ""}${done ? " finished" : ""}" onclick="loadBook('${b.name.replace(/'/g, "\\\\'")}')">
+            <div class="book-name">${done ? "✓ " : ""}${dispName}</div>
+            <div class="book-meta">${sizeStr}</div>
+            ${bmHtml}${doneHtml}
+          </div>`;
+        }).join("");
+        list.innerHTML = html;
+      } catch(e) {
+        list.innerHTML = '<div style="color:#888;font-size:0.85rem;padding:8px">読み込めませんでした</div>';
+      }
+    }
+
+    function changeFontSize(delta) {
+      const idx = FONT_SIZES.indexOf(fontSize);
+      const next = idx + delta;
+      if (next < 0 || next >= FONT_SIZES.length) return;
+      fontSize = FONT_SIZES[next];
+      const el = document.querySelector("#scrollArea .book-content");
+      if (el) el.style.fontSize = fontSize + "rem";
+      const label = document.getElementById("fontLabel");
+      if (label) label.textContent = Math.round(fontSize * 100) + "%";
+    }
+
+    function scrollToBookmark() {
+      if (!currentBook || bookmarks[currentBook] == null) return;
+      const el = document.getElementById("bm-line");
+      const area = document.getElementById("scrollArea");
+      if (!el || !area) return;
+      area.scrollTop = el.offsetTop - area.offsetTop - area.clientHeight / 3;
+    }
+
+    function setBookmarkAtView() {
+      if (!currentBook) return;
+      const scrollArea = document.getElementById("scrollArea");
+      if (!scrollArea) return;
+      const lines = scrollArea.querySelectorAll(".text-line");
+      if (!lines.length) return;
+      // scroll-area の見える上端を基準にする
+      const areaTop = scrollArea.getBoundingClientRect().top;
+      let closest = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const top = lines[i].getBoundingClientRect().top;
+        if (top >= areaTop - 5) { closest = i; break; }
+      }
+      const old = document.getElementById("bm-line");
+      if (old) old.removeAttribute("id"), old.classList.remove("bookmark-line");
+      lines[closest].id = "bm-line";
+      lines[closest].classList.add("bookmark-line");
+      saveBookmark(currentBook, closest);
+      loadBookList();
+    }
+
+    function closeBook() {
+      currentBook = null;
+      loadBookList();
+      document.getElementById("mainContent").innerHTML = '<div class="empty-state">本を選んでね</div>';
+      document.querySelector(".sidebar").classList.remove("hidden");
+      document.querySelector(".top-bar").classList.remove("reading-mode");
+    }
+
+    async function loadBook(name) {
+      // 同じ本をもう一度押したら閉じる
+      if (currentBook === name) { closeBook(); return; }
+      currentBook = name;
+      loadBookList();
+      const content = document.getElementById("mainContent");
+      content.innerHTML = '<div class="empty-state">読み込み中...</div>';
+      try {
+        const res = await fetch(`/api/library/${encodeURIComponent(name)}`);
+        const data = await res.json();
+        const dispName = name.replace(/\\.[^.]+$/, "");
+        const bmLine = bookmarks[name];
+
+        const lines = data.content.split("\\n").map((line, i) => {
+          const escaped = line.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") || "\\u00a0";
+          const isBm = bmLine != null && i === bmLine;
+          return `<div class="text-line${isBm ? " bookmark-line" : ""}"${isBm ? ' id="bm-line"' : ""}>${escaped}</div>`;
+        }).join("");
+
+        // モバイルではサイドバーを隠して読書スペースを最大化
+        if (window.innerWidth <= 640) {
+          document.querySelector(".sidebar").classList.add("hidden");
+          document.querySelector(".top-bar").classList.add("reading-mode");
+        }
+
+        const pct = Math.round(fontSize * 100);
+        content.innerHTML =
+          `<div class="reading-toolbar">
+            <button class="tool-btn" onclick="closeBook()" title="本を閉じる">✕</button>
+            <div style="flex:1"></div>
+            <div class="font-size-group">
+              <span class="font-label">字</span>
+              <button class="tool-btn" onclick="changeFontSize(-1)">−</button>
+              <span id="fontLabel" style="font-size:0.75rem;min-width:32px;text-align:center">${pct}%</span>
+              <button class="tool-btn" onclick="changeFontSize(1)">＋</button>
+            </div>
+            <button class="tool-btn" onclick="setBookmarkAtView()" title="今見ている場所にしおりを挟む">🔖</button>
+            ${bmLine != null ? '<button class="tool-btn" onclick="scrollToBookmark()" title="しおりの位置へ移動">📍</button>' : ""}
+            <button class="tool-btn${isFinished(name) ? " done" : ""}" onclick="toggleFinished('${name.replace(/'/g,"\\\\'")}')" title="${isFinished(name) ? "読了を取り消す" : "読み終わった"}">${isFinished(name) ? "✓ 読了" : "読了"}</button>
+          </div>
+          <div class="scroll-area" id="scrollArea">
+            <div class="book-title-bar">${dispName}</div>
+            <div class="book-content" style="font-size:${fontSize}rem">${lines}</div>
+          </div>`;
+
+        if (bmLine != null) {
+          setTimeout(() => scrollToBookmark(), 100);
+        }
+      } catch(e) {
+        content.innerHTML = '<div class="empty-state">読み込めませんでした</div>';
+      }
+    }
+
+    (async () => {
+      await loadBookmarks();
+      loadBookList();
+    })();
+  </script>
+</body>
+</html>
+"""
+
+
+NOTEBOOK_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📖 交換ノート</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100dvh; }
+    .top-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
+    .top-bar h1 { font-size: 1.2rem; color: white; }
+    .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+    .back-btn:hover { background: #0f3460; }
+    .container { max-width: 640px; margin: 0 auto; padding: 0 16px 24px; }
+    .form-box { background: #16213e; border: 1px solid #0f3460; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+    .form-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+    .form-row label { font-size: 0.85rem; color: #aaa; white-space: nowrap; }
+    .author-label { font-size: 0.85rem; color: #7ec8e3; font-weight: 600; }
+    .form-textarea { width: 100%; background: #0d1b36; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 8px; padding: 10px; font-size: 0.9rem; min-height: 80px; resize: vertical; font-family: inherit; }
+    .form-textarea:focus { outline: none; border-color: #4a7abf; }
+    .send-btn { background: #0f3460; border: 1px solid #4a7abf; color: #e0e0e0; padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; float: right; }
+    .send-btn:hover { background: #1a4a7a; }
+    .send-btn:disabled { opacity: 0.4; cursor: default; }
+    .entries { display: flex; flex-direction: column; gap: 10px; }
+    .entry { background: #16213e; border: 1px solid #0f3460; border-radius: 12px; padding: 14px 16px; }
+    .entry-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .entry-author { font-weight: 700; font-size: 0.9rem; }
+    .entry-date { font-size: 0.75rem; color: #888; }
+    .entry-content { white-space: pre-wrap; line-height: 1.7; font-size: 0.9rem; color: #d0d0d0; }
+    .author-petitya { color: #f0c674; }
+    .author-petiko { color: #cab8d9; }
+    .author-arisan { color: #7ec8e3; }
+    .empty-state { text-align: center; color: #666; padding: 40px 0; font-size: 0.95rem; }
+  </style>
+</head>
+<body>
+  <div class="top-bar">
+    <a href="/" class="back-btn">← もどる</a>
+    <h1>📖 交換ノート</h1>
+  </div>
+  <div class="container">
+    <div class="form-box">
+      <div class="form-row">
+        <span class="author-label">ありさん</span>
+      </div>
+      <textarea id="contentArea" class="form-textarea" placeholder="ここに書いてね"></textarea>
+      <div style="margin-top:8px;overflow:hidden;">
+        <button id="sendBtn" class="send-btn" onclick="postEntry()">書きこむ</button>
+      </div>
+    </div>
+    <div class="entries" id="entries">
+      <div class="empty-state">まだ何も書かれていないよ</div>
+    </div>
+  </div>
+  <script>
+    const authorColors = {
+      "ぷちてゃ": "author-petitya",
+      "ぷちこ": "author-petiko",
+      "ありさん": "author-arisan",
+    };
+
+    async function loadEntries() {
+      try {
+        const res = await fetch("/api/notebook");
+        const data = await res.json();
+        const el = document.getElementById("entries");
+        if (!data.length) {
+          el.innerHTML = '<div class="empty-state">まだ何も書かれていないよ</div>';
+          return;
+        }
+        el.innerHTML = data.map(e => {
+          const cls = authorColors[e.author] || "";
+          const escaped = e.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+          return `<div class="entry">
+            <div class="entry-header">
+              <span class="entry-author ${cls}">${e.author}</span>
+              <span class="entry-date">${e.date}</span>
+            </div>
+            <div class="entry-content">${escaped}</div>
+          </div>`;
+        }).join("");
+      } catch(e) {
+        console.error(e);
+      }
+    }
+
+    async function postEntry() {
+      const author = "ありさん";
+      const content = document.getElementById("contentArea").value.trim();
+      if (!content) return;
+      const btn = document.getElementById("sendBtn");
+      btn.disabled = true;
+      try {
+        await fetch("/api/notebook", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({author, content})
+        });
+        document.getElementById("contentArea").value = "";
+        await loadEntries();
+      } catch(e) {
+        console.error(e);
+      }
+      btn.disabled = false;
+    }
+
+    document.getElementById("contentArea").addEventListener("keydown", e => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postEntry();
+    });
+
+    loadEntries();
   </script>
 </body>
 </html>
