@@ -514,6 +514,56 @@ cron で毎日4時に自動バックアップ（7日分保持）。詳細は `~/
 0 4 * * * bash ~/petit_claude/backup/save.sh && find ~/petit_claude/backup -maxdepth 1 -type d -name "[0-9]*" -mtime +7 -exec rm -rf {} \;
 ```
 
+## コンテキスト節約の変更（2026-03-09）
+
+Claude Code の週制限対策として以下を実施:
+
+| 対象 | Before | After | 削減率 |
+|------|--------|-------|--------|
+| CLAUDE.md | 231行 | 31行 | 87% |
+| MEMORY.md | 196行 | 51行 | 74% |
+| settings.local.json 許可リスト | 193件 | 23件 | 88% |
+| グローバル settings.json | MCP重複定義あり | 削除+powerline追加 | - |
+| enableAllProjectMcpServers | true | false | m5は必要時のみ |
+
+詳細:
+- CLAUDE.md: MCP ツール一覧・デバッグ・外出構成を削除（README.md に既存）
+- MEMORY.md: 詩一覧→`poems_index.md`、最近の出来事→`recent_march_9.md` に分割
+- 許可リスト: 一度きりのBashコマンドを削除、パターンベース(`Bash(uv run ruff check *)` 等)に統一
+- claude-powerline: `~/.claude/settings.json` の statusLine に追加（daily/weekly残量表示）
+
+## 使用量チェック（2026-03-10）
+
+`scripts/check_usage.py` で Claude Code のトークン使用量を集計できる。
+
+```bash
+# 全体
+python3 scripts/check_usage.py
+
+# キャラクター別
+python3 scripts/check_usage.py --character puchiteya
+python3 scripts/check_usage.py --character puchiko
+python3 scripts/check_usage.py --character puchiru
+
+# JSON出力
+python3 scripts/check_usage.py --json
+python3 scripts/check_usage.py --character puchiteya --json
+```
+
+`~/.claude/projects/**/*.jsonl` からトークン使用量を集計し、今日・今週・今月の合計を表示。今日の時間帯別呼び出し数も表示される。キャラクター別集計は `autonomous-action.sh` が新規セッション作成時に `~/.autonomous-logs/<character>/session_history.txt` へセッションIDを追記することで実現。
+
+### 自律セッションのターン数制限
+
+`autonomous-action.sh` はキャラクターごとに最大ターン数を設定している。
+
+| キャラクター | MAX_TURNS |
+|---|---|
+| puchiteya, puchiko | 15 |
+| puchiru | 10 |
+| その他 | 10 |
+
+環境変数 `MAX_TURNS` で上書き可能。また、日付が変わると自動でセッションをリセットしてコンテキストを刷新する（`.heartbeat-session-date` で管理）。
+
 ## ライセンス
 
 MIT License
