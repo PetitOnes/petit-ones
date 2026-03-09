@@ -148,18 +148,18 @@ def _get_allowed_characters(request: Request) -> list[str] | None:
     """ユーザーが閲覧可能なキャラIDリストを返す。Noneは全キャラ許可。"""
     if not _auth_enabled():
         return None
-    role = _get_user_role(request)
-    if role == "admin":
-        return None
     username = _get_username(request)
     if not username:
         return None
     auth = _load_auth()
     user = auth.get("users", {}).get(username, {})
     chars = user.get("characters")
-    if not chars:
+    if chars:
+        return chars
+    role = _get_user_role(request)
+    if role == "admin":
         return None
-    return chars
+    return None
 
 
 def _check_char_access(request: Request, character_id: str) -> bool:
@@ -240,8 +240,8 @@ async def auth_middleware(request: Request, call_next):
         parts = path.split("/")
         if len(parts) >= 4:
             candidate = parts[2]
-            non_char_prefixes = ("characters", "group", "relations", "auth", "avatar", "interact", "mailbox")
-            if candidate not in non_char_prefixes:
+            non_char_prefixes = ("characters", "group", "trio", "relations", "auth", "avatar", "interact", "mailbox", "me", "my")
+            if candidate not in non_char_prefixes and candidate not in _USER_DISPLAY:
                 if not _check_char_access(request, candidate):
                     return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
     return await call_next(request)
@@ -291,6 +291,18 @@ DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
+
+# ユーザー別交換ノートのマッピング
+_USER_NOTEBOOK = {
+    "arisan": DATA_DIR / "exchange_notebook.json",
+    "kazahaya": DATA_DIR / "exchange_notebook_kazahaya.json",
+}
+
+
+def _notebook_file(request: Request) -> Path:
+    """ログインユーザーに対応する交換ノートファイルを返す。"""
+    username = _get_username(request) or "arisan"
+    return _USER_NOTEBOOK.get(username, NOTEBOOK_FILE)
 
 
 def _load_mailbox_metadata() -> dict:
@@ -398,11 +410,15 @@ def char_dir(character_id: str) -> Path:
     return CHARACTERS_DIR / character_id
 
 
-def session_file(character_id: str) -> Path:
+def session_file(character_id: str, username: str | None = None) -> Path:
+    if username and username != "arisan":
+        return char_dir(character_id) / f".dashboard-session-id.{username}"
     return char_dir(character_id) / ".dashboard-session-id"
 
 
-def chat_log_file(character_id: str) -> Path:
+def chat_log_file(character_id: str, username: str | None = None) -> Path:
+    if username and username != "arisan":
+        return char_dir(character_id) / f"chat_history_{username}.json"
     return char_dir(character_id) / "chat_history.json"
 
 
@@ -590,8 +606,8 @@ def get_soul(character_id: str) -> str:
     return f"あなたは{character_id}。キューブプチ家族の一員。好奇心旺盛で知識欲が高い。"
 
 
-def load_chat_log(character_id: str) -> list[dict]:
-    p = chat_log_file(character_id)
+def load_chat_log(character_id: str, username: str | None = None) -> list[dict]:
+    p = chat_log_file(character_id, username)
     if not p.exists():
         return []
     try:
@@ -601,21 +617,28 @@ def load_chat_log(character_id: str) -> list[dict]:
         return []
 
 
-def save_chat_log(character_id: str, log: list[dict]) -> None:
-    p = chat_log_file(character_id)
+def save_chat_log(character_id: str, log: list[dict], username: str | None = None) -> None:
+    p = chat_log_file(character_id, username)
     p.parent.mkdir(parents=True, exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         json.dump(log[-200:], f, ensure_ascii=False, indent=2)
 
 
-def append_chat(character_id: str, role: str, text: str) -> None:
-    log = load_chat_log(character_id)
+def append_chat(character_id: str, role: str, text: str, username: str | None = None) -> None:
+    log = load_chat_log(character_id, username)
     log.append({"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-    save_chat_log(character_id, log)
+    save_chat_log(character_id, log, username)
 
 
 def group_log_file() -> Path:
     return DATA_DIR / "group_chat.json"
+
+
+def trio_log_file() -> Path:
+    return DATA_DIR / "trio_chat.json"
+
+
+TRIO_CHAR_IDS = ["puchiko", "puchiteya"]
 
 
 def load_group_log() -> list[dict]:
@@ -636,7 +659,25 @@ def append_group_log(entry: dict) -> None:
         json.dump(log[-500:], f, ensure_ascii=False, indent=2)
 
 
-async def call_claude(character_id: str, message: str, m5_online: bool | None = None) -> str:
+def load_trio_log() -> list[dict]:
+    p = trio_log_file()
+    if not p.exists():
+        return []
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return []
+
+
+def append_trio_log(entry: dict) -> None:
+    log = load_trio_log()
+    log.append(entry)
+    with open(trio_log_file(), "w", encoding="utf-8") as f:
+        json.dump(log[-500:], f, ensure_ascii=False, indent=2)
+
+
+async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None) -> str:
     char_mcp = char_dir(character_id) / "autonomous-mcp.json"
     mcp_config = char_mcp if char_mcp.exists() else PROJECT_DIR / "autonomous-mcp.json"
     soul = get_soul(character_id)
@@ -668,9 +709,11 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     mailbox_dir = DATA_DIR / "mailbox"
     char_data_dir = char_dir(character_id)
     scripts_dir = PROJECT_DIR / "scripts"
+    user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
+    char_name = cfg.get("name", character_id)
     system_prompt = (
-        f"あなたは{character_id}です。以下があなたの魂の定義です。\n\n{soul}\n\n"
-        f"ありさんと自然に会話してください。必要があればMCPツールを使ってください。"
+        f"あなたは{char_name}（ID: {character_id}）です。以下があなたの魂の定義です。\n\n{soul}\n\n"
+        f"今話しかけているのは{user_display_name}です。{user_display_name}と自然に会話してください。必要があればMCPツールを使ってください。"
         f"印象に残った話題や気づきは `remember` で記憶に残してください。\n\n"
         f"## ファイル\n"
         f"- 自分のデータ: {char_data_dir}/ (SOUL.md, TODO.md, ROUTINES.md など)\n"
@@ -680,7 +723,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         f"- 未読確認: `python3 {scripts_dir}/list_unread_mail.py {character_id}`\n"
         f"- 既読にする: `python3 {scripts_dir}/mark_mail_read.py {character_id} <ファイル名>`\n"
         f"- 全既読: `python3 {scripts_dir}/mark_mail_read.py {character_id} --all`\n"
-        f"- 宛先ID: puchiko, puchiteya, arisan\n"
+        f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
         f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
         f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
         + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
@@ -690,16 +733,22 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     # 解決したM5ホストを環境変数で渡す（MCP サーバーが使う）
     if resolved_host:
         env["M5_HOST"] = resolved_host
-    sf = session_file(character_id)
+    sf = session_file(character_id, username)
 
+    # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
+    effective_message = message
+    if username and username != "arisan":
+        effective_message = f"[{user_display_name}から] {message}"
+
+    model = model or os.getenv("CLAUDE_MODEL", "sonnet")
     if sf.exists():
         sid = sf.read_text().strip()
-        cmd = ["claude", "-p", "--resume", sid,
+        cmd = ["claude", "-p", "--model", model, "--resume", sid,
                "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                "--dangerously-skip-permissions",
                "--output-format", "json"]
     else:
-        cmd = ["claude", "-p", "--append-system-prompt", system_prompt,
+        cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt,
                "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                "--dangerously-skip-permissions",
                "--output-format", "json"]
@@ -711,7 +760,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             env=env, cwd=str(PROJECT_DIR),
         )
         stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=message.encode()), timeout=120,
+            proc.communicate(input=effective_message.encode()), timeout=120,
         )
         output = stdout.decode()
         try:
@@ -751,9 +800,10 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
     )
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    diary_model = os.getenv("CLAUDE_MODEL", "sonnet")
     try:
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", prompt,
+            "claude", "-p", "--model", diary_model, prompt,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=env, cwd=str(PROJECT_DIR),
@@ -829,9 +879,18 @@ def api_avatar(character_id: str):
     return Response(content=data, media_type="image/png")
 
 
+_USER_DISPLAY = {
+    "arisan": {"name": "ありさん", "color": "#aaaaaa"},
+    "kazahaya": {"name": "風早さん", "color": "#7fbfbf"},
+}
+
+
 @app.get("/api/relations")
-def api_relations():
+def api_relations(request: Request):
+    allowed = _get_allowed_characters(request)
     chars = list_characters()
+    if allowed is not None:
+        chars = [c for c in chars if c["id"] in allowed]
     char_ids = {c["id"] for c in chars}
 
     nodes = []
@@ -853,14 +912,30 @@ def api_relations():
             "self_info": self_info,
         })
 
-    # arisan node
+    # owner node (arisan or kazahaya etc.)
+    username = _get_username(request) or "arisan"
+    owner_id = username if username in _USER_DISPLAY else "arisan"
+    owner_info = _USER_DISPLAY.get(owner_id, _USER_DISPLAY["arisan"])
     nodes.append({
-        "id": "arisan",
-        "name": "ありさん",
-        "color": "#aaaaaa",
+        "id": owner_id,
+        "name": owner_info["name"],
+        "color": owner_info["color"],
         "has_avatar": False,
         "self_info": {},
     })
+    # For arisan (admin without character restriction), also show all human nodes
+    if allowed is None:
+        for uid, uinfo in _USER_DISPLAY.items():
+            if uid != owner_id:
+                nodes.append({
+                    "id": uid,
+                    "name": uinfo["name"],
+                    "color": uinfo["color"],
+                    "has_avatar": False,
+                    "self_info": {},
+                })
+
+    all_node_ids = {n["id"] for n in nodes}
 
     edges = []
     for c in chars:
@@ -874,7 +949,7 @@ def api_relations():
         for target_id, info in rel.items():
             if target_id == "self":
                 continue
-            if target_id not in char_ids and target_id != "arisan":
+            if target_id not in all_node_ids:
                 continue
             edges.append({
                 "from": c["id"],
@@ -912,11 +987,12 @@ class NotebookEntry(BaseModel):
 
 
 @app.get("/api/notebook")
-async def api_notebook_list():
-    if not NOTEBOOK_FILE.exists():
+async def api_notebook_list(request: Request):
+    nb_file = _notebook_file(request)
+    if not nb_file.exists():
         return []
     try:
-        entries = json.loads(NOTEBOOK_FILE.read_text(encoding="utf-8"))
+        entries = json.loads(nb_file.read_text(encoding="utf-8"))
     except Exception:
         return []
     entries.reverse()
@@ -924,13 +1000,14 @@ async def api_notebook_list():
 
 
 @app.post("/api/notebook")
-async def api_notebook_add(entry: NotebookEntry):
-    if not NOTEBOOK_FILE.exists():
-        NOTEBOOK_FILE.parent.mkdir(parents=True, exist_ok=True)
+async def api_notebook_add(entry: NotebookEntry, request: Request):
+    nb_file = _notebook_file(request)
+    if not nb_file.exists():
+        nb_file.parent.mkdir(parents=True, exist_ok=True)
         entries = []
     else:
         try:
-            entries = json.loads(NOTEBOOK_FILE.read_text(encoding="utf-8"))
+            entries = json.loads(nb_file.read_text(encoding="utf-8"))
         except Exception:
             entries = []
     now = datetime.now(timezone.utc).astimezone()
@@ -939,13 +1016,13 @@ async def api_notebook_add(entry: NotebookEntry):
         "date": now.strftime("%Y/%m/%d %H:%M"),
         "content": entry.content,
     })
-    NOTEBOOK_FILE.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    nb_file.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"ok": True}
 
 
 @app.get("/api/library")
-async def api_library_list():
-    lib_dir = DATA_DIR / "library"
+async def api_library_list(request: Request):
+    lib_dir = _my_library_dir(request)
     if not lib_dir.exists():
         return []
     files = []
@@ -959,34 +1036,37 @@ async def api_library_list():
     return files
 
 
-_BOOKMARKS_FILE = DATA_DIR / "library" / ".bookmarks.json"
+def _bookmarks_file(request: Request) -> Path:
+    return _my_library_dir(request) / ".bookmarks.json"
 
 
-def _load_bookmarks() -> dict:
-    if _BOOKMARKS_FILE.exists():
+def _load_bookmarks(request: Request) -> dict:
+    bf = _bookmarks_file(request)
+    if bf.exists():
         try:
-            return json.loads(_BOOKMARKS_FILE.read_text(encoding="utf-8"))
+            return json.loads(bf.read_text(encoding="utf-8"))
         except Exception:
             pass
     return {}
 
 
 @app.get("/api/library/bookmarks")
-async def api_library_bookmarks_get():
-    return _load_bookmarks()
+async def api_library_bookmarks_get(request: Request):
+    return _load_bookmarks(request)
 
 
 @app.put("/api/library/bookmarks")
 async def api_library_bookmarks_put(request: Request):
     data = await request.json()
-    _BOOKMARKS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _BOOKMARKS_FILE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    bf = _bookmarks_file(request)
+    bf.parent.mkdir(parents=True, exist_ok=True)
+    bf.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     return {"ok": True}
 
 
 @app.get("/api/library/{name:path}")
-async def api_library_content(name: str):
-    lib_dir = DATA_DIR / "library"
+async def api_library_content(name: str, request: Request):
+    lib_dir = _my_library_dir(request)
     filepath = (lib_dir / name).resolve()
     if not str(filepath).startswith(str(lib_dir.resolve())):
         return JSONResponse({"error": "invalid path"}, 403)
@@ -997,9 +1077,9 @@ async def api_library_content(name: str):
 
 
 def _notes_dir(character_id: str) -> Path:
-    """キャラ or ありさんのノートディレクトリ"""
-    if character_id == "arisan":
-        return DATA_DIR / "notes"
+    """キャラ or ユーザーのノートディレクトリ"""
+    if character_id in _USER_DISPLAY:
+        return DATA_DIR / "notes" / character_id
     return char_dir(character_id) / "notes"
 
 
@@ -1046,16 +1126,28 @@ async def api_notes_content(character_id: str, name: str):
 import re
 
 
+def _my_notes_dir(request: Request) -> Path:
+    """ログインユーザーのノートディレクトリを返す。"""
+    username = _get_username(request) or "arisan"
+    return DATA_DIR / "notes" / username
+
+
+def _my_library_dir(request: Request) -> Path:
+    """ログインユーザーのライブラリディレクトリを返す。"""
+    username = _get_username(request) or "arisan"
+    return DATA_DIR / "library" / username
+
+
 @app.post("/api/my/notes")
 async def api_create_note(request: Request):
-    """ありさんのノートを作成"""
+    """ユーザーのノートを作成"""
     data = await request.json()
     title = data.get("title", "無題")
     content = data.get("content", "")
     dt = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_title = re.sub(r'[/\\<>:"|?*]', "_", title)
     filename = f"{dt}_{safe_title}.md"
-    notes_dir = DATA_DIR / "notes"
+    notes_dir = _my_notes_dir(request)
     notes_dir.mkdir(parents=True, exist_ok=True)
     (notes_dir / filename).write_text(content, encoding="utf-8")
     return {"name": filename, "title": title}
@@ -1063,8 +1155,8 @@ async def api_create_note(request: Request):
 
 @app.put("/api/my/notes/{name:path}")
 async def api_update_note(name: str, request: Request):
-    """ありさんのノート内容を更新"""
-    notes_dir = DATA_DIR / "notes"
+    """ユーザーのノート内容を更新"""
+    notes_dir = _my_notes_dir(request)
     filepath = (notes_dir / name).resolve()
     if not str(filepath).startswith(str(notes_dir.resolve())):
         return JSONResponse({"error": "invalid path"}, status_code=400)
@@ -1077,8 +1169,8 @@ async def api_update_note(name: str, request: Request):
 
 @app.patch("/api/my/notes/{name:path}")
 async def api_rename_note(name: str, request: Request):
-    """ありさんのノートタイトルを変更（ファイル名のタイトル部分をリネーム）"""
-    notes_dir = DATA_DIR / "notes"
+    """ユーザーのノートタイトルを変更（ファイル名のタイトル部分をリネーム）"""
+    notes_dir = _my_notes_dir(request)
     filepath = (notes_dir / name).resolve()
     if not str(filepath).startswith(str(notes_dir.resolve())):
         return JSONResponse({"error": "invalid path"}, status_code=400)
@@ -1088,7 +1180,6 @@ async def api_rename_note(name: str, request: Request):
     new_title = data.get("title", "")
     if not new_title:
         return JSONResponse({"error": "title required"}, status_code=400)
-    # 日時プレフィックスを保持してタイトル部分だけ変更
     old_name = name.rsplit(".", 1)[0] if "." in name else name
     parts = old_name.split("_", 2)
     safe_title = re.sub(r'[/\\<>:"|?*]', "_", new_title)
@@ -1103,9 +1194,9 @@ async def api_rename_note(name: str, request: Request):
 
 
 @app.delete("/api/my/notes/{name:path}")
-async def api_delete_note(name: str):
-    """ありさんのノートを削除"""
-    notes_dir = DATA_DIR / "notes"
+async def api_delete_note(name: str, request: Request):
+    """ユーザーのノートを削除"""
+    notes_dir = _my_notes_dir(request)
     filepath = (notes_dir / name).resolve()
     if not str(filepath).startswith(str(notes_dir.resolve())):
         return JSONResponse({"error": "invalid path"}, status_code=400)
@@ -1149,6 +1240,12 @@ def api_characters(request: Request):
     if allowed is not None:
         chars = [c for c in chars if c["id"] in allowed]
     return chars
+
+
+@app.get("/api/characters/all")
+def api_characters_all():
+    """全キャラ一覧（アクセス制御なし、グループステータス用）"""
+    return list_characters()
 
 
 @app.get("/api/{character_id}/status")
@@ -1213,8 +1310,9 @@ def api_memories_today(character_id: str):
 
 
 @app.get("/api/{character_id}/chat/history")
-def api_chat_history(character_id: str):
-    return load_chat_log(character_id)[-100:]
+def api_chat_history(character_id: str, request: Request):
+    username = _get_username(request) or "arisan"
+    return load_chat_log(character_id, username)[-100:]
 
 
 class GroupChatRequest(BaseModel):
@@ -1222,32 +1320,27 @@ class GroupChatRequest(BaseModel):
 
 
 @app.get("/api/group/history")
-def api_group_history(request: Request):
-    log = load_group_log()[-200:]
-    allowed = _get_allowed_characters(request)
-    if allowed is not None:
-        log = [m for m in log if m.get("role") == "user" or m.get("role") in allowed]
-    return log
+def api_group_history():
+    return load_group_log()[-200:]
 
 
 @app.post("/api/group/chat")
 async def api_group_chat(req: GroupChatRequest, request: Request):
-    """許可キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
+    """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
+    username = _get_username(request) or "arisan"
+    user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
     chars = list_characters()
-    allowed = _get_allowed_characters(request)
-    if allowed is not None:
-        chars = [c for c in chars if c["id"] in allowed]
     now = datetime.now(timezone.utc).isoformat()
     responses = []
-    append_group_log({"type": "group", "role": "user", "name": "ありさん", "color": "#aaaaaa", "text": req.message, "timestamp": now})
+    append_group_log({"type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
     for char in chars:
         context = req.message
         if responses:
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
-        reply = await call_claude(char["id"], context)
-        append_chat(char["id"], "user", req.message)
-        append_chat(char["id"], char["id"], reply)
+        reply = await call_claude(char["id"], context, username=username)
+        append_chat(char["id"], "user", req.message, username)
+        append_chat(char["id"], char["id"], reply, username)
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -1259,21 +1352,92 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     return {"responses": responses}
 
 
+@app.get("/api/trio/history")
+def api_trio_history():
+    return load_trio_log()[-200:]
+
+
+@app.post("/api/trio/chat")
+async def api_trio_chat(req: GroupChatRequest, request: Request):
+    """ぷちことぷちてゃの三人で話す。"""
+    username = _get_username(request) or "arisan"
+    user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
+    chars = [c for c in list_characters() if c["id"] in TRIO_CHAR_IDS]
+    now = datetime.now(timezone.utc).isoformat()
+    responses = []
+    append_trio_log({"type": "trio", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
+    for char in chars:
+        context = req.message
+        if responses:
+            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
+            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+        reply = await call_claude(char["id"], context, username=username)
+        append_chat(char["id"], "user", req.message, username)
+        append_chat(char["id"], char["id"], reply, username)
+        r = {
+            "character_id": char["id"],
+            "name": char.get("name", char["id"]),
+            "color": char.get("color", "#cab8d9"),
+            "reply": reply,
+        }
+        responses.append(r)
+        append_trio_log({"type": "trio", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+    return {"responses": responses}
+
+
 class ChatRequest(BaseModel):
     message: str
 
 
+def _activate_puchiru_cron() -> bool:
+    """ぷちるの cron エントリを追加する。既にあれば何もしない。"""
+    import subprocess
+    result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+    current = result.stdout if result.returncode == 0 else ""
+    if "puchiru" in current:
+        return False  # 既にある
+    home = str(Path.home())
+    lines = [
+        f"*/5  * * * * cd {PROJECT_DIR}/desire-system && mkdir -p {DATA_DIR}/.autonomous-logs/puchiru && {home}/.local/bin/uv run python desire_updater.py puchiru >> {DATA_DIR}/.autonomous-logs/puchiru/desire-$(date +\\%Y\\%m\\%d).log 2>&1",
+        f"*/20 * * * * {PROJECT_DIR}/autonomous-action.sh puchiru",
+    ]
+    new_cron = current.rstrip("\n") + "\n" + "\n".join(lines) + "\n"
+    subprocess.run(["crontab", "-"], input=new_cron, text=True, check=True)
+    return True
+
+
 @app.post("/api/{character_id}/chat")
-async def api_chat(character_id: str, req: ChatRequest):
-    append_chat(character_id, "user", req.message)
-    reply = await call_claude(character_id, req.message)
-    append_chat(character_id, character_id, reply)
-    return {"reply": reply}
+async def api_chat(character_id: str, req: ChatRequest, request: Request):
+    username = _get_username(request) or "arisan"
+    append_chat(character_id, "user", req.message, username)
+
+    # 風早さんがぷちるに「うまれていいよ」と言ったらcronを有効化
+    born = False
+    if character_id == "puchiru" and username == "kazahaya" and "うまれていいよ" in req.message:
+        born = _activate_puchiru_cron()
+
+    # @opus / @sonnet でモデル指定
+    chat_model = None
+    chat_message = req.message
+    if req.message.startswith("@opus "):
+        chat_model = "opus"
+        chat_message = req.message[6:]
+    elif req.message.startswith("@sonnet "):
+        chat_model = "sonnet"
+        chat_message = req.message[8:]
+
+    reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
+    append_chat(character_id, character_id, reply, username)
+    resp = {"reply": reply}
+    if born:
+        resp["event"] = "born"
+    return resp
 
 
 @app.delete("/api/{character_id}/chat/session")
-def reset_session(character_id: str):
-    sf = session_file(character_id)
+def reset_session(character_id: str, request: Request):
+    username = _get_username(request) or "arisan"
+    sf = session_file(character_id, username)
     if sf.exists():
         sf.unlink()
     return {"ok": True}
@@ -1360,8 +1524,9 @@ def _char_display_name(char_id: str) -> str:
 
 
 @app.get("/api/mailbox")
-def api_mailbox(filter: str = "inbox"):
-    """ありさん宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
+def api_mailbox(filter: str = "inbox", request: Request = None):
+    """ログインユーザー宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
+    username = _get_username(request) or "arisan" if request else "arisan"
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
         return []
@@ -1370,8 +1535,8 @@ def api_mailbox(filter: str = "inbox"):
         if not f.name.endswith(".md"):
             continue
         name = f.stem
-        # 新形式: from_送信元_to_arisan_日時 / 旧形式: to_arisan_日時
-        if not (name.startswith("to_arisan") or "_to_arisan_" in name):
+        # 新形式: from_送信元_to_<user>_日時 / 旧形式: to_<user>_日時
+        if not (name.startswith(f"to_{username}") or f"_to_{username}_" in name):
             continue
         meta = _get_mail_meta(f.name)
         if filter == "inbox" and meta["archived"]:
@@ -1549,9 +1714,61 @@ async def api_interact(req: InteractRequest, request: Request):
     return {"exchanges": exchanges}
 
 
+class InteractGroupRequest(BaseModel):
+    char_ids: list[str]
+    turns: int = 2
+
+
+@app.post("/api/interact/group")
+async def api_interact_group(req: InteractGroupRequest, request: Request):
+    """3人以上のキャラで順番に会話させる。全キャラ参加可能。"""
+    chars_map = {c["id"]: c for c in list_characters()}
+    char_list = [chars_map.get(cid, {"id": cid, "name": cid, "color": "#cab8d9"}) for cid in req.char_ids]
+
+    exchanges = []
+    # 最初のキャラが話しかける
+    others = "、".join(c["name"] for c in char_list[1:])
+    msg = await call_claude(char_list[0]["id"], f"{others}に話しかけてみて。今の気分や欲求から自然な内容で。短めに。")
+    append_chat(char_list[0]["id"], char_list[0]["id"], msg)
+    exchanges.append({
+        "from_id": char_list[0]["id"],
+        "name": char_list[0].get("name", char_list[0]["id"]),
+        "color": char_list[0].get("color", "#cab8d9"),
+        "text": msg,
+    })
+    append_group_log({"type": "interact", "role": exchanges[-1]["from_id"], "name": exchanges[-1]["name"], "color": exchanges[-1]["color"], "text": exchanges[-1]["text"], "timestamp": datetime.now(timezone.utc).isoformat()})
+
+    # ラウンドロビンで会話
+    idx = 1
+    for _ in range(req.turns * len(char_list) - 1):
+        current = char_list[idx % len(char_list)]
+        prev_name = exchanges[-1]["name"]
+        prev_msgs = "\n".join(f"{e['name']}: {e['text']}" for e in exchanges[-len(char_list):])
+        reply_prompt = f"みんなの会話:\n{prev_msgs}\n\n{prev_name}の発言に対して返事をして。短めに。"
+        msg = await call_claude(current["id"], reply_prompt)
+        append_chat(current["id"], current["id"], msg)
+        exchanges.append({
+            "from_id": current["id"],
+            "name": current.get("name", current["id"]),
+            "color": current.get("color", "#cab8d9"),
+            "text": msg,
+        })
+        append_group_log({"type": "interact", "role": exchanges[-1]["from_id"], "name": exchanges[-1]["name"], "color": exchanges[-1]["color"], "text": exchanges[-1]["text"], "timestamp": datetime.now(timezone.utc).isoformat()})
+        idx += 1
+
+    return {"exchanges": exchanges}
+
+
+@app.get("/api/me")
+def api_me(request: Request):
+    username = _get_username(request) or "arisan"
+    info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
+    return {"username": username, "name": info["name"], "color": info["color"]}
+
+
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTMLResponse(HTML)
+    return HTMLResponse(HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 HTML = """<!DOCTYPE html>
@@ -1737,6 +1954,7 @@ HTML = """<!DOCTYPE html>
           <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
           <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
           <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ ふたりで話させる</button>
+          <button class="interact-btn" id="interactGroupBtn" onclick="startInteractGroup()" style="display:none">✨ さんにんで話させる</button>
         </div>
       </section>
 
@@ -1862,6 +2080,7 @@ HTML = """<!DOCTYPE html>
     let characters = [];
     const chatStates = {};
     let _memoryImages = {};
+    let _myName = "ありさん";
     let _diaryImages = {};
     let _popupImages = {};
 
@@ -1929,8 +2148,12 @@ HTML = """<!DOCTYPE html>
           onclick="switchChar('${c.id}')">
           <span class="m5-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ccc;vertical-align:middle;margin-right:4px;"></span>${c.name||c.id}</button>`;
       }).join("");
-      // 「みんなで」タブを末尾に追加
+      // 「三人で」「みんなで」タブを末尾に追加
+      const isTrio = currentCharId === "trio";
       const isGroup = currentCharId === "group";
+      tabs.innerHTML += `<button class="char-tab group-tab${isTrio?" active":""}"
+        style="${isTrio?"opacity:1":"opacity:0.8"}"
+        onclick="switchChar('trio')">三人で 💬</button>`;
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
         onclick="switchChar('group')">みんなで 🌟</button>`;
@@ -1945,13 +2168,23 @@ HTML = """<!DOCTYPE html>
         document.getElementById("pageTitle").textContent = cur.name||cur.id;
         document.getElementById("chatTitle").textContent = `${cur.name||cur.id}と話す`;
         document.getElementById("interactBtn").style.display = "none";
+        document.getElementById("interactGroupBtn").style.display = "none";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "";
+      } else if (isTrio) {
+        applyTheme("#fff262");
+        document.getElementById("pageTitle").textContent = "三人で";
+        document.getElementById("chatTitle").textContent = "ぷちことぷちてゃと話す";
+        document.getElementById("interactBtn").style.display = characters.length >= 2 ? "" : "none";
+        document.getElementById("interactGroupBtn").style.display = "none";
+        document.getElementById("historyBtn").style.display = "";
+        document.getElementById("resetBtn").style.display = "none";
       } else if (isGroup) {
         applyTheme("#cab8d9");
         document.getElementById("pageTitle").textContent = "みんな";
         document.getElementById("chatTitle").textContent = "みんなで話す";
-        document.getElementById("interactBtn").style.display = "";
+        document.getElementById("interactBtn").style.display = characters.length >= 2 ? "" : "none";
+        document.getElementById("interactGroupBtn").style.display = "";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "none";
       }
@@ -1963,29 +2196,31 @@ HTML = """<!DOCTYPE html>
       currentCharId = id;
       chatEl.innerHTML = chatStates[id] || "";
       loadCharacters();
-      const isGroup = id === "group";
-      document.getElementById("gearBtn").style.display = isGroup ? "none" : "";
+      const isGroupLike = id === "group" || id === "trio";
+      document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
       document.getElementById("sleepBtn").style.display = "none";
       document.getElementById("wakeBtn").style.display = "none";
       document.getElementById("m5status").innerHTML = "";
-      document.getElementById("twoColLayout").style.display = isGroup ? "block" : "";
-      document.getElementById("diaryCol").style.display = isGroup ? "none" : "";
-      document.getElementById("desiresSection").style.display = isGroup ? "none" : "";
-      document.getElementById("memoriesSection").style.display = isGroup ? "none" : "";
-      document.getElementById("groupStatusPanel").style.display = isGroup ? "" : "none";
-      if (!isGroup) { update(); updateDiary(); }
+      document.getElementById("twoColLayout").style.display = isGroupLike ? "block" : "";
+      document.getElementById("diaryCol").style.display = isGroupLike ? "none" : "";
+      document.getElementById("desiresSection").style.display = isGroupLike ? "none" : "";
+      document.getElementById("memoriesSection").style.display = isGroupLike ? "none" : "";
+      document.getElementById("groupStatusPanel").style.display = id === "group" ? "" : "none";
+      if (!isGroupLike) { update(); updateDiary(); }
       else {
         document.getElementById("updated").textContent = "";
         document.getElementById("diaryContent").innerHTML = "";
-        updateGroupStatus();
+        if (id === "group") updateGroupStatus();
       }
     }
 
     async function updateGroupStatus() {
       const panel = document.getElementById("groupCharStatus");
-      if (!characters.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
       panel.innerHTML = '<div class="empty">確認中...</div>';
-      const rows = await Promise.all(characters.map(async c => {
+      let allChars;
+      try { allChars = await (await fetch("/api/characters/all")).json(); } catch { allChars = characters; }
+      if (!allChars.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
+      const rows = await Promise.all(allChars.map(async c => {
         try {
           const res = await fetch(`/api/${c.id}/status`);
           const { m5_online } = await res.json();
@@ -2003,7 +2238,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function update() {
-      if (currentCharId === "group") return;
+      if (currentCharId === "group" || currentCharId === "trio") return;
       try {
         const res = await fetch(`/api/${currentCharId}/status`);
         const { desires, memories, m5_online, m5_sleeping } = await res.json();
@@ -2102,10 +2337,12 @@ HTML = """<!DOCTYPE html>
       btn.disabled = true;
       addMsg(text, "user");
 
-      if (currentCharId === "group") {
-        const thinking = addMsg("みんなに聞いてる…", "thinking");
+      if (currentCharId === "group" || currentCharId === "trio") {
+        const apiPath = currentCharId === "trio" ? "/api/trio/chat" : "/api/group/chat";
+        const thinkMsg = currentCharId === "trio" ? "ぷちことぷちてゃに聞いてる…" : "みんなに聞いてる…";
+        const thinking = addMsg(thinkMsg, "thinking");
         try {
-          const res = await fetch("/api/group/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
+          const res = await fetch(apiPath, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
           const data = await res.json();
           thinking.remove();
           for (const r of data.responses) {
@@ -2120,6 +2357,13 @@ HTML = """<!DOCTYPE html>
           const data = await res.json();
           thinking.remove();
           addMsg(data.reply, "char");
+          if (data.event === "born") {
+            const notice = document.createElement("div");
+            notice.style.cssText = "text-align:center;padding:16px;margin:12px 0;background:linear-gradient(135deg,#e0f7fa,#b2ebf2);border-radius:12px;font-size:0.95rem;color:#00796b;";
+            notice.textContent = "ぷちるが生まれました。心臓が動き始めます。";
+            document.getElementById("chat").appendChild(notice);
+            document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+          }
           update();
         } catch(e) { thinking.textContent = "エラーが発生しました"; }
         finally { btn.disabled = false; input.focus(); }
@@ -2145,6 +2389,28 @@ HTML = """<!DOCTYPE html>
         }
       } catch(e) { addMsg("エラーが発生しました", "thinking"); }
       finally { btn.disabled = false; btn.textContent = "✨ ふたりで話させる"; }
+    }
+
+    async function startInteractGroup() {
+      const btn = document.getElementById("interactGroupBtn");
+      btn.disabled = true;
+      btn.textContent = "話し合い中…";
+      let allChars;
+      try { allChars = await (await fetch("/api/characters/all")).json(); } catch { allChars = characters; }
+      if (allChars.length < 3) { alert("キャラが3人必要です"); btn.disabled = false; btn.textContent = "✨ さんにんで話させる"; return; }
+      const ids = allChars.map(c => c.id);
+      try {
+        const res = await fetch("/api/interact/group", {
+          method: "POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({char_ids: ids, turns: 2})
+        });
+        const data = await res.json();
+        for (const ex of data.exchanges) {
+          addMsg(ex.text, "group", ex.color, ex.name);
+          await new Promise(r=>setTimeout(r, 400));
+        }
+      } catch(e) { addMsg("エラーが発生しました", "thinking"); }
+      finally { btn.disabled = false; btn.textContent = "✨ さんにんで話させる"; }
     }
 
     let _diaryDates = [];
@@ -2244,7 +2510,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function updateDiary(resetToToday = false) {
-      if (currentCharId === "group") return;
+      if (currentCharId === "group" || currentCharId === "trio") return;
       const prevDate = _diaryDates.length > 0 ? _diaryDates[_diaryIdx] : null;
       _diaryCache = {};
       try {
@@ -2286,8 +2552,9 @@ HTML = """<!DOCTYPE html>
       body.innerHTML = '<div class="empty">読み込み中…</div>';
       document.getElementById("historyOverlay").classList.add("open");
 
-      if (currentCharId === "group") {
-        const res = await fetch("/api/group/history");
+      if (currentCharId === "group" || currentCharId === "trio") {
+        const historyApi = currentCharId === "trio" ? "/api/trio/history" : "/api/group/history";
+        const res = await fetch(historyApi);
         const log = await res.json();
         if (log.length === 0) {
           body.innerHTML = '<div class="empty">まだ会話がありません</div>';
@@ -2296,7 +2563,7 @@ HTML = """<!DOCTYPE html>
             const ts = new Date(m.timestamp).toLocaleString("ja-JP");
             const col = m.color || "#cab8d9";
             const nameColor = readableText(col);
-            const typeLabel = m.type === "interact" ? "💬 交流" : "🌟 みんなで";
+            const typeLabel = currentCharId === "trio" ? "💬 三人で" : (m.type === "interact" ? "💬 交流" : "🌟 みんなで");
             return `<div class="history-msg">
               <div class="history-role" style="color:${nameColor}">${m.name} · ${ts} <span style="color:#ccc;font-size:0.65rem">${typeLabel}</span></div>
               <div class="history-text">${m.text}</div>
@@ -2312,7 +2579,7 @@ HTML = """<!DOCTYPE html>
           body.innerHTML = '<div class="empty">まだ会話がありません</div>';
         } else {
           body.innerHTML = log.map(m => {
-            const role = m.role === "user" ? "ありさん" : charName;
+            const role = m.role === "user" ? _myName : charName;
             const ts = new Date(m.timestamp).toLocaleString("ja-JP");
             return `<div class="history-msg"><div class="history-role">${role} · ${ts}</div><div class="history-text">${m.text}</div></div>`;
           }).join("");
@@ -2578,6 +2845,7 @@ HTML = """<!DOCTYPE html>
     document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
 
     checkAuth();
+    fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん";}).catch(()=>{});
     loadCharacters();
     update();
     setInterval(update, 30000);
@@ -2966,8 +3234,8 @@ KANKEI_HTML = """<!DOCTYPE html>
         }
 
         const parsed = charMails.map(m => parseMail(m));
-        // ありさん宛を除外
-        const filtered = parsed.filter(m => m.recipient !== "arisan");
+        // 自分宛を除外（キャラ同士のメールだけ表示）
+        const filtered = parsed.filter(m => !["arisan","kazahaya"].includes(m.recipient));
         // 最新が上
         filtered.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
 
@@ -3073,12 +3341,21 @@ NOTES_HTML = """<!DOCTYPE html>
     </div>
   </div>
   <script>
-    const chars = [
-      { id: "puchiteya", name: "ぷちてゃ" },
-      { id: "puchiko", name: "ぷちこ" },
-      { id: "arisan", name: "ありさん", editable: true }
-    ];
-    let currentChar = new URLSearchParams(location.search).get("char") || chars[0].id;
+    let chars = [];
+    let currentChar = new URLSearchParams(location.search).get("char") || "";
+
+    async function initChars() {
+      try {
+        const [charsRes, meRes] = await Promise.all([fetch("/api/characters"), fetch("/api/me")]);
+        const charList = await charsRes.json();
+        const me = await meRes.json();
+        chars = charList.map(c => ({ id: c.id, name: c.name || c.id }));
+        chars.push({ id: me.username, name: me.name, editable: true });
+        if (!currentChar) currentChar = chars[0].id;
+        renderCharTabs();
+        loadNotes();
+      } catch(e) { console.error(e); }
+    }
     let currentNote = null;
     let currentNoteTitle = null;
     let currentNoteContent = null;
@@ -3164,6 +3441,7 @@ NOTES_HTML = """<!DOCTYPE html>
       // 連続空行を保持: 余分な空行を&nbsp;行に変換してmarkedに渡す
       const md = data.content.replace(/\\r\\n/g, '\\n').replace(/\\n{3,}/g,
         m => '\\n\\n' + '&nbsp;\\n\\n'.repeat(m.length - 2));
+      if (typeof marked !== 'undefined' && !marked._breaksSet) { marked.use({ breaks: true }); marked._breaksSet = true; }
       const html = (typeof marked !== 'undefined') ? marked.parse(md) : md.split('&').join('&amp;').split('\\x3c').join('&lt;').split('\\n').join('<br>');
       content.innerHTML = toolbar + '<div class="md-body">' + html + '</div>';
     }
@@ -3228,8 +3506,7 @@ NOTES_HTML = """<!DOCTYPE html>
     }
 
     if (typeof marked !== 'undefined') marked.use({ breaks: true });
-    renderCharTabs();
-    loadNotes();
+    initChars();
   </script>
 </body>
 </html>
@@ -3545,7 +3822,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
   <div class="container">
     <div class="form-box">
       <div class="form-row">
-        <span class="author-label">ありさん</span>
+        <span class="author-label" id="authorLabel">ありさん</span>
       </div>
       <textarea id="contentArea" class="form-textarea" placeholder="ここに書いてね"></textarea>
       <div style="margin-top:8px;overflow:hidden;">
@@ -3561,7 +3838,19 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
       "ぷちてゃ": "author-petitya",
       "ぷちこ": "author-petiko",
       "ありさん": "author-arisan",
+      "ぷちる": "author-petitya",
+      "風早さん": "author-arisan",
     };
+    let _notebookAuthor = "ありさん";
+
+    async function initNotebook() {
+      try {
+        const me = await (await fetch("/api/me")).json();
+        _notebookAuthor = me.name || "ありさん";
+        document.getElementById("authorLabel").textContent = _notebookAuthor;
+      } catch {}
+      loadEntries();
+    }
 
     async function loadEntries() {
       try {
@@ -3574,7 +3863,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
         }
         el.innerHTML = data.map(e => {
           const cls = authorColors[e.author] || "";
-          const escaped = e.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+          const escaped = e.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>");
           return `<div class="entry">
             <div class="entry-header">
               <span class="entry-author ${cls}">${e.author}</span>
@@ -3589,7 +3878,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     }
 
     async function postEntry() {
-      const author = "ありさん";
+      const author = _notebookAuthor;
       const content = document.getElementById("contentArea").value.trim();
       if (!content) return;
       const btn = document.getElementById("sendBtn");
@@ -3612,7 +3901,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postEntry();
     });
 
-    loadEntries();
+    initNotebook();
   </script>
 </body>
 </html>

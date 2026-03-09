@@ -9,7 +9,7 @@ Usage:
     python3 write_notebook.py ぷちてゃ "今日はいい天気だった"
     python3 write_notebook.py ぷちこ --file /tmp/entry.txt
 
-著者: ぷちてゃ / ぷちこ / ありさん
+著者: ぷちてゃ / ぷちこ / ぷちる / ありさん
 """
 
 import json
@@ -21,7 +21,7 @@ from pathlib import Path
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
 NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
 
-VALID_AUTHORS = {"ぷちてゃ", "ぷちこ", "ありさん"}
+VALID_AUTHORS = {"ぷちてゃ", "ぷちこ", "ぷちる", "ありさん"}
 
 
 def main() -> int:
