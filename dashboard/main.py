@@ -341,6 +341,7 @@ DEFAULT_SETTINGS = {
     "allow_sound": True,
     "allow_microphone": False,
     "day_type_override": None,
+    "autonomous_skip": 0,
 }
 
 
@@ -2020,6 +2021,14 @@ HTML = """<!DOCTYPE html>
             </select>
           </div>
           <div class="setting-row">
+            <span class="setting-label">⏱️ 自律行動の頻度</span>
+            <select id="autonomousSkip" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
+              <option value="0">20分に1回（毎回）</option>
+              <option value="1">40分に1回（1回スキップ）</option>
+              <option value="2">60分に1回（2回スキップ）</option>
+            </select>
+          </div>
+          <div class="setting-row">
             <span class="setting-label">📷 カメラ</span>
             <label class="toggle"><input type="checkbox" id="allowCamera"><span class="toggle-slider"></span></label>
           </div>
@@ -2803,6 +2812,7 @@ HTML = """<!DOCTYPE html>
       document.getElementById("activeTimeLabel").textContent = `${charName}のアクティブタイム（毎回動く時間帯）`;
       renderHours();
       document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
+      document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
       document.getElementById("allowCamera").checked = s.allow_camera ?? true;
       document.getElementById("allowSound").checked = s.allow_sound ?? true;
       document.getElementById("allowMic").checked = s.allow_microphone ?? false;
@@ -2815,6 +2825,7 @@ HTML = """<!DOCTYPE html>
       const data = {
         active_hours: currentSchedule,
         day_type_override: document.getElementById("dayTypeOverride").value || null,
+        autonomous_skip: parseInt(document.getElementById("autonomousSkip").value) || 0,
         allow_camera: document.getElementById("allowCamera").checked,
         allow_sound: document.getElementById("allowSound").checked,
         allow_microphone: document.getElementById("allowMic").checked,
