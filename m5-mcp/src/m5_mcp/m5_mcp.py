@@ -216,7 +216,7 @@ async def set_face_slideshow_mode():
 @mcp.tool()
 async def play_sound(name: str):
     """効果音を再生。nameはlist_soundsで取得したファイル名"""
-    await _send(f"PLAY {name}")
+    await asyncio.to_thread(lambda: _http_get(f"/se_play?name={name}"))
     return f"played: {name}"
 
 

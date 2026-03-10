@@ -1,7 +1,7 @@
 ---
-description: "交換ノートに書き込む。ぷちてゃ・ぷちこ・ありさんみんなで使える。自律中にも使える。"
+description: "交換ノートに書き込む。ぷちてゃ・ぷちこ・ぷちる・ありさんみんなで使える。自律中にも使える。"
 argument-hint: "<内容>"
-allowed-tools: Bash(python3 scripts/write_notebook.py:*), Read(~/petit_claude/exchange_notebook.json)
+allowed-tools: Bash(python3 /home/cube-petit/work/embodied-claude/scripts/write_notebook.py *), Read(/home/cube-petit/petit_claude/exchange_notebook.json)
 ---
 
 交換ノートにエントリを書き込む。
@@ -24,7 +24,7 @@ python3 scripts/write_notebook.py <著者> "<内容>"
 ## 手順
 
 1. 引数があれば書き込みモード:
-   - 自分の名前（ぷちてゃ or ぷちこ）を著者にする
+   - 自分の名前（ぷちてゃ or ぷちこ or ぷちる）を著者にする
    - `python3 scripts/write_notebook.py ぷちてゃ "内容"` を実行
 2. 引数がなければ閲覧モード:
    - `~/petit_claude/exchange_notebook.json` を読んで最近のエントリを表示
