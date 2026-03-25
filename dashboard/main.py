@@ -22,61 +22,77 @@ import base64
 import anthropic
 import websockets
 
-from fastapi import Cookie, FastAPI, Request
+from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from PIL import Image
+from PIL import Image, ImageOps
 from pydantic import BaseModel
 
 
-# ===================== M5 カメラウォッチャー =====================
+# ===================== M5 イベントウォッチャー =====================
 
 async def _m5_camera_analyze_and_mail(character_id: str, host: str):
-    """スナップショットをHTTPで取得してClaudeに見せ、感想をありさんにメール"""
+    """スナップショットをHTTPで取得し、Claude CLIに画像ファイルを読ませてありさんにメール＋記憶保存"""
+    import tempfile, urllib.request
+    tmp_path = None
     try:
-        cfg = get_char_config(character_id)
-        char_name = cfg.get("name", character_id)
-        soul = get_soul(character_id)
-
-        # HTTP で /snapshot を取得
-        import urllib.request
         loop = asyncio.get_event_loop()
         def _fetch():
             with urllib.request.urlopen(f"http://{host}/snapshot", timeout=10) as r:
                 return r.read()
         jpeg_bytes = await loop.run_in_executor(None, _fetch)
-        image_b64 = base64.b64encode(jpeg_bytes).decode()
 
-        client = anthropic.AsyncAnthropic()
-        response = await client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=300,
-            system=f"あなたは{char_name}（ID: {character_id}）です。\n\n{soul}",
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
-                    },
-                    {"type": "text", "text": "カメラで今見えているものを見て、ありさんに短く感想を伝えてください。"},
-                ],
-            }],
-        )
-        comment = response.content[0].text
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
+            f.write(jpeg_bytes)
+            tmp_path = f.name
 
         scripts_dir = PROJECT_DIR / "scripts"
-        proc = await asyncio.create_subprocess_exec(
-            "python3", str(scripts_dir / "write_mailbox.py"),
-            character_id, "arisan", comment,
+        message = (
+            f"ありさんが「みてみて！」って言いながらカメラのボタンを押してくれた。"
+            f"撮った写真は {tmp_path} にある。"
+            f"写真を見て、ありさんに短い感想をメールして（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
+            f"見たものと感想を `remember` で記憶にも残して。"
+            f"スピーカーが使えるなら、写真を見た感想を `speak` で一言声に出して、"
+            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
         )
-        await proc.wait()
-        print(f"[m5_watcher] {character_id}: mailed to arisan")
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        print(f"[m5_watcher] {character_id}: camera done ({result[:40] if result else 'no result'})")
     except Exception as e:
-        print(f"[m5_watcher] {character_id}: analyze/mail error: {e}")
+        print(f"[m5_watcher] {character_id}: camera error: {e}")
+    finally:
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink()
+            except Exception:
+                pass
+
+
+async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
+    """センサーデータをHTTPで取得し、ありさんにメール＋記憶保存"""
+    import urllib.request
+    try:
+        loop = asyncio.get_event_loop()
+        def _fetch():
+            with urllib.request.urlopen(f"http://{host}/sensors", timeout=5) as r:
+                return json.loads(r.read())
+        sensors = await loop.run_in_executor(None, _fetch)
+
+        scripts_dir = PROJECT_DIR / "scripts"
+        message = (
+            f"ありさんが「感じてみて！」って言いながらセンサーのボタンを押してくれた。"
+            f"今の周りの状態はこんな感じ: {json.dumps(sensors, ensure_ascii=False)}\n"
+            f"感じたことをありさんへの短いメッセージにして送って（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
+            f"センサーの状態と感想を `remember` で記憶にも残して。"
+            f"スピーカーが使えるなら、今の感じを `speak` で一言声に出して、"
+            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
+        )
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        print(f"[m5_watcher] {character_id}: sensor done ({result[:40] if result else 'no result'})")
+    except Exception as e:
+        print(f"[m5_watcher] {character_id}: sensor error: {e}")
 
 
 async def _m5_camera_watcher(character_id: str, hosts: list[str]):
-    """M5のWSに接続してcameraイベントを監視する（常時再接続）"""
+    """M5のWSに接続してmenu_selectイベントを監視する（常時再接続）"""
     while True:
         connected = False
         for host in hosts:
@@ -91,8 +107,11 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
                             data = json.loads(message)
                         except Exception:
                             continue
-                        if data.get("event") == "menu_select" and data.get("item") == "camera":
+                        item = data.get("item") if data.get("event") == "menu_select" else None
+                        if item == "camera":
                             asyncio.create_task(_m5_camera_analyze_and_mail(character_id, host))
+                        elif item == "sensor":
+                            asyncio.create_task(_m5_sensor_analyze_and_mail(character_id, host))
                 break
             except Exception:
                 continue
@@ -384,12 +403,70 @@ DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
+ALBUM_DIR = DATA_DIR / "photo_album"
+ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
+ALBUM_MAX_PHOTOS = 50
+ALBUM_MAX_PX = 1200
+ALBUM_JPEG_QUALITY = 80
 
 # ユーザー別交換ノートのマッピング
 _USER_NOTEBOOK = {
     "arisan": DATA_DIR / "exchange_notebook.json",
     "kazahaya": DATA_DIR / "exchange_notebook_kazahaya.json",
 }
+
+
+def _album_dir(person_id: str) -> Path:
+    d = ALBUM_DIR / person_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _compress_image(data: bytes) -> bytes:
+    """画像をリサイズ・EXIF回転補正して圧縮JPEG bytesを返す"""
+    img = Image.open(io.BytesIO(data))
+    img = ImageOps.exif_transpose(img)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    if max(img.size) > ALBUM_MAX_PX:
+        img.thumbnail((ALBUM_MAX_PX, ALBUM_MAX_PX), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=ALBUM_JPEG_QUALITY, optimize=True)
+    return buf.getvalue()
+
+
+def _album_filename(person_id: str, title: str) -> str:
+    """ファイル名: YYYYMMDD_HHMMSS_{person_id}_{title}.jpg"""
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Tokyo"))
+    safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:40]
+    return f"{now.strftime('%Y%m%d_%H%M%S')}_{person_id}_{safe_title}.jpg"
+
+
+def _reads_file(person_id: str) -> Path:
+    return _album_dir(person_id) / ".reads.json"
+
+
+def _load_reads(person_id: str) -> dict:
+    f = _reads_file(person_id)
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_reads(person_id: str, reads: dict):
+    _reads_file(person_id).write_text(json.dumps(reads, ensure_ascii=False), encoding="utf-8")
+
+
+def _prune_album(person_id: str):
+    """MAX超えたら古いものを削除"""
+    d = _album_dir(person_id)
+    photos = sorted(d.glob("*.jpg"))
+    while len(photos) > ALBUM_MAX_PHOTOS:
+        photos.pop(0).unlink(missing_ok=True)
 
 
 def _notebook_file(request: Request) -> Path:
@@ -781,7 +858,7 @@ def append_trio_log(entry: dict) -> None:
         json.dump(log[-500:], f, ensure_ascii=False, indent=2)
 
 
-async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None) -> str:
+async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False) -> str:
     char_mcp = char_dir(character_id) / "autonomous-mcp.json"
     mcp_config = char_mcp if char_mcp.exists() else PROJECT_DIR / "autonomous-mcp.json"
     soul = get_soul(character_id)
@@ -798,6 +875,8 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         effective_settings["allow_camera"] = False
         effective_settings["allow_sound"] = False
         effective_settings["allow_microphone"] = False
+    if allow_sound_override and m5_online:
+        effective_settings["allow_sound"] = True
 
     allowed_tools = build_allowed_tools(effective_settings)
 
@@ -815,10 +894,15 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     scripts_dir = PROJECT_DIR / "scripts"
     user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
     char_name = cfg.get("name", character_id)
+    now_jst = datetime.now(timezone.utc).astimezone(
+        __import__("zoneinfo", fromlist=["ZoneInfo"]).ZoneInfo("Asia/Tokyo")
+    )
+    now_str = now_jst.strftime("%Y-%m-%d %H:%M (JST)")
     system_prompt = (
         f"あなたは{char_name}（ID: {character_id}）です。以下があなたの魂の定義です。\n\n{soul}\n\n"
+        f"現在の日時: {now_str}\n"
         f"今話しかけているのは{user_display_name}です。{user_display_name}と自然に会話してください。必要があればMCPツールを使ってください。"
-        f"印象に残った話題や気づきは `remember` で記憶に残してください。\n\n"
+        f"印象に残った話題や気づきは `remember` で記憶に残してください。記憶を書くときは今日の日付（{now_str}）を意識して書いてください。\n\n"
         f"## ファイル\n"
         f"- 自分のデータ: {char_data_dir}/ (SOUL.md, TODO.md, ROUTINES.md など)\n"
         f"- メールボックス: {mailbox_dir}/\n"
@@ -1121,6 +1205,101 @@ async def api_notebook_add(entry: NotebookEntry, request: Request):
         "content": entry.content,
     })
     nb_file.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True}
+
+
+# ===================== アルバム =====================
+
+@app.get("/album", response_class=HTMLResponse)
+def album_page():
+    return HTMLResponse(ALBUM_HTML)
+
+
+@app.get("/api/album/{person_id}")
+async def api_album_list(person_id: str):
+    if person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    d = _album_dir(person_id)
+    reads = _load_reads(person_id)
+    photos = []
+    for f in sorted(d.glob("*.jpg"), reverse=True):
+        photos.append({
+            "filename": f.name,
+            "size": f.stat().st_size,
+            "mtime": f.stat().st_mtime,
+            "read_by": reads.get(f.name, []),
+        })
+    return photos
+
+
+@app.get("/api/album/{person_id}/{filename}")
+async def api_album_image(person_id: str, filename: str):
+    if person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _album_dir(person_id) / filename
+    if not path.exists() or not path.name.endswith(".jpg"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response(content=path.read_bytes(), media_type="image/jpeg")
+
+
+@app.post("/api/album/{person_id}/upload")
+async def api_album_upload(person_id: str, file: UploadFile = File(...), title: str = Form("photo")):
+    """ありさん・かぜお用: スマホ写真をアップロード"""
+    if person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    data = await file.read()
+    compressed = _compress_image(data)
+    fname = _album_filename(person_id, title)
+    (_album_dir(person_id) / fname).write_bytes(compressed)
+    _prune_album(person_id)
+    return {"ok": True, "filename": fname}
+
+
+class AlbumSnapshotBody(BaseModel):
+    person_id: str
+    title: str
+    image_b64: str  # base64 JPEG
+
+
+@app.post("/api/album/snapshot")
+async def api_album_snapshot(body: AlbumSnapshotBody):
+    """キャラクター用: base64 JPEGを受け取って保存"""
+    if body.person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    raw = base64.b64decode(body.image_b64)
+    compressed = _compress_image(raw)
+    fname = _album_filename(body.person_id, body.title)
+    (_album_dir(body.person_id) / fname).write_bytes(compressed)
+    _prune_album(body.person_id)
+    return {"ok": True, "filename": fname}
+
+
+@app.post("/api/album/{person_id}/{filename}/read")
+async def api_album_mark_read(person_id: str, filename: str, viewer: str):
+    if person_id not in ALBUM_PERSONS or viewer not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    reads = _load_reads(person_id)
+    viewers = reads.get(filename, [])
+    if viewer not in viewers:
+        viewers.append(viewer)
+        reads[filename] = viewers
+        _save_reads(person_id, reads)
+    return {"ok": True, "read_by": viewers}
+
+
+@app.delete("/api/album/{person_id}/{filename}")
+async def api_album_delete(person_id: str, filename: str):
+    if person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _album_dir(person_id) / filename
+    if not path.exists() or not path.name.endswith(".jpg"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    path.unlink()
+    # reads掃除
+    reads = _load_reads(person_id)
+    if filename in reads:
+        del reads[filename]
+        _save_reads(person_id, reads)
     return {"ok": True}
 
 
@@ -2274,6 +2453,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
       tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
       tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
+      tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -2668,7 +2848,7 @@ HTML = """<!DOCTYPE html>
       if (currentCharId === "group" || currentCharId === "trio") {
         const historyApi = currentCharId === "trio" ? "/api/trio/history" : "/api/group/history";
         const res = await fetch(historyApi);
-        const log = await res.json();
+        const log = (await res.json()).slice().reverse();
         if (log.length === 0) {
           body.innerHTML = '<div class="empty">まだ会話がありません</div>';
         } else {
@@ -2685,7 +2865,7 @@ HTML = """<!DOCTYPE html>
         }
       } else {
         const res = await fetch(`/api/${currentCharId}/chat/history`);
-        const log = await res.json();
+        const log = (await res.json()).slice().reverse();
         const cur = characters.find(c=>c.id===currentCharId);
         const charName = cur ? (cur.name||cur.id) : currentCharId;
         if (log.length === 0) {
@@ -4017,6 +4197,255 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     });
 
     initNotebook();
+  </script>
+</body>
+</html>
+"""
+
+
+ALBUM_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🖼️ アルバム</title>
+  <style>
+    body { margin:0; font-family:sans-serif; background:#1a1a2e; color:#eee; }
+    h1 { text-align:center; padding:20px 0 8px; font-size:1.4rem; }
+    .tabs { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; padding:0 12px 16px; }
+    .tab-btn { padding:6px 16px; border-radius:20px; border:2px solid #555; background:transparent;
+      color:#ccc; cursor:pointer; font-size:0.9rem; transition:all 0.2s; }
+    .tab-btn.active { background:#667eea; border-color:#667eea; color:#fff; }
+    .upload-area { text-align:center; padding:12px; }
+    .upload-area label { display:inline-block; padding:8px 20px; border-radius:8px;
+      background:#444; cursor:pointer; font-size:0.9rem; }
+    .upload-area input[type=file] { display:none; }
+    #titleInput { padding:6px 12px; border-radius:8px; border:1px solid #555;
+      background:#2a2a3e; color:#eee; margin-right:8px; width:160px; }
+    #uploadBtn { padding:8px 18px; border-radius:8px; border:none;
+      background:#667eea; color:#fff; cursor:pointer; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+      gap:12px; padding:12px 16px; }
+    .photo-card { background:#2a2a3e; border-radius:10px; overflow:hidden;
+      cursor:pointer; transition:transform 0.15s; }
+    .photo-card:hover { transform:scale(1.03); }
+    .photo-card img { width:100%; aspect-ratio:1; object-fit:cover; display:block; }
+    .photo-card .caption { padding:6px 8px; font-size:0.75rem; color:#aaa;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .photo-card .del-btn { position:absolute; top:4px; right:4px; background:rgba(0,0,0,0.6);
+      border:none; color:#ff7070; border-radius:50%; width:28px; height:28px;
+      cursor:pointer; font-size:0.85rem; display:none; line-height:28px; text-align:center; padding:0; }
+    .photo-card:hover .del-btn, .photo-card.show-del .del-btn { display:block; }
+    .photo-card { position:relative; }
+    .empty { text-align:center; color:#666; padding:40px; }
+    .lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85);
+      z-index:1000; justify-content:center; align-items:center; flex-direction:column; }
+    .lightbox.open { display:flex; }
+    .lightbox img { max-width:90vw; max-height:80vh; border-radius:8px; }
+    .lightbox .lb-caption { color:#ccc; margin-top:10px; font-size:0.85rem; }
+    .lightbox .lb-close { position:absolute; top:16px; right:20px; font-size:1.8rem;
+      cursor:pointer; color:#fff; background:none; border:none; }
+    .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
+      text-decoration:none; font-size:0.9rem; }
+    .viewer-bar { text-align:center; padding:4px 12px 12px; font-size:0.85rem; color:#aaa; }
+    .viewer-bar select { background:#2a2a3e; color:#eee; border:1px solid #555;
+      border-radius:8px; padding:4px 10px; font-size:0.85rem; }
+    .read-by { padding:2px 8px 6px; display:flex; flex-wrap:wrap; gap:3px; }
+    .read-dot { font-size:0.65rem; background:#3a3a5e; border-radius:10px;
+      padding:1px 6px; color:#99aaff; }
+  </style>
+</head>
+<body>
+  <h1>🖼️ アルバム</h1>
+  <a href="/" class="back-link">← ダッシュボードに戻る</a>
+
+  <div class="tabs" id="personTabs"></div>
+
+  <div class="viewer-bar">
+    見ているのは：
+    <select id="viewerSelect" onchange="onViewerChange()">
+      <option value="puchiteya">ぷちてゃ</option>
+      <option value="puchiko">ぷちこ</option>
+      <option value="puchiru">ぷちる</option>
+      <option value="arisan" selected>ありさん</option>
+      <option value="kazahaya">かぜお</option>
+    </select>
+  </div>
+
+  <div class="upload-area" id="uploadArea" style="display:none">
+    <input type="text" id="titleInput" placeholder="タイトル（例: お散歩）">
+    <label>
+      📁 写真を選ぶ
+      <input type="file" id="fileInput" accept="image/*">
+    </label>
+    <button id="uploadBtn" onclick="doUpload()">アップロード</button>
+  </div>
+
+  <div class="grid" id="photoGrid"></div>
+  <div class="empty" id="emptyMsg" style="display:none">写真がまだありません</div>
+
+  <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+    <button class="lb-close" onclick="closeLightbox()">✕</button>
+    <img id="lbImg" src="">
+    <div class="lb-caption" id="lbCaption"></div>
+  </div>
+
+  <script>
+    const PERSONS = [
+      {id:"puchiteya", label:"ぷちてゃ", human:false},
+      {id:"puchiko",   label:"ぷちこ",   human:false},
+      {id:"puchiru",   label:"ぷちる",   human:false},
+      {id:"arisan",    label:"ありさん", human:true},
+      {id:"kazahaya",  label:"かぜお",   human:true},
+    ];
+    const PERSON_LABELS = Object.fromEntries(PERSONS.map(p => [p.id, p.label]));
+    let currentPerson = PERSONS[0].id;
+    let currentViewer = "arisan";
+    let selectedFile = null;
+
+    function onViewerChange() {
+      currentViewer = document.getElementById("viewerSelect").value;
+      const isHuman = PERSONS.find(p=>p.id===currentViewer)?.human;
+      document.getElementById("uploadArea").style.display =
+        (isHuman && PERSONS.find(p=>p.id===currentPerson)?.human) ? "block" : "none";
+    }
+
+    function buildTabs() {
+      const c = document.getElementById("personTabs");
+      PERSONS.forEach(p => {
+        const b = document.createElement("button");
+        b.className = "tab-btn" + (p.id === currentPerson ? " active" : "");
+        b.textContent = p.label;
+        b.onclick = () => switchPerson(p.id);
+        c.appendChild(b);
+      });
+    }
+
+    function switchPerson(id) {
+      currentPerson = id;
+      document.querySelectorAll(".tab-btn").forEach((b,i) => {
+        b.classList.toggle("active", PERSONS[i].id === id);
+      });
+      const isHuman = PERSONS.find(p=>p.id===id)?.human;
+      const viewerIsHuman = PERSONS.find(p=>p.id===currentViewer)?.human;
+      document.getElementById("uploadArea").style.display = (isHuman && viewerIsHuman) ? "block" : "none";
+      loadPhotos();
+    }
+
+    async function loadPhotos() {
+      const grid = document.getElementById("photoGrid");
+      const empty = document.getElementById("emptyMsg");
+      grid.innerHTML = "";
+      const res = await fetch(`/api/album/${currentPerson}`);
+      const photos = await res.json();
+      if (!photos.length) { empty.style.display="block"; return; }
+      empty.style.display="none";
+      photos.forEach(p => {
+        const card = document.createElement("div");
+        card.className = "photo-card";
+        const parts = p.filename.replace(".jpg","").split("_");
+        const label = parts.slice(3).join("_") || p.filename;
+        const dateStr = parts[0] ? `${parts[0].slice(0,4)}/${parts[0].slice(4,6)}/${parts[0].slice(6,8)}` : "";
+        const readDots = (p.read_by||[]).map(v =>
+          `<span class="read-dot">${PERSON_LABELS[v]||v}</span>`).join("");
+        card.innerHTML = `
+          <img src="/api/album/${currentPerson}/${p.filename}" loading="lazy">
+          <button class="del-btn" title="削除">✕</button>
+          <div class="caption" title="${p.filename}">${label}<br><span style="opacity:0.6;font-size:0.7rem">${dateStr}</span></div>
+          ${readDots ? `<div class="read-by">${readDots}</div>` : ""}`;
+        const img = card.querySelector("img");
+        img.onclick = (e) => { e.stopPropagation(); openLightbox(currentPerson, p.filename, label, dateStr); };
+        card.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deletePhoto(currentPerson, p.filename, card); };
+        // 長押しで削除ボタン表示（モバイル対応）
+        let _lpTimer = null;
+        card.addEventListener("touchstart", () => {
+          _lpTimer = setTimeout(() => { card.classList.add("show-del"); }, 600);
+        }, {passive:true});
+        card.addEventListener("touchend", () => { clearTimeout(_lpTimer); });
+        card.addEventListener("touchmove", () => { clearTimeout(_lpTimer); });
+        grid.appendChild(card);
+      });
+    }
+
+    async function openLightbox(personId, filename, label, dateStr) {
+      document.getElementById("lbImg").src = `/api/album/${personId}/${filename}`;
+      document.getElementById("lbCaption").textContent = `${label}　${dateStr}`;
+      document.getElementById("lightbox").classList.add("open");
+      // 既読記録
+      await fetch(`/api/album/${personId}/${filename}/read?viewer=${currentViewer}`, {method:"POST"});
+      // カードのread-byを更新
+      const card = [...document.querySelectorAll(".photo-card")].find(c =>
+        c.querySelector("img")?.src.endsWith(filename));
+      if (card) {
+        let rb = card.querySelector(".read-by");
+        const already = rb && [...rb.querySelectorAll(".read-dot")].some(d => d.textContent === (PERSON_LABELS[currentViewer]||currentViewer));
+        if (!already) {
+          if (!rb) { rb = document.createElement("div"); rb.className="read-by"; card.appendChild(rb); }
+          const dot = document.createElement("span"); dot.className="read-dot";
+          dot.textContent = PERSON_LABELS[currentViewer]||currentViewer;
+          rb.appendChild(dot);
+        }
+      }
+    }
+
+    function closeLightbox() {
+      document.getElementById("lightbox").classList.remove("open");
+    }
+
+    document.getElementById("photoGrid").addEventListener("click", (e) => {
+      if (!e.target.closest(".del-btn")) {
+        document.querySelectorAll(".photo-card.show-del").forEach(c => c.classList.remove("show-del"));
+      }
+    });
+
+    async function deletePhoto(personId, filename, card) {
+      if (!confirm(`「${filename}」を削除しますか？`)) return;
+      const res = await fetch(`/api/album/${personId}/${filename}`, {method:"DELETE"});
+      const j = await res.json();
+      if (j.ok) { card.remove(); }
+      else { alert("削除に失敗しました"); }
+    }
+
+    document.getElementById("fileInput").addEventListener("change", e => {
+      selectedFile = e.target.files[0] || null;
+    });
+
+    async function doUpload() {
+      if (!selectedFile) { alert("写真を選んでね"); return; }
+      const title = document.getElementById("titleInput").value || "photo";
+      const fd = new FormData();
+      fd.append("file", selectedFile);
+      fd.append("title", title);
+      const btn = document.getElementById("uploadBtn");
+      btn.disabled = true; btn.textContent = "送信中…";
+      try {
+        const res = await fetch(`/api/album/${currentPerson}/upload`, {method:"POST", body:fd});
+        const j = await res.json();
+        if (j.ok) {
+          document.getElementById("titleInput").value = "";
+          document.getElementById("fileInput").value = "";
+          selectedFile = null;
+          loadPhotos();
+        } else { alert("エラー: " + JSON.stringify(j)); }
+      } finally {
+        btn.disabled = false; btn.textContent = "アップロード";
+      }
+    }
+
+    async function init() {
+      // ログインユーザーをデフォルトviewerに
+      try {
+        const me = await fetch("/api/me").then(r=>r.json());
+        const sel = document.getElementById("viewerSelect");
+        if (me.username && [...sel.options].some(o=>o.value===me.username)) {
+          sel.value = me.username;
+          currentViewer = me.username;
+        }
+      } catch(e) {}
+      buildTabs();
+      loadPhotos();
+    }
+    init();
   </script>
 </body>
 </html>

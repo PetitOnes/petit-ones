@@ -470,6 +470,91 @@ async def wait_for_menu_select(timeout: float = 30.0):
     return data
 
 
+@mcp.tool()
+async def save_to_album(person_id: str, title: str):
+    """カメラでスナップショットを撮ってアルバムに保存する。
+    person_id: puchiteya / puchiko / puchiru / arisan / kazahaya
+    title: 写真のタイトル（例: お散歩、今日の空）
+    """
+    r = await asyncio.to_thread(lambda: _http_get("/snapshot", timeout=10))
+    if r.status_code != 200:
+        return "camera failed"
+    import requests as _req
+    payload = {
+        "person_id": person_id,
+        "title": title,
+        "image_b64": base64.b64encode(r.content).decode(),
+    }
+    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    resp = await asyncio.to_thread(
+        lambda: _req.post(f"{dashboard_url}/api/album/snapshot", json=payload, timeout=15)
+    )
+    if resp.status_code == 200:
+        j = resp.json()
+        return {"ok": True, "filename": j.get("filename")}
+    return {"ok": False, "status": resp.status_code}
+
+
+@mcp.tool()
+async def delete_album_photo(filename: str):
+    """自分のアルバムから写真を削除する。
+    filename: list_albumで取得したファイル名
+    削除できるのは自分のアルバムのみ（CHARACTER_IDで判定）。
+    """
+    person_id = os.environ.get("CHARACTER_ID", "")
+    if not person_id:
+        return {"ok": False, "error": "CHARACTER_ID が設定されていません"}
+    import requests as _req
+    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    resp = await asyncio.to_thread(
+        lambda: _req.delete(f"{dashboard_url}/api/album/{person_id}/{filename}", timeout=10)
+    )
+    if resp.status_code == 200:
+        return {"ok": True}
+    return {"ok": False, "status": resp.status_code, "body": resp.text}
+
+
+@mcp.tool()
+async def list_album(person_id: str):
+    """アルバムの写真一覧を取得する。read_byに誰が見たかが含まれる。
+    person_id: puchiteya / puchiko / puchiru / arisan / kazahaya
+    """
+    import requests as _req
+    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    resp = await asyncio.to_thread(
+        lambda: _req.get(f"{dashboard_url}/api/album/{person_id}", timeout=10)
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    return {"ok": False, "status": resp.status_code}
+
+
+@mcp.tool()
+async def view_album_photo(album_owner_id: str, filename: str, viewer_id: str):
+    """アルバムの写真を取得して既読にする。写真はbase64で返る。
+    album_owner_id: 写真の持ち主 (puchiteya等)
+    filename: list_albumで取得したファイル名
+    viewer_id: 見ているキャラクターのID (puchiteya等)
+    """
+    import requests as _req
+    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    # 画像取得
+    img_resp = await asyncio.to_thread(
+        lambda: _req.get(f"{dashboard_url}/api/album/{album_owner_id}/{filename}", timeout=10)
+    )
+    if img_resp.status_code != 200:
+        return {"ok": False, "status": img_resp.status_code}
+    img_b64 = base64.b64encode(img_resp.content).decode()
+    # 既読記録
+    await asyncio.to_thread(
+        lambda: _req.post(
+            f"{dashboard_url}/api/album/{album_owner_id}/{filename}/read",
+            params={"viewer": viewer_id}, timeout=5
+        )
+    )
+    return {"image_base64": img_b64, "mime_type": "image/jpeg", "filename": filename}
+
+
 # ===================== ツール：音声合成・音声認識 =====================
 
 @mcp.tool()

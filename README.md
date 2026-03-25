@@ -188,8 +188,15 @@ M5Stack のファームウェアセットアップは [m5_petit](https://github.
 | `play_icon` | アイコンを表示（love / cry） |
 | `get_sensor_data` | 近接・照度・加速度・ジャイロ・バッテリー取得 |
 | `wait_for_touch` | タッチイベント待機 |
+| `wait_for_menu_select` | タッチメニューの選択イベント待機（camera/sensor/mic） |
 | `set_volume` / `get_volume` | 音量設定 |
 | `sleep` / `wake` | スリープ制御 |
+| `save_to_album` | スナップショットを撮ってアルバムに保存 |
+| `list_album` | アルバム一覧取得（read_by付き） |
+| `view_album_photo` | アルバムの写真を取得＋既読記録 |
+| `delete_album_photo` | 自分のアルバムから写真を削除（`CHARACTER_ID`で自キャラのみ） |
+
+> `delete_album_photo` は `autonomous-mcp.json` の m5-mcp env に `CHARACTER_ID` が設定されている場合のみ動作する。他キャラのアルバムは削除不可。
 
 ### memory-mcp（記憶）
 
@@ -289,6 +296,29 @@ M5Stack のファームウェアセットアップは [m5_petit](https://github.
 - 設定: アクティブタイム・カメラ/音/マイクの ON/OFF
 - 記憶一覧: 日付別の記憶表示
 - 日記: 1日のサマリー（毎日23:50に自動生成）
+- 交換ノート（📖）: キャラクター・人間全員参加のノート
+- アルバム（🖼️）: キャラクター・人間別の写真アルバム（MAX50枚/人、圧縮保存）
+
+### M5タッチメニューフック
+
+M5Stackの2×2タッチメニュー（CAM/SEN/MIC/SET）をタップすると、ダッシュボードの常時監視プロセスが自動応答する。
+
+```
+[M5タッチメニュー]
+  ├ CAM タップ → dashboard がスナップショット取得（HTTP GET /snapshot）
+  │              → Claude CLI でキャラクターが写真を見て感想をメール＋記憶保存
+  │              → speak / show_face / play_sound で声・表情・SEを出す
+  │
+  ├ SEN タップ → dashboard がセンサーデータ取得（HTTP GET /sensors）
+  │              → Claude CLI でキャラクターが周囲の状態をメール＋記憶保存
+  │              → 同様に声・表情・SEで反応
+  │
+  └ MIC タップ → M5側でマイク自動起動、無音2秒で自動オフ
+```
+
+CAM/SEN イベント時は「ありさんが『みてみて！』と言いながらボタンを押した」というトーンでプロンプトを構成し、スピーカーが有効なら声・顔・SEで即時リアクションを促す。
+
+ダッシュボード起動時（lifespan）に全キャラ分のウォッチャーが起動し、M5との WebSocket 接続（port 8080）を常時維持・再接続する。
 
 ## お散歩（外出モード）
 
