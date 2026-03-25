@@ -560,26 +560,55 @@ async def view_album_photo(album_owner_id: str, filename: str, viewer_id: str):
 @mcp.tool()
 async def speak(
     text: str,
+    engine: str = "piper",
+    # piper
     speaker: int = 0,
     length_scale: float = 1.0,
     noise_scale: float = 0.5,
     noise_w: float = 0.8,
     sentence_silence: float = 0.2,
+    # kokoro
+    voice: str = "jf_alpha",
+    speed: float = 1.0,
+    # voicevox
+    voicevox_speaker: int = 3,
+    speed_scale: float = 1.0,
 ):
     """テキストをTTSで音声合成してM5で再生する。
-    speaker: 話者ID。length_scale: 小さいほど速い。noise_scale: 声のバリエーション。
-    noise_w: 音素長のバリエーション。sentence_silence: 文間の無音時間(秒)。
+
+    engine: "piper"（デフォルト）/ "kokoro" / "voicevox"
+
+    [piper]
+      speaker: 話者ID（デフォルト0）
+      length_scale: 速さ（小さいほど速い）
+      noise_scale / noise_w: 声のバリエーション
+      sentence_silence: 文間の無音(秒)
+
+    [kokoro]
+      voice: jf_alpha / jf_gongitsune / jf_nezumi / jf_tebukuro / jm_kumo
+      speed: 速さ倍率
+
+    [voicevox]
+      voicevox_speaker: 話者番号
+        ずんだもんノーマル=3, 四国めたんノーマル=2, 春日部つむぎ=8,
+        白上虎太郎=12, 青山龍星=13, 冥鳴ひまり=14
+      speed_scale: 速さ倍率
     """
     def _tts_and_upload():
-        # TTS → WAVバイナリ取得
-        payload = {
-            "text": text,
-            "speaker": speaker,
-            "length_scale": length_scale,
-            "noise_scale": noise_scale,
-            "noise_w": noise_w,
-            "sentence_silence": sentence_silence,
-        }
+        if engine == "kokoro":
+            payload = {"text": text, "engine": "kokoro", "voice": voice, "speed": speed, "lang": "ja"}
+        elif engine == "voicevox":
+            payload = {"text": text, "engine": "voicevox", "voicevox_speaker": voicevox_speaker, "speed_scale": speed_scale}
+        else:  # piper
+            payload = {
+                "text": text,
+                "engine": "piper",
+                "speaker": speaker,
+                "length_scale": length_scale,
+                "noise_scale": noise_scale,
+                "noise_w": noise_w,
+                "sentence_silence": sentence_silence,
+            }
         r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
         r.raise_for_status()
         wav_bytes = r.content

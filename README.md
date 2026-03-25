@@ -27,6 +27,7 @@
 | コンポーネント | 説明 |
 |---|---|
 | **m5-mcp** | M5Stack 制御（カメラ・顔・センサー・音・スリープ）。wifi-cam-mcp/usb-webcam-mcp に代わるもの |
+| **GPU サーバー** | 音声認識（Whisper ASR, port 8765）・TTS（port 8766）を担当。別リポジトリ [m5_petit_gpu_server](https://github.com/AiriYokochi/m5_petit_gpu_server) を参照 |
 | **desire-system** | 欲求システム。時間経過 + センサー + 相互作用の3段階で欲求レベルを計算 |
 | **relations-mcp** | キャラ間の関係性（好き嫌い・親密度・メモ） |
 | **notes-mcp** | 永続ノート（光の値メモ、センサー範囲表など） |
@@ -178,6 +179,8 @@ uv run python main.py
 
 M5Stack のファームウェアセットアップは [m5_petit](https://github.com/AiriYokochi/m5_petit) を参照。IP は環境変数 `M5_HOST` で指定（`autonomous-mcp.json` から渡される）。
 
+音声認識（ASR）と TTS は GPU サーバーが担当する。[m5_petit_gpu_server](https://github.com/AiriYokochi/m5_petit_gpu_server) をセットアップし、`VOICE_API_HOST` 環境変数にそのホスト名/IPを設定する（デフォルト: `puchipuchi`）。
+
 | ツール | 説明 |
 |--------|------|
 | `take_snapshot` | M5カメラで撮影 |
@@ -313,10 +316,14 @@ M5Stackの2×2タッチメニュー（CAM/SEN/MIC/SET）をタップすると、
   │              → Claude CLI でキャラクターが周囲の状態をメール＋記憶保存
   │              → 同様に声・表情・SEで反応
   │
-  └ MIC タップ → M5側でマイク自動起動、無音2秒で自動オフ
+  └ MIC タップ → M5側でマイク自動起動、PCMバイナリ（16kHz int16）をWSで逐次送信
+                  → 無音2秒で自動オフ＋ `mic_end` イベント送信
+                  → dashboard がバイナリを蓄積し WAV化 → GPUサーバー（port 8765）でWhisper ASR
+                  → 無音（テキスト空）ならスキップ
+                  → テキストあり → Claude CLI が speak / メール / 記憶 で応答
 ```
 
-CAM/SEN イベント時は「ありさんが『みてみて！』と言いながらボタンを押した」というトーンでプロンプトを構成し、スピーカーが有効なら声・顔・SEで即時リアクションを促す。
+CAM/SEN/MIC イベントはいずれも `call_claude` 経由で処理され、スピーカーが有効なら `speak` で声・顔・SEで即時リアクションを促す。MIC は GPU サーバー（`VOICE_API_HOST` 環境変数）での ASR が前提。
 
 ダッシュボード起動時（lifespan）に全キャラ分のウォッチャーが起動し、M5との WebSocket 接続（port 8080）を常時維持・再接続する。
 

@@ -22,6 +22,9 @@ import base64
 import anthropic
 import websockets
 
+VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
+_ASR_URL = f"http://{VOICE_API_HOST}:8765"
+
 from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image, ImageOps
@@ -91,6 +94,50 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
         print(f"[m5_watcher] {character_id}: sensor error: {e}")
 
 
+async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes: bytes):
+    """PCMバイト列をWAV化→ASR→Claudeに投げる。カメラ・センサーと同じパターン。"""
+    import struct, wave, tempfile, requests as _requests
+    if len(pcm_bytes) < 512:
+        return
+    try:
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(16000)
+            w.writeframes(pcm_bytes)
+        buf.seek(0)
+
+        def _transcribe():
+            r = _requests.post(
+                f"{_ASR_URL}/transcribe",
+                files={"file": ("mic.wav", buf, "audio/wav")},
+                timeout=60,
+            )
+            r.raise_for_status()
+            return r.json()
+        result = await asyncio.to_thread(_transcribe)
+        text = (result.get("text") or "").strip()
+        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r}")
+
+        scripts_dir = PROJECT_DIR / "scripts"
+        if text:
+            sound_desc = f"書き起こし: 「{text}」"
+        else:
+            sound_desc = "はっきりした声は聞こえなかったけど、何か音が届いた（環境音・息・物音かも）"
+        message = (
+            f"ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。{sound_desc}\n"
+            f"聞いた感想をありさんに伝えて（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
+            f"聞いたことと感想を `remember` で記憶にも残して。"
+            f"スピーカーが使えるなら、感想を `speak` で一言声に出して、"
+            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
+        )
+        result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        print(f"[m5_watcher] {character_id}: mic done ({result2[:40] if result2 else 'no result'})")
+    except Exception as e:
+        print(f"[m5_watcher] {character_id}: mic error: {e}")
+
+
 async def _m5_camera_watcher(character_id: str, hosts: list[str]):
     """M5のWSに接続してmenu_selectイベントを監視する（常時再接続）"""
     while True:
@@ -100,18 +147,29 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
                 async with websockets.connect(f"ws://{host}:8080", open_timeout=5) as ws:
                     connected = True
                     print(f"[m5_watcher] {character_id}: connected to {host}")
+                    pcm_buffer: list[bytes] = []
                     async for message in ws:
-                        if not isinstance(message, str):
+                        if isinstance(message, bytes):
+                            pcm_buffer.append(message)
                             continue
                         try:
                             data = json.loads(message)
                         except Exception:
                             continue
-                        item = data.get("item") if data.get("event") == "menu_select" else None
-                        if item == "camera":
-                            asyncio.create_task(_m5_camera_analyze_and_mail(character_id, host))
-                        elif item == "sensor":
-                            asyncio.create_task(_m5_sensor_analyze_and_mail(character_id, host))
+                        event = data.get("event")
+                        if event == "mic_end":
+                            if pcm_buffer:
+                                pcm_bytes = b"".join(pcm_buffer)
+                                pcm_buffer = []
+                                asyncio.create_task(_m5_mic_transcribe_and_respond(character_id, host, pcm_bytes))
+                            else:
+                                pcm_buffer = []
+                        elif event == "menu_select":
+                            item = data.get("item")
+                            if item == "camera":
+                                asyncio.create_task(_m5_camera_analyze_and_mail(character_id, host))
+                            elif item == "sensor":
+                                asyncio.create_task(_m5_sensor_analyze_and_mail(character_id, host))
                 break
             except Exception:
                 continue
@@ -929,37 +987,62 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         effective_message = f"[{user_display_name}から] {message}"
 
     model = model or os.getenv("CLAUDE_MODEL", "sonnet")
+    _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+                     "--dangerously-skip-permissions", "--output-format", "json", "--verbose"]
+
     if sf.exists():
         sid = sf.read_text().strip()
-        cmd = ["claude", "-p", "--model", model, "--resume", sid,
-               "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
-               "--dangerously-skip-permissions",
-               "--output-format", "json"]
+        cmd = ["claude", "-p", "--model", model, "--resume", sid] + _common_flags
     else:
-        cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt,
-               "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
-               "--dangerously-skip-permissions",
-               "--output-format", "json"]
+        cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt] + _common_flags
 
-    try:
+    def _extract_reply(raw: str) -> tuple[str, str]:
+        """verbose JSONから返答テキストとsession_idを抽出する。"""
+        try:
+            data = json.loads(raw)
+            # verbose出力はJSON配列
+            if isinstance(data, list):
+                session_id = ""
+                text_parts = []
+                for item in data:
+                    t = item.get("type", "")
+                    if t == "result":
+                        session_id = item.get("session_id", "")
+                    elif t == "assistant":
+                        for block in item.get("message", {}).get("content", []):
+                            if block.get("type") == "text":
+                                text_parts.append(block["text"])
+                return "\n".join(text_parts), session_id
+            # 非verboseのフォールバック
+            if isinstance(data, dict):
+                return data.get("result", raw), data.get("session_id", "")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return raw, ""
+
+    async def _run_cmd(c: list[str]) -> tuple[str, str]:
         proc = await asyncio.create_subprocess_exec(
-            *cmd, stdin=asyncio.subprocess.PIPE,
+            *c, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=env, cwd=str(PROJECT_DIR),
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(input=effective_message.encode()), timeout=120,
         )
-        output = stdout.decode()
-        try:
-            data = json.loads(output)
-            new_sid = data.get("session_id", "")
-            if new_sid:
-                sf.parent.mkdir(parents=True, exist_ok=True)
-                sf.write_text(new_sid)
-            return data.get("result", output)
-        except json.JSONDecodeError:
-            return output or stderr.decode() or "返答がありませんでした"
+        return stdout.decode(), stderr.decode()
+
+    try:
+        output, err = await _run_cmd(cmd)
+        # resume失敗（セッション切れ）なら新規セッションでリトライ
+        if sf.exists() and "No conversation found" in output:
+            sf.unlink(missing_ok=True)
+            cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt] + _common_flags
+            output, err = await _run_cmd(cmd)
+        reply, new_sid = _extract_reply(output)
+        if new_sid:
+            sf.parent.mkdir(parents=True, exist_ok=True)
+            sf.write_text(new_sid)
+        return reply or err or "返答がありませんでした"
     except asyncio.TimeoutError:
         return "タイムアウトしました"
     except Exception as e:
