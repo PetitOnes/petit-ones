@@ -4,11 +4,13 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=0.50.0",
     "chromadb>=1.5.1",
     "fastapi>=0.133.1",
     "Pillow>=11.0.0",
     "python-dotenv>=1.2.1",
     "uvicorn>=0.41.0",
+    "websockets>=13.0",
 ]
 
 [project.scripts]

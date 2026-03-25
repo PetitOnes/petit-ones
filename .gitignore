@@ -81,3 +81,11 @@ devices.json
 dashboard/.chat-session-id
 
 dashboard/chat_history.json
+
+privatekey
+
+publickey
+
+tmp_*.txt
+tmp_*.py
+tmp_*.md

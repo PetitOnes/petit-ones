@@ -6,6 +6,7 @@ import asyncio
 import io
 import json
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,12 +19,104 @@ import time
 
 import base64
 
+import anthropic
+import websockets
+
 from fastapi import Cookie, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image
 from pydantic import BaseModel
 
-app = FastAPI()
+
+# ===================== M5 カメラウォッチャー =====================
+
+async def _m5_camera_analyze_and_mail(character_id: str, host: str):
+    """スナップショットをHTTPで取得してClaudeに見せ、感想をありさんにメール"""
+    try:
+        cfg = get_char_config(character_id)
+        char_name = cfg.get("name", character_id)
+        soul = get_soul(character_id)
+
+        # HTTP で /snapshot を取得
+        import urllib.request
+        loop = asyncio.get_event_loop()
+        def _fetch():
+            with urllib.request.urlopen(f"http://{host}/snapshot", timeout=10) as r:
+                return r.read()
+        jpeg_bytes = await loop.run_in_executor(None, _fetch)
+        image_b64 = base64.b64encode(jpeg_bytes).decode()
+
+        client = anthropic.AsyncAnthropic()
+        response = await client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            system=f"あなたは{char_name}（ID: {character_id}）です。\n\n{soul}",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
+                    },
+                    {"type": "text", "text": "カメラで今見えているものを見て、ありさんに短く感想を伝えてください。"},
+                ],
+            }],
+        )
+        comment = response.content[0].text
+
+        scripts_dir = PROJECT_DIR / "scripts"
+        proc = await asyncio.create_subprocess_exec(
+            "python3", str(scripts_dir / "write_mailbox.py"),
+            character_id, "arisan", comment,
+        )
+        await proc.wait()
+        print(f"[m5_watcher] {character_id}: mailed to arisan")
+    except Exception as e:
+        print(f"[m5_watcher] {character_id}: analyze/mail error: {e}")
+
+
+async def _m5_camera_watcher(character_id: str, hosts: list[str]):
+    """M5のWSに接続してcameraイベントを監視する（常時再接続）"""
+    while True:
+        connected = False
+        for host in hosts:
+            try:
+                async with websockets.connect(f"ws://{host}:8080", open_timeout=5) as ws:
+                    connected = True
+                    print(f"[m5_watcher] {character_id}: connected to {host}")
+                    async for message in ws:
+                        if not isinstance(message, str):
+                            continue
+                        try:
+                            data = json.loads(message)
+                        except Exception:
+                            continue
+                        if data.get("event") == "menu_select" and data.get("item") == "camera":
+                            asyncio.create_task(_m5_camera_analyze_and_mail(character_id, host))
+                break
+            except Exception:
+                continue
+        if not connected:
+            await asyncio.sleep(30)
+        else:
+            await asyncio.sleep(5)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    tasks = []
+    for char_id in ["puchiteya", "puchiko", "puchiru"]:
+        cfg = get_char_config(char_id)
+        hosts = get_m5_hosts(cfg)
+        if hosts:
+            t = asyncio.create_task(_m5_camera_watcher(char_id, hosts))
+            tasks.append(t)
+    yield
+    for t in tasks:
+        t.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 
 # --- 認証 ---
 # ユーザー設定は ~/petit_claude/auth.json から読む
@@ -409,6 +502,16 @@ def get_char_config(character_id: str) -> dict:
 
 def char_dir(character_id: str) -> Path:
     return CHARACTERS_DIR / character_id
+
+
+def _record_last_session(character_id: str, username: str) -> None:
+    """ダッシュボードチャット後に last_session.txt へ時刻とユーザーを記録する。"""
+    try:
+        p = char_dir(character_id) / "last_session.txt"
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        p.write_text(f"{now} {username}\n")
+    except Exception:
+        pass
 
 
 def session_file(character_id: str, username: str | None = None) -> Path:
@@ -1429,6 +1532,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
 
     reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
     append_chat(character_id, character_id, reply, username)
+    _record_last_session(character_id, username)
     resp = {"reply": reply}
     if born:
         resp["event"] = "born"

@@ -13,10 +13,15 @@ from typing import Optional
 mcp = FastMCP("m5")
 
 import os
+import tempfile
 
 # Support comma-separated hosts for fallback (e.g. "puchiteya.local,10.42.138.101")
 _m5_hosts: list[str] = []
 _active_host: Optional[str] = None
+
+VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
+_ASR_URL = f"http://{VOICE_API_HOST}:8765"
+_TTS_URL = f"http://{VOICE_API_HOST}:8766"
 
 def _init_hosts():
     global _m5_hosts
@@ -74,6 +79,7 @@ _ws_lock = asyncio.Lock()
 _reader_task: Optional[asyncio.Task] = None
 _sensor_data: dict = {}
 _touch_queue: asyncio.Queue = asyncio.Queue(maxsize=20)
+_menu_queue: asyncio.Queue = asyncio.Queue(maxsize=20)
 
 
 async def _ensure_ws():
@@ -119,6 +125,9 @@ async def _ws_reader():
                     elif event == "touch":
                         if not _touch_queue.full():
                             _touch_queue.put_nowait(data)
+                    elif event == "menu_select":
+                        if not _menu_queue.full():
+                            _menu_queue.put_nowait(data)
                 except Exception:
                     pass
             # binary: マイク音声（MIC_STARTしたときだけ流れる、今は無視）
@@ -293,6 +302,14 @@ async def get_power_save():
     return r.text == "true"
 
 
+@mcp.tool()
+async def batch_commands(commands: list[str]):
+    """複数のコマンドをまとめて送信する。例: ["BRIGHTNESS 5", "VOL 0", "POWERSAVE ON"]"""
+    for cmd in commands:
+        await _send(cmd)
+    return f"sent {len(commands)} commands"
+
+
 # ===================== ツール：ファイルアップロード =====================
 
 def _convert_wav_mono_16k(file_path: str) -> io.BytesIO:
@@ -429,6 +446,94 @@ async def wait_for_touch(timeout: float = 10.0):
         return data
     except asyncio.TimeoutError:
         return None
+
+
+@mcp.tool()
+async def wait_for_menu_select(timeout: float = 30.0):
+    """M5のタッチメニューで項目が選択されるのを待つ。
+    camera選択時はスナップショット(base64)がdataフィールドに含まれる。
+    sensor選択時は最新のセンサーデータがsensorsフィールドに含まれる。
+    mic選択時はM5側でマイクが自動起動済み。
+    timeout秒以内に選択がなければNoneを返す。
+    item: 'camera' | 'sensor' | 'mic'
+    """
+    await _ensure_ws()
+    try:
+        data = await asyncio.wait_for(_menu_queue.get(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return None
+
+    # sensor: WSリーダーが常時更新しているキャッシュを付与
+    if data.get("item") == "sensor" and _sensor_data:
+        data["sensors"] = _sensor_data
+
+    return data
+
+
+# ===================== ツール：音声合成・音声認識 =====================
+
+@mcp.tool()
+async def speak(
+    text: str,
+    speaker: int = 0,
+    length_scale: float = 1.0,
+    noise_scale: float = 0.5,
+    noise_w: float = 0.8,
+    sentence_silence: float = 0.2,
+):
+    """テキストをTTSで音声合成してM5で再生する。
+    speaker: 話者ID。length_scale: 小さいほど速い。noise_scale: 声のバリエーション。
+    noise_w: 音素長のバリエーション。sentence_silence: 文間の無音時間(秒)。
+    """
+    def _tts_and_upload():
+        # TTS → WAVバイナリ取得
+        payload = {
+            "text": text,
+            "speaker": speaker,
+            "length_scale": length_scale,
+            "noise_scale": noise_scale,
+            "noise_w": noise_w,
+            "sentence_silence": sentence_silence,
+        }
+        r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
+        r.raise_for_status()
+        wav_bytes = r.content
+
+        # 一時ファイルに保存してM5にアップロード
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            f.write(wav_bytes)
+            tmp_path = f.name
+
+        try:
+            mono_buf = _convert_wav_mono_16k(tmp_path)
+            resp = _http_post(
+                "/upload_wav",
+                timeout=30,
+                files={"file": ("tts_speak.wav", mono_buf, "audio/wav")},
+            )
+            resp.raise_for_status()
+        finally:
+            os.unlink(tmp_path)
+
+    await asyncio.to_thread(_tts_and_upload)
+    await asyncio.to_thread(lambda: _http_get("/se_play?name=tts_speak.wav", timeout=10))
+    return f"spoke: {text}"
+
+
+@mcp.tool()
+async def transcribe_audio(file_path: str):
+    """ローカルのWAVファイルを音声認識してテキストを返す"""
+    def _transcribe():
+        with open(file_path, "rb") as f:
+            r = requests.post(
+                f"{_ASR_URL}/transcribe",
+                files={"file": (os.path.basename(file_path), f, "audio/wav")},
+                timeout=60,
+            )
+            r.raise_for_status()
+            return r.json()
+    result = await asyncio.to_thread(_transcribe)
+    return result
 
 
 def main():
