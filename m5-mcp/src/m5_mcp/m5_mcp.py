@@ -22,6 +22,8 @@ _active_host: Optional[str] = None
 VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765"
 _TTS_URL = f"http://{VOICE_API_HOST}:8766"
+# ダッシュボードは常に同じマシン上で動くので127.0.0.1を使う
+_DASHBOARD_URL = f"http://{os.environ.get('DASHBOARD_HOST', '127.0.0.1')}:8765"
 
 def _init_hosts():
     global _m5_hosts
@@ -485,7 +487,7 @@ async def save_to_album(person_id: str, title: str):
         "title": title,
         "image_b64": base64.b64encode(r.content).decode(),
     }
-    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    dashboard_url = _DASHBOARD_URL
     resp = await asyncio.to_thread(
         lambda: _req.post(f"{dashboard_url}/api/album/snapshot", json=payload, timeout=15)
     )
@@ -503,7 +505,7 @@ async def lock_album_photo(album_owner_id: str, filename: str):
     戻り値の locked が true ならロック済み、false なら解除済み。
     """
     import requests as _req
-    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    dashboard_url = _DASHBOARD_URL
     resp = await asyncio.to_thread(
         lambda: _req.post(f"{dashboard_url}/api/album/{album_owner_id}/{filename}/lock", timeout=10)
     )
@@ -522,7 +524,7 @@ async def delete_album_photo(filename: str):
     if not person_id:
         return {"ok": False, "error": "CHARACTER_ID が設定されていません"}
     import requests as _req
-    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    dashboard_url = _DASHBOARD_URL
     resp = await asyncio.to_thread(
         lambda: _req.delete(f"{dashboard_url}/api/album/{person_id}/{filename}", timeout=10)
     )
@@ -538,7 +540,7 @@ async def list_album(person_id: str, unread_by: str = ""):
     unread_by: 指定すると、そのキャラがまだ見ていない写真だけを返す（例: "puchiteya"）
     """
     import requests as _req
-    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    dashboard_url = _DASHBOARD_URL
     resp = await asyncio.to_thread(
         lambda: _req.get(f"{dashboard_url}/api/album/{person_id}", timeout=10)
     )
@@ -558,7 +560,7 @@ async def view_album_photo(album_owner_id: str, filename: str, viewer_id: str):
     viewer_id: 見ているキャラクターのID (puchiteya等)
     """
     import requests as _req
-    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    dashboard_url = _DASHBOARD_URL
     # 画像取得
     img_resp = await asyncio.to_thread(
         lambda: _req.get(f"{dashboard_url}/api/album/{album_owner_id}/{filename}", timeout=10)

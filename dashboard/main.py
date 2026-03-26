@@ -279,6 +279,18 @@ app = FastAPI(lifespan=lifespan)
 
 # --- 認証 ---
 # ユーザー設定は ~/petit_claude/auth.json から読む
+# 信頼済みIPは ~/petit_claude/network.json から読む（認証スキップ対象）
+
+def _load_trusted_ips() -> set[str]:
+    _NETWORK_FILE = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude")) / "network.json"
+    try:
+        data = json.loads(_NETWORK_FILE.read_text())
+        return set(data.get("trusted_ips", []))
+    except Exception:
+        return {"127.0.0.1"}
+
+
+# ユーザー設定は ~/petit_claude/auth.json から読む
 # {
 #   "users": {
 #     "admin_user": {"password": "xxx", "role": "admin"},
@@ -469,9 +481,9 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if not _auth_enabled():
         return await call_next(request)
-    # localhost（127.0.0.1）からのアクセスは認証スキップ（m5_mcp等の内部ツール用）
+    # 内部ツール（m5_mcp等）からのアクセスは認証スキップ
     client_ip = request.client.host if request.client else ""
-    if client_ip == "127.0.0.1":
+    if client_ip in _load_trusted_ips():
         return await call_next(request)
     # 認証チェック
     role = _get_user_role(request)
