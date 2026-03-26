@@ -532,18 +532,22 @@ async def delete_album_photo(filename: str):
 
 
 @mcp.tool()
-async def list_album(person_id: str):
+async def list_album(person_id: str, unread_by: str = ""):
     """アルバムの写真一覧を取得する。read_byに誰が見たかが含まれる。
     person_id: puchiteya / puchiko / puchiru / arisan / kazahaya
+    unread_by: 指定すると、そのキャラがまだ見ていない写真だけを返す（例: "puchiteya"）
     """
     import requests as _req
     dashboard_url = f"http://{VOICE_API_HOST}:8765"
     resp = await asyncio.to_thread(
         lambda: _req.get(f"{dashboard_url}/api/album/{person_id}", timeout=10)
     )
-    if resp.status_code == 200:
-        return resp.json()
-    return {"ok": False, "status": resp.status_code}
+    if resp.status_code != 200:
+        return {"ok": False, "status": resp.status_code}
+    photos = resp.json()
+    if unread_by:
+        photos = [p for p in photos if unread_by not in p.get("read_by", [])]
+    return photos
 
 
 @mcp.tool()

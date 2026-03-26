@@ -469,6 +469,10 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
     if not _auth_enabled():
         return await call_next(request)
+    # localhost（127.0.0.1）からのアクセスは認証スキップ（m5_mcp等の内部ツール用）
+    client_ip = request.client.host if request.client else ""
+    if client_ip == "127.0.0.1":
+        return await call_next(request)
     # 認証チェック
     role = _get_user_role(request)
     if role is None:
