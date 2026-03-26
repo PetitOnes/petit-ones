@@ -601,12 +601,36 @@ def _save_reads(person_id: str, reads: dict):
     _reads_file(person_id).write_text(json.dumps(reads, ensure_ascii=False), encoding="utf-8")
 
 
+def _locks_file(person_id: str) -> Path:
+    return _album_dir(person_id) / ".locks.json"
+
+
+def _load_locks(person_id: str) -> set:
+    f = _locks_file(person_id)
+    if f.exists():
+        try:
+            return set(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_locks(person_id: str, locks: set):
+    _locks_file(person_id).write_text(json.dumps(list(locks), ensure_ascii=False), encoding="utf-8")
+
+
 def _prune_album(person_id: str):
-    """MAX超えたら古いものを削除"""
+    """MAX超えたら古いものを削除（ロック済みはスキップ）"""
     d = _album_dir(person_id)
+    locks = _load_locks(person_id)
     photos = sorted(d.glob("*.jpg"))
     while len(photos) > ALBUM_MAX_PHOTOS:
-        photos.pop(0).unlink(missing_ok=True)
+        # ロックされていない最古のものを削除
+        to_delete = next((p for p in photos if p.name not in locks), None)
+        if to_delete is None:
+            break  # 全部ロック済みなら削除しない
+        to_delete.unlink(missing_ok=True)
+        photos.remove(to_delete)
 
 
 def _notebook_file(request: Request) -> Path:
@@ -767,6 +791,11 @@ BASE_TOOLS = [
     "mcp__m5-mcp__wait_for_touch",
     "mcp__m5-mcp__sleep",
     "mcp__m5-mcp__wake",
+    "mcp__m5-mcp__save_to_album",
+    "mcp__m5-mcp__list_album",
+    "mcp__m5-mcp__view_album_photo",
+    "mcp__m5-mcp__delete_album_photo",
+    "mcp__m5-mcp__lock_album_photo",
     # memory
     "mcp__memory__remember",
     "mcp__memory__recall",
@@ -1386,6 +1415,7 @@ async def api_album_list(person_id: str):
         return JSONResponse({"error": "unknown person"}, status_code=400)
     d = _album_dir(person_id)
     reads = _load_reads(person_id)
+    locks = _load_locks(person_id)
     photos = []
     for f in sorted(d.glob("*.jpg"), reverse=True):
         photos.append({
@@ -1393,6 +1423,7 @@ async def api_album_list(person_id: str):
             "size": f.stat().st_size,
             "mtime": f.stat().st_mtime,
             "read_by": reads.get(f.name, []),
+            "locked": f.name in locks,
         })
     return photos
 
@@ -1450,6 +1481,25 @@ async def api_album_mark_read(person_id: str, filename: str, viewer: str):
         reads[filename] = viewers
         _save_reads(person_id, reads)
     return {"ok": True, "read_by": viewers}
+
+
+@app.post("/api/album/{person_id}/{filename}/lock")
+async def api_album_toggle_lock(person_id: str, filename: str):
+    """写真のロックをトグル（ロック中は自動削除されない）"""
+    if person_id not in ALBUM_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _album_dir(person_id) / filename
+    if not path.exists() or not filename.endswith(".jpg"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    locks = _load_locks(person_id)
+    if filename in locks:
+        locks.discard(filename)
+        locked = False
+    else:
+        locks.add(filename)
+        locked = True
+    _save_locks(person_id, locks)
+    return {"ok": True, "locked": locked}
 
 
 @app.delete("/api/album/{person_id}/{filename}")
@@ -4491,6 +4541,11 @@ ALBUM_HTML = """<!DOCTYPE html>
       border:none; color:#ff7070; border-radius:50%; width:28px; height:28px;
       cursor:pointer; font-size:0.85rem; display:none; line-height:28px; text-align:center; padding:0; }
     .photo-card:hover .del-btn, .photo-card.show-del .del-btn { display:block; }
+    .photo-card .lock-btn { position:absolute; top:4px; left:4px; background:rgba(0,0,0,0.55);
+      border:none; border-radius:50%; width:28px; height:28px;
+      cursor:pointer; font-size:0.8rem; display:none; line-height:28px; text-align:center; padding:0; }
+    .photo-card:hover .lock-btn, .photo-card.show-del .lock-btn, .photo-card.locked .lock-btn { display:block; }
+    .photo-card.locked { outline:2px solid rgba(255,220,100,0.5); }
     .photo-card { position:relative; }
     .empty { text-align:center; color:#666; padding:40px; }
     .lightbox { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85);
@@ -4603,14 +4658,18 @@ ALBUM_HTML = """<!DOCTYPE html>
         const dateStr = parts[0] ? `${parts[0].slice(0,4)}/${parts[0].slice(4,6)}/${parts[0].slice(6,8)}` : "";
         const readDots = (p.read_by||[]).map(v =>
           `<span class="read-dot">${PERSON_LABELS[v]||v}</span>`).join("");
+        const lockIcon = p.locked ? "🔒" : "🔓";
+        if (p.locked) card.classList.add("locked");
         card.innerHTML = `
           <img src="/api/album/${currentPerson}/${p.filename}" loading="lazy">
           <button class="del-btn" title="削除">✕</button>
+          <button class="lock-btn" title="${p.locked ? 'ロック解除' : 'ロック'}">${lockIcon}</button>
           <div class="caption" title="${p.filename}">${label}<br><span style="opacity:0.6;font-size:0.7rem">${dateStr}</span></div>
           ${readDots ? `<div class="read-by">${readDots}</div>` : ""}`;
         const img = card.querySelector("img");
         img.onclick = (e) => { e.stopPropagation(); openLightbox(currentPerson, p.filename, label, dateStr); };
         card.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deletePhoto(currentPerson, p.filename, card); };
+        card.querySelector(".lock-btn").onclick = (e) => { e.stopPropagation(); toggleLock(currentPerson, p.filename, card); };
         // 長押しで削除ボタン表示（モバイル対応）
         let _lpTimer = null;
         card.addEventListener("touchstart", () => {
@@ -4659,6 +4718,16 @@ ALBUM_HTML = """<!DOCTYPE html>
       const j = await res.json();
       if (j.ok) { card.remove(); }
       else { alert("削除に失敗しました"); }
+    }
+
+    async function toggleLock(personId, filename, card) {
+      const res = await fetch(`/api/album/${personId}/${filename}/lock`, {method:"POST"});
+      const j = await res.json();
+      if (!j.ok) return;
+      const btn = card.querySelector(".lock-btn");
+      btn.textContent = j.locked ? "🔒" : "🔓";
+      btn.title = j.locked ? "ロック解除" : "ロック";
+      card.classList.toggle("locked", j.locked);
     }
 
     document.getElementById("fileInput").addEventListener("change", e => {

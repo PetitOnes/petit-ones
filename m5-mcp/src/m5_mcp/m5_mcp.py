@@ -496,6 +496,23 @@ async def save_to_album(person_id: str, title: str):
 
 
 @mcp.tool()
+async def lock_album_photo(album_owner_id: str, filename: str):
+    """アルバムの写真のロックをトグルする。ロック中の写真は自動削除されない。
+    album_owner_id: 写真の持ち主 (puchiteya / puchiko / puchiru / arisan / kazahaya)
+    filename: list_albumで取得したファイル名
+    戻り値の locked が true ならロック済み、false なら解除済み。
+    """
+    import requests as _req
+    dashboard_url = f"http://{VOICE_API_HOST}:8765"
+    resp = await asyncio.to_thread(
+        lambda: _req.post(f"{dashboard_url}/api/album/{album_owner_id}/{filename}/lock", timeout=10)
+    )
+    if resp.status_code == 200:
+        return resp.json()
+    return {"ok": False, "status": resp.status_code, "body": resp.text}
+
+
+@mcp.tool()
 async def delete_album_photo(filename: str):
     """自分のアルバムから写真を削除する。
     filename: list_albumで取得したファイル名
