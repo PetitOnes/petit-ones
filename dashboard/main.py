@@ -31,6 +31,9 @@ _pending_speaker_registrations: dict[str, str] = {}
 # メール宛先: {character_id: user_id} — M5設定画面から変更可（カメラ・音声・センサー共通）
 _mail_targets: dict[str, str] = {}
 
+# 会話リレー状態
+_relay_state: dict = {"active": False, "cancel": False, "from_char": "", "to_char": "", "turns_remaining": 0, "characters": []}
+
 from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image, ImageOps
@@ -109,6 +112,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
     """PCMバイト列をWAV化→ASR→Claudeに投げる。カメラ・センサーと同じパターン。"""
     import wave, tempfile, requests as _requests
     if len(pcm_bytes) < 512:
+        print(f"[m5_watcher] {character_id}: mic_end too short ({len(pcm_bytes)} bytes), ignored")
         return
 
     # 話者登録モードのチェック
@@ -236,10 +240,12 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
                             if pcm_buffer:
                                 pcm_bytes = b"".join(pcm_buffer)
                                 pcm_buffer = []
+                                print(f"[m5_watcher] {character_id}: mic_end received ({len(pcm_bytes)} bytes)")
                                 mail_target = _mail_targets.get(character_id, "arisan")
                                 asyncio.create_task(_m5_mic_transcribe_and_respond(character_id, host, pcm_bytes, mail_target))
                             else:
                                 pcm_buffer = []
+                                print(f"[m5_watcher] {character_id}: mic_end received but pcm_buffer was empty (dropped)")
                         elif event == "set_cam_target":
                             target = data.get("target", "arisan")
                             if target:
@@ -812,6 +818,13 @@ BASE_TOOLS = [
     "mcp__m5-mcp__view_album_photo",
     "mcp__m5-mcp__delete_album_photo",
     "mcp__m5-mcp__lock_album_photo",
+    "mcp__m5-mcp__speak",
+    "mcp__m5-mcp__set_voice",
+    "mcp__m5-mcp__list_voice_memos",
+    "mcp__m5-mcp__listen_voice_memo",
+    "mcp__m5-mcp__lock_voice_memo",
+    "mcp__m5-mcp__save_tts_memo",
+    "mcp__m5-mcp__conversation_relay",
     # memory
     "mcp__memory__remember",
     "mcp__memory__recall",
@@ -1099,6 +1112,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
         f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
         f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
+        f"\n## 会話リレー\n"
+        f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
+        f"- 「ぷちこに話しかけて」「ぷちてゃと会話して」などと言われたら積極的に使う\n"
+        f"- turns_remaining は残り何回やり取りするか（3ターン会話なら最初は2を渡す）\n"
         + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
     )
 
@@ -1119,7 +1136,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
 
     if sf.exists():
         sid = sf.read_text().strip()
-        cmd = ["claude", "-p", "--model", model, "--resume", sid] + _common_flags
+        cmd = ["claude", "-p", "--model", model, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
     else:
         cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt] + _common_flags
 
@@ -1534,6 +1551,277 @@ async def api_album_delete(person_id: str, filename: str):
     return {"ok": True}
 
 
+# ===================== ボイスメモ =====================
+VOICE_MEMO_DIR = DATA_DIR / "voice_memo"
+VOICE_MEMO_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
+VOICE_MEMO_MAX = 10
+VOICE_MEMO_MAX_SEC = 30
+VOICE_MEMO_MAX_BYTES = 6 * 1024 * 1024  # 6MB ≈ 30秒の上限
+
+_AUDIO_EXTS = {".webm", ".wav", ".ogg", ".mp4", ".m4a"}
+
+
+def _voice_memo_dir(person_id: str) -> Path:
+    d = VOICE_MEMO_DIR / person_id
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _voice_memo_filename(person_id: str, title: str, ext: str = ".webm") -> str:
+    from zoneinfo import ZoneInfo
+    now = datetime.now(ZoneInfo("Asia/Tokyo"))
+    safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in title)[:40]
+    return f"{now.strftime('%Y%m%d_%H%M%S')}_{person_id}_{safe_title}{ext}"
+
+
+def _prune_voice_memo(person_id: str):
+    d = _voice_memo_dir(person_id)
+    locks = _load_voice_locks(person_id)
+    memos = sorted(
+        [f for f in d.iterdir() if f.suffix in _AUDIO_EXTS],
+        key=lambda f: f.stat().st_mtime,
+    )
+    while len(memos) > VOICE_MEMO_MAX:
+        to_delete = next((f for f in memos if f.name not in locks), None)
+        if to_delete is None:
+            break
+        to_delete.unlink(missing_ok=True)
+        memos.remove(to_delete)
+
+
+def _voice_locks_file(person_id: str) -> Path:
+    return _voice_memo_dir(person_id) / ".locks.json"
+
+
+def _load_voice_locks(person_id: str) -> set:
+    f = _voice_locks_file(person_id)
+    if f.exists():
+        try:
+            return set(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return set()
+
+
+def _save_voice_locks(person_id: str, locks: set):
+    _voice_locks_file(person_id).write_text(json.dumps(list(locks), ensure_ascii=False), encoding="utf-8")
+
+
+def _registered_file(person_id: str) -> Path:
+    return _voice_memo_dir(person_id) / ".registered.json"
+
+
+def _load_registered(person_id: str) -> set:
+    f = _registered_file(person_id)
+    if f.exists():
+        try:
+            return set(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            return set()
+    return set()
+
+
+def _save_registered(person_id: str, registered: set):
+    _registered_file(person_id).write_text(json.dumps(list(registered), ensure_ascii=False), encoding="utf-8")
+
+
+def _listens_file(person_id: str) -> Path:
+    return _voice_memo_dir(person_id) / ".listens.json"
+
+
+def _load_listens(person_id: str) -> dict:
+    f = _listens_file(person_id)
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_listens(person_id: str, listens: dict):
+    _listens_file(person_id).write_text(json.dumps(listens, ensure_ascii=False), encoding="utf-8")
+
+
+@app.get("/voice_memo", response_class=HTMLResponse)
+def voice_memo_page():
+    return HTMLResponse(VOICE_MEMO_HTML)
+
+
+@app.get("/api/voice_memo/{person_id}")
+async def api_voice_memo_list(person_id: str, unlistened_by: str = ""):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    d = _voice_memo_dir(person_id)
+    listens = _load_listens(person_id)
+    locks = _load_voice_locks(person_id)
+    registered = _load_registered(person_id)
+    memos = []
+    for f in sorted(
+        [x for x in d.iterdir() if x.suffix in _AUDIO_EXTS],
+        key=lambda x: x.stat().st_mtime,
+        reverse=True,
+    ):
+        memos.append({
+            "filename": f.name,
+            "size": f.stat().st_size,
+            "mtime": f.stat().st_mtime,
+            "listened_by": listens.get(f.name, []),
+            "locked": f.name in locks,
+            "registered": f.name in registered,
+        })
+    if unlistened_by:
+        memos = [m for m in memos if unlistened_by not in m["listened_by"]]
+    return memos
+
+
+@app.get("/api/voice_memo/{person_id}/{filename}")
+async def api_voice_memo_file(person_id: str, filename: str):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _voice_memo_dir(person_id) / filename
+    if not path.exists() or path.suffix not in _AUDIO_EXTS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    media_types = {".webm": "audio/webm", ".wav": "audio/wav", ".ogg": "audio/ogg",
+                   ".mp4": "audio/mp4", ".m4a": "audio/mp4"}
+    return Response(content=path.read_bytes(), media_type=media_types.get(path.suffix, "audio/octet-stream"))
+
+
+@app.post("/api/voice_memo/{person_id}/upload")
+async def api_voice_memo_upload(person_id: str, file: UploadFile = File(...), title: str = Form("memo")):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    data = await file.read()
+    if len(data) > VOICE_MEMO_MAX_BYTES:
+        return JSONResponse({"error": f"ファイルが大きすぎます（最大{VOICE_MEMO_MAX_SEC}秒）"}, status_code=400)
+    # 拡張子を決定
+    orig_ext = Path(file.filename or "").suffix.lower() if file.filename else ""
+    ext = orig_ext if orig_ext in _AUDIO_EXTS else ".webm"
+    fname = _voice_memo_filename(person_id, title, ext)
+    (_voice_memo_dir(person_id) / fname).write_bytes(data)
+    _prune_voice_memo(person_id)
+    return {"ok": True, "filename": fname}
+
+
+@app.patch("/api/voice_memo/{person_id}/{filename}/rename")
+async def api_voice_memo_rename(person_id: str, filename: str, request: Request):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    body = await request.json()
+    new_title = body.get("new_title", "").strip()
+    if not new_title:
+        return JSONResponse({"error": "new_title is required"}, status_code=400)
+    d = _voice_memo_dir(person_id)
+    old_path = d / filename
+    if not old_path.exists() or old_path.suffix not in _AUDIO_EXTS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # ファイル名の先頭 YYYYMMDD_HHMMSS_{person_id}_ 部分を保持してタイトルだけ変える
+    parts = filename.split("_", 3)
+    safe_title = "".join(c if c.isalnum() or c in "-_" else "_" for c in new_title)[:40]
+    new_filename = f"{parts[0]}_{parts[1]}_{parts[2]}_{safe_title}{old_path.suffix}"
+    new_path = d / new_filename
+    old_path.rename(new_path)
+    # listens / locks のキーを更新
+    for load_fn, save_fn in [(_load_listens, _save_listens), ]:
+        data = load_fn(person_id)
+        if filename in data:
+            data[new_filename] = data.pop(filename)
+            save_fn(person_id, data)
+    locks = _load_voice_locks(person_id)
+    if filename in locks:
+        locks.discard(filename)
+        locks.add(new_filename)
+        _save_voice_locks(person_id, locks)
+    reg = _load_registered(person_id)
+    if filename in reg:
+        reg.discard(filename)
+        reg.add(new_filename)
+        _save_registered(person_id, reg)
+    return {"ok": True, "filename": new_filename}
+
+
+@app.post("/api/voice_memo/{person_id}/{filename}/lock")
+async def api_voice_memo_toggle_lock(person_id: str, filename: str):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _voice_memo_dir(person_id) / filename
+    if not path.exists() or path.suffix not in _AUDIO_EXTS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    locks = _load_voice_locks(person_id)
+    if filename in locks:
+        locks.discard(filename)
+        locked = False
+    else:
+        locks.add(filename)
+        locked = True
+    _save_voice_locks(person_id, locks)
+    return {"ok": True, "locked": locked}
+
+
+@app.post("/api/voice_memo/{person_id}/{filename}/listen")
+async def api_voice_memo_mark_listen(person_id: str, filename: str, listener: str):
+    if person_id not in VOICE_MEMO_PERSONS or listener not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    listens = _load_listens(person_id)
+    listeners = listens.get(filename, [])
+    if listener not in listeners:
+        listeners.append(listener)
+        listens[filename] = listeners
+        _save_listens(person_id, listens)
+    return {"ok": True, "listened_by": listeners}
+
+
+@app.delete("/api/voice_memo/{person_id}/{filename}")
+async def api_voice_memo_delete(person_id: str, filename: str):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _voice_memo_dir(person_id) / filename
+    if not path.exists() or path.suffix not in _AUDIO_EXTS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    path.unlink()
+    listens = _load_listens(person_id)
+    if filename in listens:
+        del listens[filename]
+        _save_listens(person_id, listens)
+    reg = _load_registered(person_id)
+    if filename in reg:
+        reg.discard(filename)
+        _save_registered(person_id, reg)
+    return {"ok": True}
+
+
+@app.post("/api/voice_memo/{person_id}/{filename}/register_speaker")
+async def api_voice_memo_register_speaker(person_id: str, filename: str):
+    if person_id not in VOICE_MEMO_PERSONS:
+        return JSONResponse({"error": "unknown person"}, status_code=400)
+    path = _voice_memo_dir(person_id) / filename
+    if not path.exists() or path.suffix not in _AUDIO_EXTS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    import subprocess, tempfile as _tmpmod, requests as _req
+    with _tmpmod.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        out_path = f.name
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", out_path],
+            capture_output=True, check=True,
+        )
+        with open(out_path, "rb") as wav_f:
+            r = _req.post(
+                f"{_ASR_URL}/register_speaker",
+                data={"speaker_id": person_id},
+                files={"file": ("voice.wav", wav_f, "audio/wav")},
+                timeout=30,
+            )
+        r.raise_for_status()
+        result = r.json()
+    finally:
+        Path(out_path).unlink(missing_ok=True)
+    reg = _load_registered(person_id)
+    reg.add(filename)
+    _save_registered(person_id, reg)
+    return {"ok": True, "result": result}
+
+
 @app.get("/api/library")
 async def api_library_list(request: Request):
     lib_dir = _my_library_dir(request)
@@ -1798,6 +2086,33 @@ def api_characters_all():
     return list_characters()
 
 
+class ConversationRelayRequest(BaseModel):
+    from_char: str
+    to_char: str
+    message: str
+    turns_remaining: int = 2
+    characters: list[str] | None = None  # 3人以上のサイクル用
+
+
+@app.get("/api/relay/status")
+async def api_relay_status():
+    return _relay_state
+
+
+@app.post("/api/relay/cancel")
+async def api_cancel_conversation_relay():
+    _relay_state["cancel"] = True
+    return {"ok": True}
+
+
+@app.post("/api/relay/start")
+async def api_start_conversation_relay(req: ConversationRelayRequest):
+    if _relay_state["active"]:
+        return JSONResponse({"error": "already active"}, status_code=409)
+    asyncio.create_task(_run_conversation_relay(req.from_char, req.to_char, req.message, req.turns_remaining, req.characters))
+    return {"ok": True}
+
+
 @app.get("/api/{character_id}/status")
 async def api_status(character_id: str):
     import requests as req
@@ -2011,6 +2326,18 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     elif req.message.startswith("@sonnet "):
         chat_model = "sonnet"
         chat_message = req.message[8:]
+
+    # 他のぷちへの会話リレーをトリガーするヒントを注入
+    _relay_keywords = ["話しかけて", "話してみて", "会話して", "伝えて", "聞いてみて"]
+    _other_chars = {"puchiko": ["ぷちこ", "puchiko"], "puchiteya": ["ぷちてゃ", "puchiteya"], "puchiru": ["ぷちる", "puchiru"]}
+    _target_char = None
+    for cid, names in _other_chars.items():
+        if cid != character_id and any(n in chat_message for n in names):
+            if any(kw in chat_message for kw in _relay_keywords):
+                _target_char = cid
+                break
+    if _target_char:
+        chat_message += f"\n（必ず `speak` で声に出してから、`conversation_relay(to_character=\"{_target_char}\", message=\"...\", turns_remaining=2)` を呼んで{_target_char}に渡して）"
 
     reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
     append_chat(character_id, character_id, reply, username)
@@ -2301,6 +2628,52 @@ async def api_interact(req: InteractRequest, request: Request):
     return {"exchanges": exchanges}
 
 
+# ===================== 会話リレー =====================
+
+async def _run_conversation_relay(from_char: str, to_char: str, message: str, turns_remaining: int, characters: list[str] | None = None):
+    """ぷちたち間の会話リレーをバックグラウンドで実行する"""
+    # サイクル順序を決定
+    if characters and len(characters) >= 2:
+        seq = characters
+        try:
+            start_idx = seq.index(to_char)
+        except ValueError:
+            start_idx = 0
+    else:
+        seq = [from_char, to_char]
+        start_idx = 1
+
+    _relay_state.update({
+        "active": True, "cancel": False,
+        "from_char": from_char, "to_char": seq[start_idx % len(seq)],
+        "turns_remaining": turns_remaining, "characters": seq,
+    })
+    chars = {c["id"]: c for c in list_characters()}
+    current_from = from_char
+    current_msg = message
+    idx = start_idx
+    remaining = turns_remaining
+    try:
+        while remaining > 0 and not _relay_state["cancel"]:
+            current_to = seq[idx % len(seq)]
+            _relay_state["turns_remaining"] = remaining
+            _relay_state["from_char"] = current_from
+            _relay_state["to_char"] = current_to
+            from_name = chars.get(current_from, {}).get("name", current_from)
+            prompt = (
+                f"{from_name}が「{current_msg}」と言った。\n"
+                f"必ず `speak` で声に出して返事をして。短めに。"
+                f"（会話リレー中、残り{remaining}ターン）"
+            )
+            result = await call_claude(current_to, prompt, m5_online=True, allow_sound_override=True)
+            current_msg = result
+            current_from = current_to
+            idx = (idx + 1) % len(seq)
+            remaining -= 1
+    finally:
+        _relay_state.update({"active": False, "cancel": False, "from_char": "", "to_char": "", "turns_remaining": 0, "characters": []})
+
+
 class InteractGroupRequest(BaseModel):
     char_ids: list[str]
     turns: int = 2
@@ -2501,6 +2874,10 @@ HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body>
+  <div id="relayBanner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#c0392b;color:#fff;text-align:center;padding:10px 16px;font-size:0.95rem;align-items:center;justify-content:center;gap:12px;">
+    <span id="relayBannerText">会話リレー中...</span>
+    <button onclick="cancelRelay()" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:4px 14px;cursor:pointer;font-weight:bold;">🛑 止める</button>
+  </div>
   <div class="header">
     <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
     <div style="display:flex;gap:4px;">
@@ -2546,6 +2923,8 @@ HTML = """<!DOCTYPE html>
           <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
           <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
           <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
+          <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
+          <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
         </div>
       </section>
 
@@ -2762,6 +3141,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
       tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
       tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
+      tabs.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -2769,6 +3149,8 @@ HTML = """<!DOCTYPE html>
         document.getElementById("pageTitle").textContent = cur.name||cur.id;
         document.getElementById("chatTitle").textContent = `${cur.name||cur.id}と話す`;
         document.getElementById("interactBtn").style.display = "none";
+        document.getElementById("relayBtn").style.display = "none";
+        document.getElementById("relayTurns").style.display = "none";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "";
         document.getElementById("selectToggles").style.display = "none";
@@ -2777,6 +3159,8 @@ HTML = """<!DOCTYPE html>
         document.getElementById("pageTitle").textContent = "選んで話す";
         document.getElementById("chatTitle").textContent = "誰に話しかける？";
         document.getElementById("interactBtn").style.display = "";
+        document.getElementById("relayBtn").style.display = "";
+        document.getElementById("relayTurns").style.display = "";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "none";
         renderSelectToggles();
@@ -2785,6 +3169,8 @@ HTML = """<!DOCTYPE html>
         document.getElementById("pageTitle").textContent = "みんな";
         document.getElementById("chatTitle").textContent = "みんなで話す";
         document.getElementById("interactBtn").style.display = "none";
+        document.getElementById("relayBtn").style.display = "none";
+        document.getElementById("relayTurns").style.display = "none";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "none";
         document.getElementById("selectToggles").style.display = "none";
@@ -2990,13 +3376,16 @@ HTML = """<!DOCTYPE html>
         characters.forEach(c => selectedCharIds.add(c.id));
       }
       el.style.display = "block";
+      const orderedIds = [...selectedCharIds];
       const pills = characters.map(c => {
         const on = selectedCharIds.has(c.id);
         const bg = on ? (c.color || "#cab8d9") : "#555";
+        const num = on ? orderedIds.indexOf(c.id) + 1 : "";
+        const label = on ? `<sup style="font-size:0.65rem;vertical-align:super;margin-right:1px">${num}</sup>${c.name||c.id}` : c.name||c.id;
         return `<span class="select-pill${on?"":" off"}" style="background:${bg};color:#fff"
-          onclick="toggleSelectChar('${c.id}')">${c.name||c.id}</span>`;
+          onclick="toggleSelectChar('${c.id}')">${label}</span>`;
       }).join("");
-      el.innerHTML = `<div>${pills}</div><div style="font-size:0.7rem;color:#bbb;margin-top:4px;pointer-events:none;user-select:none">タップで選択 / 解除</div>`;
+      el.innerHTML = `<div>${pills}</div><div style="font-size:0.7rem;color:#bbb;margin-top:4px;pointer-events:none;user-select:none">タップで選択 / 解除（番号 = 声リレーの順番）</div>`;
     }
 
     function toggleSelectChar(id) {
@@ -3006,6 +3395,31 @@ HTML = """<!DOCTYPE html>
         selectedCharIds.add(id);
       }
       renderSelectToggles();
+    }
+
+    async function startVoiceRelay() {
+      const charIds = [...selectedCharIds];
+      if (charIds.length < 2) { alert("2人以上選んでください"); return; }
+      const msg = document.getElementById("input").value.trim() || "今日どんな気分？";
+      const turns = parseInt(document.getElementById("relayTurns").value) || 3;
+      const btn = document.getElementById("relayBtn");
+      btn.disabled = true; btn.textContent = "起動中…";
+      try {
+        const res = await fetch("/api/relay/start", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({from_char: "arisan", to_char: charIds[0], message: msg, turns_remaining: turns, characters: charIds})
+        });
+        if (res.ok) {
+          const NAMES = {puchiteya:"ぷちてゃ", puchiko:"ぷちこ", puchiru:"ぷちる"};
+          const seq = charIds.map(id => NAMES[id] || id).join(" → ");
+          addMsg(`🎙 声リレー開始: ${seq}（${turns}ターン）`, "thinking");
+          document.getElementById("input").value = "";
+        } else {
+          const e = await res.json();
+          addMsg(`エラー: ${e.error || "不明"}`, "thinking");
+        }
+      } catch(e) { addMsg("エラーが発生しました", "thinking"); }
+      finally { btn.disabled = false; btn.textContent = "🎙 声リレー"; }
     }
 
     async function startInteract() {
@@ -3465,6 +3879,32 @@ HTML = """<!DOCTYPE html>
     loadCharacters();
     update();
     setInterval(update, 30000);
+
+    // 会話リレーバナー
+    async function pollRelay() {
+      try {
+        const s = await fetch("/api/relay/status").then(r=>r.json());
+        const banner = document.getElementById("relayBanner");
+        if (s.active) {
+          const NAMES = {puchiteya:"ぷちてゃ", puchiko:"ぷちこ", puchiru:"ぷちる"};
+          const from = NAMES[s.from_char] || s.from_char;
+          const to   = NAMES[s.to_char]   || s.to_char;
+          document.getElementById("relayBannerText").textContent =
+            `会話リレー中: ${from} → ${to}（残り${s.turns_remaining}ターン）`;
+          banner.style.display = "flex";
+          document.body.style.paddingTop = "44px";
+        } else {
+          banner.style.display = "none";
+          document.body.style.paddingTop = "";
+        }
+      } catch(e) {}
+    }
+    async function cancelRelay() {
+      await fetch("/api/relay/cancel", {method:"POST"});
+      pollRelay();
+    }
+    setInterval(pollRelay, 3000);
+    pollRelay();
   </script>
 </body>
 </html>
@@ -4786,6 +5226,322 @@ ALBUM_HTML = """<!DOCTYPE html>
       loadPhotos();
     }
     init();
+  </script>
+</body>
+</html>
+"""
+
+
+VOICE_MEMO_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🎤 ボイスメモ</title>
+  <style>
+    body { margin:0; font-family:sans-serif; background:#1a1a2e; color:#eee; }
+    h1 { text-align:center; padding:20px 0 8px; font-size:1.4rem; }
+    .tabs { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; padding:0 12px 16px; }
+    .tab-btn { padding:6px 16px; border-radius:20px; border:2px solid #555; background:transparent;
+      color:#ccc; cursor:pointer; font-size:0.9rem; transition:all 0.2s; }
+    .tab-btn.active { background:#667eea; border-color:#667eea; color:#fff; }
+    .rec-area { text-align:center; padding:16px; }
+    .rec-btn { width:72px; height:72px; border-radius:50%; border:none; font-size:2rem;
+      cursor:pointer; background:#444; transition:all 0.2s; }
+    .rec-btn.recording { background:#e74c3c; animation:pulse 1s infinite; }
+    @keyframes pulse { 0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,0.5)} 50%{box-shadow:0 0 0 12px rgba(231,76,60,0)} }
+    .rec-timer { font-size:1.3rem; margin:8px 0; color:#aaa; font-variant-numeric:tabular-nums; }
+    .rec-status { font-size:0.85rem; color:#888; margin-bottom:8px; }
+    .upload-area { text-align:center; padding:8px; }
+    .upload-area label { display:inline-block; padding:6px 16px; border-radius:8px;
+      background:#333; cursor:pointer; font-size:0.85rem; }
+    .upload-area input[type=file] { display:none; }
+    #titleInput { padding:6px 12px; border-radius:8px; border:1px solid #555;
+      background:#2a2a3e; color:#eee; margin:8px 4px; width:160px; }
+    .list { padding:12px 16px; display:flex; flex-direction:column; gap:10px; }
+    .memo-card { background:#2a2a3e; border-radius:10px; padding:10px 14px;
+      display:flex; align-items:center; gap:10px; }
+    .memo-card.locked { outline:2px solid rgba(255,220,100,0.5); }
+    .lock-btn { background:none; border:none; font-size:1rem; cursor:pointer; padding:2px 6px; flex-shrink:0; }
+    .edit-btn { background:none; border:none; font-size:0.9rem; cursor:pointer; padding:2px 4px; color:#aaa; flex-shrink:0; }
+    .rename-form { display:none; gap:4px; align-items:center; margin-top:4px; }
+    .rename-form input { background:#1a1a2e; border:1px solid #555; color:#eee; border-radius:6px;
+      padding:3px 8px; font-size:0.85rem; width:120px; }
+    .rename-form button { padding:3px 8px; border-radius:6px; border:none; cursor:pointer; font-size:0.8rem; }
+    .rename-save { background:#667eea; color:#fff; }
+    .rename-cancel { background:#444; color:#ccc; }
+    .memo-info { flex:1; min-width:0; }
+    .memo-label { font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .memo-date { font-size:0.75rem; color:#888; }
+    audio { height:34px; flex-shrink:0; max-width:200px; }
+    .del-btn { background:none; border:none; color:#ff7070; font-size:1.1rem;
+      cursor:pointer; padding:4px 8px; flex-shrink:0; }
+    .reg-btn { font-size:0.7rem; padding:3px 7px; border-radius:6px; border:none;
+      cursor:pointer; background:#3a5a8a; color:#cce; white-space:nowrap; flex-shrink:0; }
+    .reg-btn:disabled { background:#333; color:#666; cursor:default; }
+    .empty { text-align:center; color:#666; padding:40px; }
+    .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
+      text-decoration:none; font-size:0.9rem; }
+  </style>
+</head>
+<body>
+  <h1>🎤 ボイスメモ</h1>
+  <a href="/" class="back-link">← ダッシュボードに戻る</a>
+
+  <div class="tabs" id="personTabs"></div>
+
+  <div class="rec-area" id="recArea">
+    <div class="rec-status" id="recStatus">タップして録音開始（最大30秒）</div>
+    <button class="rec-btn" id="recBtn" onclick="toggleRecord()">🎙️</button>
+    <div class="rec-timer" id="recTimer">0:00 / 0:30</div>
+    <div style="margin-top:10px">
+      <input type="text" id="titleInput" placeholder="メモ名（例: おはよう）">
+    </div>
+  </div>
+
+  <div class="upload-area">
+    <label>📁 音声ファイルを選ぶ
+      <input type="file" id="fileInput" accept="audio/*" onchange="doUpload()">
+    </label>
+  </div>
+
+  <div class="list" id="memoList"></div>
+  <div class="empty" id="emptyMsg" style="display:none">ボイスメモがまだありません</div>
+
+  <script>
+    const PERSONS = [
+      {id:"puchiteya", label:"ぷちてゃ", human:false},
+      {id:"puchiko",   label:"ぷちこ",   human:false},
+      {id:"puchiru",   label:"ぷちる",   human:false},
+      {id:"arisan",    label:"ありさん", human:true},
+      {id:"kazahaya",  label:"かぜお",   human:true},
+    ];
+    let currentPerson = PERSONS[0].id;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let recTimerInterval = null;
+    let recSeconds = 0;
+    const MAX_SEC = 30;
+
+    function buildTabs() {
+      const c = document.getElementById("personTabs");
+      PERSONS.forEach(p => {
+        const b = document.createElement("button");
+        b.className = "tab-btn" + (p.id === currentPerson ? " active" : "");
+        b.textContent = p.label;
+        b.onclick = () => switchPerson(p.id);
+        c.appendChild(b);
+      });
+    }
+
+    function switchPerson(id) {
+      currentPerson = id;
+      document.querySelectorAll(".tab-btn").forEach((b,i) => {
+        b.classList.toggle("active", PERSONS[i].id === id);
+      });
+      const isHuman = PERSONS.find(p=>p.id===id)?.human;
+      document.getElementById("recArea").style.display = isHuman ? "" : "none";
+      document.querySelector(".upload-area").style.display = isHuman ? "" : "none";
+      loadMemos();
+    }
+
+    async function toggleRecord() {
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        stopRecord();
+      } else {
+        await startRecord();
+      }
+    }
+
+    async function startRecord() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        document.getElementById("recStatus").textContent = "⚠️ マイク録音はHTTPS環境でのみ使えます。ファイルアップロードをご利用ください。";
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+        mediaRecorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          saveRecording();
+        };
+        mediaRecorder.start(100);
+        recSeconds = 0;
+        document.getElementById("recBtn").classList.add("recording");
+        document.getElementById("recBtn").textContent = "⏹️";
+        document.getElementById("recStatus").textContent = "録音中…";
+        recTimerInterval = setInterval(() => {
+          recSeconds++;
+          const s = recSeconds % 60;
+          const m = Math.floor(recSeconds / 60);
+          const rem = MAX_SEC - recSeconds;
+          const rs = rem % 60;
+          const rm = Math.floor(rem / 60);
+          document.getElementById("recTimer").textContent =
+            `${m}:${String(s).padStart(2,"0")} / 0:${String(MAX_SEC).padStart(2,"0")}`;
+          if (recSeconds >= MAX_SEC) stopRecord();
+        }, 1000);
+      } catch(e) {
+        document.getElementById("recStatus").textContent = "マイクにアクセスできません: " + e.message;
+      }
+    }
+
+    function stopRecord() {
+      clearInterval(recTimerInterval);
+      if (mediaRecorder && mediaRecorder.state === "recording") mediaRecorder.stop();
+      document.getElementById("recBtn").classList.remove("recording");
+      document.getElementById("recBtn").textContent = "🎙️";
+      document.getElementById("recStatus").textContent = "保存中…";
+      document.getElementById("recTimer").textContent = "0:00 / 0:30";
+    }
+
+    async function saveRecording() {
+      const blob = new Blob(recordedChunks, {type: "audio/webm"});
+      const title = document.getElementById("titleInput").value || "memo";
+      const fd = new FormData();
+      fd.append("file", blob, "recording.webm");
+      fd.append("title", title);
+      const res = await fetch(`/api/voice_memo/${currentPerson}/upload`, {method:"POST", body:fd});
+      const j = await res.json();
+      document.getElementById("recStatus").textContent = j.ok ? "保存しました！" : "エラー: " + JSON.stringify(j);
+      if (j.ok) { document.getElementById("titleInput").value = ""; loadMemos(); }
+    }
+
+    async function doUpload() {
+      const file = document.getElementById("fileInput").files[0];
+      if (!file) return;
+      const title = document.getElementById("titleInput").value || file.name.replace(/[.][^.]+$/, "");
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("title", title);
+      const res = await fetch(`/api/voice_memo/${currentPerson}/upload`, {method:"POST", body:fd});
+      const j = await res.json();
+      if (j.ok) { document.getElementById("titleInput").value = ""; loadMemos(); }
+      else { alert("エラー: " + JSON.stringify(j)); }
+      document.getElementById("fileInput").value = "";
+    }
+
+    async function loadMemos() {
+      const list = document.getElementById("memoList");
+      const empty = document.getElementById("emptyMsg");
+      list.innerHTML = "";
+      const res = await fetch(`/api/voice_memo/${currentPerson}`);
+      const memos = await res.json();
+      if (!memos.length) { empty.style.display="block"; return; }
+      empty.style.display="none";
+      memos.forEach(m => {
+        const parts = m.filename.split("_");
+        const rawDate = parts[0] || "";
+        const dateStr = rawDate.length === 8
+          ? `${rawDate.slice(0,4)}/${rawDate.slice(4,6)}/${rawDate.slice(6,8)}`
+          : "";
+        const rawTime = parts[1] || "";
+        const timeStr = rawTime.length === 6 ? rawTime.slice(0,2)+":"+rawTime.slice(2,4)+":"+rawTime.slice(4,6) : rawTime;
+        const label = parts.slice(3).join("_").replace(/[.][^.]+$/, "") || m.filename;
+        const card = document.createElement("div");
+        card.className = "memo-card";
+        const lockIcon = m.locked ? "🔒" : "🔓";
+        if (m.locked) card.classList.add("locked");
+        card.innerHTML = `
+          <div class="memo-info" style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:4px">
+              <div class="memo-label" title="${m.filename}">${label}</div>
+              <button class="edit-btn" title="名前を変更">✏️</button>
+            </div>
+            <div class="rename-form">
+              <input class="rename-input" type="text" value="${label}" placeholder="新しい名前">
+              <button class="rename-save">保存</button>
+              <button class="rename-cancel">キャンセル</button>
+            </div>
+            <div class="memo-date">${dateStr} ${timeStr}</div>
+          </div>
+          <audio controls src="/api/voice_memo/${currentPerson}/${m.filename}"></audio>
+          <button class="reg-btn" ${m.registered ? "disabled" : ""} title="話者認識に登録">${m.registered ? "登録済み" : "話者認識に登録"}</button>
+          <button class="lock-btn" title="${m.locked ? 'ロック解除' : 'ロック'}">${lockIcon}</button>
+          <button class="del-btn" title="削除">🗑️</button>`;
+        let currentFilename = m.filename;
+        card.querySelector(".del-btn").onclick = () => deleteMemo(currentFilename, card);
+        card.querySelector(".lock-btn").onclick = () => toggleLock(currentFilename, card);
+        card.querySelector(".reg-btn").onclick = () => registerSpeaker(currentFilename, card);
+        card.querySelector(".edit-btn").onclick = () => {
+          card.querySelector(".rename-form").style.display = "flex";
+        };
+        card.querySelector(".rename-cancel").onclick = () => {
+          card.querySelector(".rename-form").style.display = "none";
+        };
+        card.querySelector(".rename-save").onclick = async () => {
+          const newTitle = card.querySelector(".rename-input").value.trim();
+          if (!newTitle) return;
+          const res = await fetch(`/api/voice_memo/${currentPerson}/${currentFilename}/rename`, {
+            method:"PATCH", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({new_title: newTitle}),
+          });
+          const j = await res.json();
+          if (j.ok) {
+            currentFilename = j.filename;
+            card.querySelector(".memo-label").textContent = newTitle;
+            card.querySelector("audio").src = `/api/voice_memo/${currentPerson}/${j.filename}`;
+            card.querySelector(".rename-form").style.display = "none";
+          } else { alert("失敗: " + JSON.stringify(j)); }
+        };
+        list.appendChild(card);
+      });
+    }
+
+    async function toggleLock(filename, card) {
+      const res = await fetch(`/api/voice_memo/${currentPerson}/${filename}/lock`, {method:"POST"});
+      const j = await res.json();
+      if (!j.ok) return;
+      const btn = card.querySelector(".lock-btn");
+      btn.textContent = j.locked ? "🔒" : "🔓";
+      btn.title = j.locked ? "ロック解除" : "ロック";
+      card.classList.toggle("locked", j.locked);
+    }
+
+    async function registerSpeaker(filename, card) {
+      const btn = card.querySelector(".reg-btn");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      btn.textContent = "登録中…";
+      try {
+        const res = await fetch(`/api/voice_memo/${currentPerson}/${filename}/register_speaker`, {method:"POST"});
+        const j = await res.json();
+        if (j.ok) {
+          btn.textContent = "登録済み";
+        } else {
+          btn.textContent = "話者認識に登録";
+          btn.disabled = false;
+          alert("登録失敗: " + JSON.stringify(j));
+        }
+      } catch(e) {
+        btn.textContent = "話者認識に登録";
+        btn.disabled = false;
+        alert("エラー: " + e.message);
+      }
+    }
+
+    async function deleteMemo(filename, card) {
+      if (!confirm(`「${filename}」を削除しますか？`)) return;
+      const res = await fetch(`/api/voice_memo/${currentPerson}/${filename}`, {method:"DELETE"});
+      const j = await res.json();
+      if (j.ok) card.remove();
+      else alert("削除に失敗しました");
+    }
+
+    buildTabs();
+    // 初期表示: ぷちタブは録音UI非表示
+    const initHuman = PERSONS.find(p=>p.id===currentPerson)?.human;
+    document.getElementById("recArea").style.display = initHuman ? "" : "none";
+    document.querySelector(".upload-area").style.display = initHuman ? "" : "none";
+    // HTTPS以外では録音ボタンを無効化
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      document.getElementById("recBtn").disabled = true;
+      document.getElementById("recBtn").style.opacity = "0.4";
+      document.getElementById("recStatus").textContent = "⚠️ マイク録音はHTTPS環境でのみ使えます。ファイルアップロードをご利用ください。";
+    }
+    loadMemos();
   </script>
 </body>
 </html>

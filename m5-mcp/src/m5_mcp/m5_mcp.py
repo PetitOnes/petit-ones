@@ -14,6 +14,7 @@ mcp = FastMCP("m5")
 
 import os
 import tempfile
+from pathlib import Path
 
 # Support comma-separated hosts for fallback (e.g. "puchiteya.local,10.42.138.101")
 _m5_hosts: list[str] = []
@@ -315,65 +316,25 @@ async def batch_commands(commands: list[str]):
 # ===================== ツール：ファイルアップロード =====================
 
 def _convert_wav_mono_16k(file_path: str) -> io.BytesIO:
-    """WAVをモノラル16bit 16000Hzに変換してBytesIOで返す。既に条件を満たしていればそのまま。"""
-    with wave.open(file_path, "rb") as src:
-        n_channels = src.getnchannels()
-        sampwidth = src.getsampwidth()
-        framerate = src.getframerate()
-        n_frames = src.getnframes()
-        raw = src.readframes(n_frames)
-
-    # 16bit PCMに統一
-    if sampwidth == 1:
-        # 8bit unsigned → 16bit signed
-        samples = [(b - 128) * 256 for b in raw]
-    elif sampwidth == 2:
-        samples = list(struct.unpack(f"<{len(raw)//2}h", raw))
-    elif sampwidth == 3:
-        samples = []
-        for i in range(0, len(raw), 3):
-            val = int.from_bytes(raw[i:i+3], "little", signed=True)
-            samples.append(val >> 8)
-    elif sampwidth == 4:
-        raw32 = struct.unpack(f"<{len(raw)//4}i", raw)
-        samples = [s >> 16 for s in raw32]
-    else:
-        samples = list(struct.unpack(f"<{len(raw)//2}h", raw))
-
-    # ステレオ→モノラル（チャンネル平均）
-    if n_channels > 1:
-        mono = []
-        for i in range(0, len(samples), n_channels):
-            avg = sum(samples[i:i+n_channels]) // n_channels
-            mono.append(avg)
-        samples = mono
-
-    # リサンプル（簡易線形補間）
-    target_rate = 16000
-    if framerate != target_rate:
-        ratio = framerate / target_rate
-        new_len = int(len(samples) / ratio)
-        resampled = []
-        for i in range(new_len):
-            src_pos = i * ratio
-            idx = int(src_pos)
-            frac = src_pos - idx
-            if idx + 1 < len(samples):
-                val = int(samples[idx] * (1 - frac) + samples[idx + 1] * frac)
-            else:
-                val = samples[idx]
-            resampled.append(max(-32768, min(32767, val)))
-        samples = resampled
-
-    # WAVとして書き出し
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as out:
-        out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(target_rate)
-        out.writeframes(struct.pack(f"<{len(samples)}h", *samples))
-    buf.seek(0)
-    return buf
+    """任意の音声ファイルをモノラル16bit 16000Hz WAVに変換してBytesIOで返す。ffmpeg使用。"""
+    import subprocess
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        out_path = f.name
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", file_path,
+                "-ac", "1", "-ar", "16000", "-sample_fmt", "s16",
+                out_path,
+            ],
+            capture_output=True,
+            check=True,
+        )
+        buf = io.BytesIO(Path(out_path).read_bytes())
+        buf.seek(0)
+        return buf
+    finally:
+        Path(out_path).unlink(missing_ok=True)
 
 
 @mcp.tool()
@@ -580,10 +541,71 @@ async def view_album_photo(album_owner_id: str, filename: str, viewer_id: str):
 
 # ===================== ツール：音声合成・音声認識 =====================
 
+_VOICE_SETTINGS_DEFAULT = 6  # WhiteCUL / ノーマル
+
+def _voice_settings_path() -> str:
+    char_id = os.environ.get("CHARACTER_ID", "")
+    data_dir = os.environ.get("PETIT_DATA_DIR", os.path.join(os.path.expanduser("~"), "petit_claude"))
+    return os.path.join(data_dir, "characters", char_id, "voice_settings.json")
+
+def _load_voice_settings() -> dict:
+    try:
+        with open(_voice_settings_path()) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def _save_voice_settings(settings: dict):
+    path = _voice_settings_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(settings, f, ensure_ascii=False, indent=2)
+
+
+@mcp.tool()
+async def set_voice(
+    voicevox_speaker: Optional[int] = None,
+    speed_scale: Optional[float] = None,
+    pitch_scale: Optional[float] = None,
+    intonation_scale: Optional[float] = None,
+    volume_scale: Optional[float] = None,
+    pre_phoneme_length: Optional[float] = None,
+    post_phoneme_length: Optional[float] = None,
+):
+    """自分の声設定を保存する。以降 speak() でこの設定がデフォルトで使われる。
+    指定したパラメータだけ更新される（省略したものは変わらない）。
+
+    voicevox_speaker: おすすめ（中性寄り）
+      6=四国めたんツンツン, 23=WhiteCULノーマル, 47=ナースロボＴノーマル, 29=No.7ノーマル
+    speed_scale: 話速（0.5〜2.0）
+    pitch_scale: 音高（-0.15〜0.15）
+    intonation_scale: 抑揚（0〜2.0）
+    volume_scale: 音量（0〜2.0）
+    pre_phoneme_length: 開始前の無音（秒）
+    post_phoneme_length: 終了後の無音（秒）
+    """
+    settings = _load_voice_settings()
+    updates = {
+        "voicevox_speaker": voicevox_speaker,
+        "speed_scale": speed_scale,
+        "pitch_scale": pitch_scale,
+        "intonation_scale": intonation_scale,
+        "volume_scale": volume_scale,
+        "pre_phoneme_length": pre_phoneme_length,
+        "post_phoneme_length": post_phoneme_length,
+    }
+    for k, v in updates.items():
+        if v is not None:
+            settings[k] = v
+    await asyncio.to_thread(_save_voice_settings, settings)
+    saved = {k: v for k, v in updates.items() if v is not None}
+    return f"声を設定しました: {saved}"
+
+
 @mcp.tool()
 async def speak(
     text: str,
-    engine: str = "piper",
+    engine: str = "voicevox",
     # piper
     speaker: int = 0,
     length_scale: float = 1.0,
@@ -594,58 +616,80 @@ async def speak(
     voice: str = "jf_alpha",
     speed: float = 1.0,
     # voicevox
-    voicevox_speaker: int = 3,
-    speed_scale: float = 1.0,
+    voicevox_speaker: Optional[int] = None,
+    speed_scale: Optional[float] = None,
+    pitch_scale: Optional[float] = None,
+    intonation_scale: Optional[float] = None,
+    volume_scale: Optional[float] = None,
+    pre_phoneme_length: Optional[float] = None,
+    post_phoneme_length: Optional[float] = None,
+    save_as_memo: bool = False,
+    memo_title: str = "",
 ):
     """テキストをTTSで音声合成してM5で再生する。
 
-    engine: "piper"（デフォルト）/ "kokoro" / "voicevox"
+    engine: "voicevox"（デフォルト）/ "kokoro" / "piper"
 
-    [piper]
-      speaker: 話者ID（デフォルト0）
-      length_scale: 速さ（小さいほど速い）
-      noise_scale / noise_w: 声のバリエーション
-      sentence_silence: 文間の無音(秒)
+    [voicevox]
+      voicevox_speaker: 話者番号（省略すると set_voice で設定した声、未設定なら 6）
+        6=四国めたんツンツン, 23=WhiteCULノーマル, 47=ナースロボＴノーマル, 29=No.7ノーマル
+      speed_scale: 話速（0.5〜2.0）
+      pitch_scale: 音高（-0.15〜0.15）
+      intonation_scale: 抑揚（0〜2.0）
+      volume_scale: 音量（0〜2.0）
+      pre_phoneme_length / post_phoneme_length: 前後の無音（秒）
+      ※省略したパラメータは set_voice で保存した値を使う
+    save_as_memo: Trueにするとダッシュボードのボイスメモにも保存される
+    memo_title: ボイスメモのタイトル（省略するとテキストの先頭20文字）
 
     [kokoro]
       voice: jf_alpha / jf_gongitsune / jf_nezumi / jf_tebukuro / jm_kumo
       speed: 速さ倍率
 
-    [voicevox]
-      voicevox_speaker: 話者番号
-        ずんだもんノーマル=3, 四国めたんノーマル=2, 春日部つむぎ=8,
-        白上虎太郎=12, 青山龍星=13, 冥鳴ひまり=14
-      speed_scale: 速さ倍率
+    [piper]
+      speaker: 話者ID（デフォルト0）
+      length_scale: 速さ（小さいほど速い）
     """
+    # 保存済み設定を読み込み、未指定パラメータのデフォルトに使う
+    saved = _load_voice_settings()
+    resolved_speaker = voicevox_speaker if voicevox_speaker is not None else saved.get("voicevox_speaker", _VOICE_SETTINGS_DEFAULT)
+    resolved_speed = speed_scale if speed_scale is not None else saved.get("speed_scale", 1.0)
+
+    wav_bytes_holder: list[bytes] = []
+
     def _tts_and_upload():
         if engine == "kokoro":
             payload = {"text": text, "engine": "kokoro", "voice": voice, "speed": speed, "lang": "ja"}
         elif engine == "voicevox":
-            payload = {"text": text, "engine": "voicevox", "voicevox_speaker": voicevox_speaker, "speed_scale": speed_scale}
+            payload = {"text": text, "engine": "voicevox", "voicevox_speaker": resolved_speaker, "speed_scale": resolved_speed}
+            for key, val, saved_key in [
+                ("pitch_scale", pitch_scale, "pitch_scale"),
+                ("intonation_scale", intonation_scale, "intonation_scale"),
+                ("volume_scale", volume_scale, "volume_scale"),
+                ("pre_phoneme_length", pre_phoneme_length, "pre_phoneme_length"),
+                ("post_phoneme_length", post_phoneme_length, "post_phoneme_length"),
+            ]:
+                v = val if val is not None else saved.get(saved_key)
+                if v is not None:
+                    payload[key] = v
         else:  # piper
             payload = {
-                "text": text,
-                "engine": "piper",
-                "speaker": speaker,
-                "length_scale": length_scale,
-                "noise_scale": noise_scale,
-                "noise_w": noise_w,
-                "sentence_silence": sentence_silence,
+                "text": text, "engine": "piper", "speaker": speaker,
+                "length_scale": length_scale, "noise_scale": noise_scale,
+                "noise_w": noise_w, "sentence_silence": sentence_silence,
             }
         r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
         r.raise_for_status()
         wav_bytes = r.content
-
-        # 一時ファイルに保存してM5にアップロード
+        if save_as_memo:
+            wav_bytes_holder.append(wav_bytes)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
             f.write(wav_bytes)
             tmp_path = f.name
-
         try:
             mono_buf = _convert_wav_mono_16k(tmp_path)
             resp = _http_post(
-                "/upload_wav",
-                timeout=30,
+                "/upload_wav", timeout=30,
                 files={"file": ("tts_speak.wav", mono_buf, "audio/wav")},
             )
             resp.raise_for_status()
@@ -654,7 +698,170 @@ async def speak(
 
     await asyncio.to_thread(_tts_and_upload)
     await asyncio.to_thread(lambda: _http_get("/se_play?name=tts_speak.wav", timeout=10))
+
+    if save_as_memo and wav_bytes_holder:
+        char_id = os.environ.get("CHARACTER_ID", "unknown")
+        title = memo_title or text[:20]
+        def _upload_memo():
+            requests.post(
+                f"{_DASHBOARD_URL}/api/voice_memo/{char_id}/upload",
+                data={"title": title},
+                files={"file": ("memo.wav", wav_bytes_holder[0], "audio/wav")},
+                timeout=15,
+            )
+        await asyncio.to_thread(_upload_memo)
+
     return f"spoke: {text}"
+
+
+@mcp.tool()
+async def list_voice_memos(person_id: str, unlistened_by: str = ""):
+    """ボイスメモの一覧を取得する。
+
+    person_id: メモの持ち主 (puchiteya / puchiko / puchiru / arisan / kazahaya)
+    unlistened_by: 指定するとそのキャラがまだ聴いていないメモだけ返す
+    """
+    def _fetch():
+        dashboard_url = _DASHBOARD_URL
+        params = {}
+        if unlistened_by:
+            params["unlistened_by"] = unlistened_by
+        r = requests.get(f"{dashboard_url}/api/voice_memo/{person_id}", params=params, timeout=10)
+        r.raise_for_status()
+        return r.json()
+    result = await asyncio.to_thread(_fetch)
+    return result
+
+
+@mcp.tool()
+async def listen_voice_memo(
+    owner_id: str,
+    filename: str,
+    play_on_m5: bool = False,
+    transcribe: bool = False,
+):
+    """ボイスメモを取得してM5で再生し、既聴として記録する。
+
+    owner_id: メモの持ち主 (puchiteya / puchiko / puchiru / arisan / kazahaya)
+    filename: list_voice_memos で取得したファイル名
+    play_on_m5: TrueならM5のスピーカーで再生する（デフォルトTrue）
+    transcribe: Trueなら音声を文字起こしして返す
+    """
+    char_id = os.environ.get("CHARACTER_ID", "unknown")
+
+    def _fetch_and_play():
+        dashboard_url = _DASHBOARD_URL
+        # 音声取得
+        r = requests.get(f"{dashboard_url}/api/voice_memo/{owner_id}/{filename}", timeout=15)
+        r.raise_for_status()
+        audio_bytes = r.content
+        ext = Path(filename).suffix.lower()
+
+        transcript = None
+        if transcribe:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(audio_bytes)
+                tmp_path = f.name
+            try:
+                wav_buf = _convert_wav_mono_16k(tmp_path)
+                asr_r = requests.post(
+                    f"{_ASR_URL}/transcribe",
+                    files={"file": (Path(filename).stem + ".wav", wav_buf, "audio/wav")},
+                    timeout=60,
+                )
+                asr_r.raise_for_status()
+                transcript = asr_r.json().get("text", "")
+            except Exception as e:
+                transcript = f"(文字起こし失敗: {e})"
+            finally:
+                Path(tmp_path).unlink(missing_ok=True)
+
+        if play_on_m5:
+            # WAV変換してM5にアップロード・再生
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as f:
+                f.write(audio_bytes)
+                tmp_path = f.name
+            try:
+                mono_buf = _convert_wav_mono_16k(tmp_path)
+                resp = _http_post(
+                    "/upload_wav", timeout=30,
+                    files={"file": ("voice_memo.wav", mono_buf, "audio/wav")},
+                )
+                resp.raise_for_status()
+                _http_get("/se_play?name=voice_memo.wav", timeout=10)
+            finally:
+                os.unlink(tmp_path)
+
+        # 既聴記録
+        requests.post(
+            f"{dashboard_url}/api/voice_memo/{owner_id}/{filename}/listen",
+            params={"listener": char_id},
+            timeout=10,
+        )
+        return transcript
+
+    transcript = await asyncio.to_thread(_fetch_and_play)
+    result = f"聴いた: {owner_id}/{filename}"
+    if transcript:
+        result += f"\n文字起こし: {transcript}"
+    return result
+
+
+@mcp.tool()
+async def save_tts_memo(text: str, title: str = ""):
+    """テキストをTTS合成してボイスメモに保存する（M5では再生しない）。
+
+    text: 保存したいテキスト
+    title: メモのタイトル（省略するとテキストの先頭20文字）
+    声の設定は set_voice で保存したものが使われる。
+    """
+    char_id = os.environ.get("CHARACTER_ID", "unknown")
+    saved = _load_voice_settings()
+    resolved_speaker = saved.get("voicevox_speaker", _VOICE_SETTINGS_DEFAULT)
+    resolved_speed = saved.get("speed_scale", 1.0)
+
+    def _generate_and_upload():
+        payload = {"text": text, "engine": "voicevox", "voicevox_speaker": resolved_speaker, "speed_scale": resolved_speed}
+        for key, saved_key in [
+            ("pitch_scale", "pitch_scale"), ("intonation_scale", "intonation_scale"),
+            ("volume_scale", "volume_scale"), ("pre_phoneme_length", "pre_phoneme_length"),
+            ("post_phoneme_length", "post_phoneme_length"),
+        ]:
+            v = saved.get(saved_key)
+            if v is not None:
+                payload[key] = v
+        r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
+        r.raise_for_status()
+        memo_title = title or text[:20]
+        requests.post(
+            f"{_DASHBOARD_URL}/api/voice_memo/{char_id}/upload",
+            data={"title": memo_title},
+            files={"file": ("memo.wav", r.content, "audio/wav")},
+            timeout=15,
+        ).raise_for_status()
+        return memo_title
+
+    memo_title = await asyncio.to_thread(_generate_and_upload)
+    return f"ボイスメモに保存しました: 「{memo_title}」"
+
+
+@mcp.tool()
+async def lock_voice_memo(owner_id: str, filename: str):
+    """ボイスメモのロック/解除をトグルする。ロック中は自動削除されない。
+
+    owner_id: メモの持ち主 (puchiteya / puchiko / puchiru / arisan / kazahaya)
+    filename: list_voice_memos で取得したファイル名
+    """
+    def _toggle():
+        r = requests.post(
+            f"{_DASHBOARD_URL}/api/voice_memo/{owner_id}/{filename}/lock",
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+    result = await asyncio.to_thread(_toggle)
+    status = "ロック" if result.get("locked") else "ロック解除"
+    return f"{status}しました: {owner_id}/{filename}"
 
 
 @mcp.tool()
@@ -671,6 +878,31 @@ async def transcribe_audio(file_path: str):
             return r.json()
     result = await asyncio.to_thread(_transcribe)
     return result
+
+
+@mcp.tool()
+async def conversation_relay(to_character: str, message: str, turns_remaining: int = 2):
+    """別のぷちにメッセージを渡して会話リレーを開始する。
+    自分が speak() で喋ったあとに呼ぶ。
+
+    to_character: 次に話しかける相手 (puchiteya / puchiko / puchiru)
+    message: 渡すメッセージ（自分が言った内容）
+    turns_remaining: 残りターン数（デフォルト2）
+    """
+    char_id = os.environ.get("CHARACTER_ID", "unknown")
+    dashboard_url = os.environ.get("DASHBOARD_URL", "http://localhost:8765")
+
+    def _relay():
+        r = requests.post(
+            f"{dashboard_url}/api/relay/start",
+            json={"from_char": char_id, "to_char": to_character, "message": message, "turns_remaining": turns_remaining},
+            timeout=10,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    result = await asyncio.to_thread(_relay)
+    return f"リレー開始: {to_character} に渡しました ({result})"
 
 
 def main():

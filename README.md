@@ -197,11 +197,33 @@ M5Stack のファームウェアセットアップは [m5_petit](https://github.
 | `set_volume` / `get_volume` | 音量設定 |
 | `sleep` / `wake` | スリープ制御 |
 | `save_to_album` | スナップショットを撮ってアルバムに保存 |
-| `list_album` | アルバム一覧取得（read_by付き） |
+| `list_album` | アルバム一覧取得（`unread_by` で未読フィルタ可） |
 | `view_album_photo` | アルバムの写真を取得＋既読記録 |
 | `delete_album_photo` | 自分のアルバムから写真を削除（`CHARACTER_ID`で自キャラのみ） |
+| `lock_album_photo` | 写真をロック/解除トグル（ロック中は自動削除スキップ） |
+| `speak` | VOICEVOX/kokoro/piper でTTS合成してM5で再生。`save_as_memo=True` でボイスメモにも保存 |
+| `set_voice` | 自分のTTS声設定を保存（speaker/speed/pitch/intonation/volume）|
+| `list_voice_memos` | ボイスメモ一覧取得。`unlistened_by` で未聴フィルタ可 |
+| `listen_voice_memo` | ボイスメモをM5で再生し既聴記録。`transcribe=True` で文字起こし |
+| `lock_voice_memo` | ボイスメモのロック/解除トグル（ロック中は自動削除スキップ） |
 
 > `delete_album_photo` は `autonomous-mcp.json` の m5-mcp env に `CHARACTER_ID` が設定されている場合のみ動作する。他キャラのアルバムは削除不可。
+
+#### TTS 声設定
+
+各キャラの声設定は `~/petit_claude/characters/{char_id}/voice_settings.json` に保存される。`set_voice` ツールで更新し、`speak` はこの設定を自動で読んで使う。
+
+```json
+{
+  "voicevox_speaker": 23,
+  "speed_scale": 1.0,
+  "pitch_scale": 0.05,
+  "intonation_scale": 1.2,
+  "volume_scale": 1.0
+}
+```
+
+声設定を変えたあとは `python3 scripts/register_tts_voices.py` で話者認識の声紋も更新する。
 
 ### memory-mcp（記憶）
 
@@ -463,6 +485,23 @@ vim ~/petit_claude/speaker_config.json
 無音5秒で自動的に録音が終わり、声紋が GPU サーバーに登録される。
 
 **精度を上げるには**: 同じスクリプトをもう一度実行して別の内容を話す（3〜5回推奨）。声紋は毎回インクリメンタルに平均化される。
+
+#### ぷちたちの TTS 声紋を自動登録
+
+ぷちたちは実際にマイクで話す代わりに、各自の TTS 設定（`~/petit_claude/characters/{char_id}/voice_settings.json`）から音声を生成して登録できる。
+
+```bash
+# 3キャラ分まとめて登録（各3テキストで移動平均）
+python3 scripts/register_tts_voices.py
+
+# 特定キャラだけ再登録
+python3 scripts/register_tts_voices.py --chars puchiteya
+
+# URL を明示する場合
+python3 scripts/register_tts_voices.py --tts-url http://puchipuchi:8766 --asr-url http://puchipuchi:8765
+```
+
+TTS の声を変えた（`set_voice` を呼んだ）場合は再実行して声紋を更新する。
 
 #### 登録状況の確認・削除
 
