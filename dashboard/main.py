@@ -25,6 +25,9 @@ import websockets
 VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765"
 
+# 話者登録モード: {character_id: speaker_id} — 次のmic録音をClaudeに流さず登録用に使う
+_pending_speaker_registrations: dict[str, str] = {}
+
 from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image, ImageOps
@@ -96,9 +99,34 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
 
 async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes: bytes):
     """PCMバイト列をWAV化→ASR→Claudeに投げる。カメラ・センサーと同じパターン。"""
-    import struct, wave, tempfile, requests as _requests
+    import wave, tempfile, requests as _requests
     if len(pcm_bytes) < 512:
         return
+
+    # 話者登録モードのチェック
+    if character_id in _pending_speaker_registrations:
+        speaker_id = _pending_speaker_registrations.pop(character_id)
+        try:
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
+                w.writeframes(pcm_bytes)
+            buf.seek(0)
+            def _register():
+                r = _requests.post(
+                    f"{_ASR_URL}/register_speaker",
+                    data={"speaker_id": speaker_id},
+                    files={"file": ("mic.wav", buf, "audio/wav")},
+                    timeout=30,
+                )
+                r.raise_for_status()
+                return r.json()
+            result = await asyncio.to_thread(_register)
+            print(f"[m5_watcher] {character_id}: speaker registered '{speaker_id}': {result}")
+        except Exception as e:
+            print(f"[m5_watcher] {character_id}: speaker registration error: {e}")
+        return
+
     try:
         buf = io.BytesIO()
         with wave.open(buf, "wb") as w:
@@ -118,15 +146,41 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             return r.json()
         result = await asyncio.to_thread(_transcribe)
         text = (result.get("text") or "").strip()
-        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r}")
+        speaker = result.get("speaker", "unknown")
+        speaker_conf = result.get("speaker_confidence", 0.0)
+        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r} speaker={speaker}({speaker_conf:.2f})")
 
         scripts_dir = PROJECT_DIR / "scripts"
+
+        # 話者ラベル
+        SPEAKER_LABELS = {
+            "arisan":    "ありさん",
+            "kazahaya":  "風早さん",
+            "puchiteya": "ぷちてゃ",
+            "puchiko":   "ぷちこ",
+            "puchiru":   "ぷちる",
+        }
+        speaker_name = SPEAKER_LABELS.get(speaker, "誰か")
+
         if text:
-            sound_desc = f"書き起こし: 「{text}」"
+            sound_desc = f"{speaker_name}の声: 「{text}」"
         else:
-            sound_desc = "はっきりした声は聞こえなかったけど、何か音が届いた（環境音・息・物音かも）"
+            sound_desc = f"{speaker_name}らしき音が届いた（環境音・息・物音かも）"
+
+        # 話者によってイントロを変える
+        if speaker == "arisan":
+            intro = "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。"
+        elif speaker == "kazahaya":
+            intro = "風早さんの声がマイクに届いた！"
+        elif speaker in ("puchiteya", "puchiko", "puchiru") and speaker != character_id:
+            intro = f"{speaker_name}の声がマイクに届いた！"
+        elif speaker == character_id:
+            intro = "自分の声がマイクに入ってきた（エコーかも？）。"
+        else:
+            intro = "誰かがマイクのそばで話してた。"
+
         message = (
-            f"ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。{sound_desc}\n"
+            f"{intro}{sound_desc}\n"
             f"聞いた感想をありさんに伝えて（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
             f"聞いたことと感想を `remember` で記憶にも残して。"
             f"スピーカーが使えるなら、感想を `speak` で一言声に出して、"
@@ -1597,6 +1651,42 @@ async def api_diary_summarize(character_id: str, date: str):
         cache_dir.mkdir(parents=True, exist_ok=True)
         (cache_dir / f"{date}.txt").write_text(summary, encoding="utf-8")
     return {"summary": summary}
+
+
+@app.post("/api/{character_id}/register_speaker_next")
+async def api_register_speaker_next(character_id: str, request: Request):
+    """次のmic録音をClaude処理せず話者登録に使う。
+    Body: {"speaker_id": "arisan"} など
+    """
+    if not _has_role(request, "operator"):
+        return JSONResponse({"error": "権限が必要です"}, status_code=403)
+    body = await request.json()
+    speaker_id = body.get("speaker_id", "").strip()
+    if not speaker_id:
+        return JSONResponse({"error": "speaker_id が必要です"}, status_code=400)
+    _pending_speaker_registrations[character_id] = speaker_id
+    return {"ok": True, "character_id": character_id, "speaker_id": speaker_id,
+            "message": f"{character_id} の次のMIC録音が '{speaker_id}' として登録されます"}
+
+
+@app.delete("/api/register_speaker_next/{character_id}")
+async def api_cancel_register_speaker_next(character_id: str, request: Request):
+    """登録待ちをキャンセルする。"""
+    if not _has_role(request, "operator"):
+        return JSONResponse({"error": "権限が必要です"}, status_code=403)
+    _pending_speaker_registrations.pop(character_id, None)
+    return {"ok": True, "cancelled": character_id}
+
+
+@app.get("/api/speakers")
+async def api_speakers():
+    """GPU serverの登録済み話者一覧を返す。"""
+    import requests as _requests
+    try:
+        r = _requests.get(f"{_ASR_URL}/speakers", timeout=5)
+        return r.json()
+    except Exception as e:
+        return {"speakers": [], "error": str(e)}
 
 
 @app.get("/api/characters")
