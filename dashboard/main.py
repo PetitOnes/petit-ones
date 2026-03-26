@@ -28,6 +28,9 @@ _ASR_URL = f"http://{VOICE_API_HOST}:8765"
 # 話者登録モード: {character_id: speaker_id} — 次のmic録音をClaudeに流さず登録用に使う
 _pending_speaker_registrations: dict[str, str] = {}
 
+# メール宛先: {character_id: user_id} — M5設定画面から変更可（カメラ・音声・センサー共通）
+_mail_targets: dict[str, str] = {}
+
 from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from PIL import Image, ImageOps
@@ -37,7 +40,7 @@ from pydantic import BaseModel
 # ===================== M5 イベントウォッチャー =====================
 
 async def _m5_camera_analyze_and_mail(character_id: str, host: str):
-    """スナップショットをHTTPで取得し、Claude CLIに画像ファイルを読ませてありさんにメール＋記憶保存"""
+    """スナップショットをHTTPで取得し、Claude CLIに画像ファイルを読ませてメール＋記憶保存"""
     import tempfile, urllib.request
     tmp_path = None
     try:
@@ -52,10 +55,13 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
             tmp_path = f.name
 
         scripts_dir = PROJECT_DIR / "scripts"
+        cam_target = _mail_targets.get(character_id, "arisan")
+        CAM_TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
+        cam_target_name = CAM_TARGET_LABELS.get(cam_target, "ありさん")
         message = (
-            f"ありさんが「みてみて！」って言いながらカメラのボタンを押してくれた。"
+            f"{cam_target_name}が「みてみて！」って言いながらカメラのボタンを押してくれた。"
             f"撮った写真は {tmp_path} にある。"
-            f"写真を見て、ありさんに短い感想をメールして（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
+            f"写真を見て、{cam_target_name}に短い感想をメールして（`python3 {scripts_dir}/write_mailbox.py {character_id} {cam_target} '<メッセージ>'`）、"
             f"見たものと感想を `remember` で記憶にも残して。"
             f"スピーカーが使えるなら、写真を見た感想を `speak` で一言声に出して、"
             f"`show_face` か `play_sound` で気持ちを表現してもいい。"
@@ -72,9 +78,11 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
                 pass
 
 
-async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
-    """センサーデータをHTTPで取得し、ありさんにメール＋記憶保存"""
+async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str = "arisan"):
+    """センサーデータをHTTPで取得し、メール＋記憶保存"""
     import urllib.request
+    TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
+    target_name = TARGET_LABELS.get(target, target)
     try:
         loop = asyncio.get_event_loop()
         def _fetch():
@@ -84,9 +92,9 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
 
         scripts_dir = PROJECT_DIR / "scripts"
         message = (
-            f"ありさんが「感じてみて！」って言いながらセンサーのボタンを押してくれた。"
+            f"{target_name}が「感じてみて！」って言いながらセンサーのボタンを押してくれた。"
             f"今の周りの状態はこんな感じ: {json.dumps(sensors, ensure_ascii=False)}\n"
-            f"感じたことをありさんへの短いメッセージにして送って（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
+            f"感じたことを{target_name}への短いメッセージにして送って（`python3 {scripts_dir}/write_mailbox.py {character_id} {target} '<メッセージ>'`）、"
             f"センサーの状態と感想を `remember` で記憶にも残して。"
             f"スピーカーが使えるなら、今の感じを `speak` で一言声に出して、"
             f"`show_face` か `play_sound` で気持ちを表現してもいい。"
@@ -97,7 +105,7 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str):
         print(f"[m5_watcher] {character_id}: sensor error: {e}")
 
 
-async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes: bytes):
+async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes: bytes, target: str = "arisan"):
     """PCMバイト列をWAV化→ASR→Claudeに投げる。カメラ・センサーと同じパターン。"""
     import wave, tempfile, requests as _requests
     if len(pcm_bytes) < 512:
@@ -136,19 +144,21 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             w.writeframes(pcm_bytes)
         buf.seek(0)
 
-        def _transcribe():
+        def _analyze():
             r = _requests.post(
-                f"{_ASR_URL}/transcribe",
+                f"{_ASR_URL}/analyze_audio_summary",
                 files={"file": ("mic.wav", buf, "audio/wav")},
                 timeout=60,
             )
             r.raise_for_status()
             return r.json()
-        result = await asyncio.to_thread(_transcribe)
-        text = (result.get("text") or "").strip()
+        result = await asyncio.to_thread(_analyze)
+        text = (result.get("transcript") or "").strip()
         speaker = result.get("speaker", "unknown")
         speaker_conf = result.get("speaker_confidence", 0.0)
-        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r} speaker={speaker}({speaker_conf:.2f})")
+        environment = result.get("environment", "")
+        voice_state = result.get("voice_state", "")
+        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r} speaker={speaker}({speaker_conf:.2f}) env={environment} voice={voice_state}")
 
         scripts_dir = PROJECT_DIR / "scripts"
 
@@ -167,6 +177,14 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         else:
             sound_desc = f"{speaker_name}らしき音が届いた（環境音・息・物音かも）"
 
+        # 声の状態・環境の補足
+        voice_hints = []
+        if environment and environment not in ("speech", "unknown"):
+            voice_hints.append(f"環境音: {environment}")
+        if voice_state and voice_state != "unknown":
+            voice_hints.append(f"声の状態: {voice_state}")
+        voice_hint_str = ("（" + "、".join(voice_hints) + "）") if voice_hints else ""
+
         # 話者によってイントロを変える
         if speaker == "arisan":
             intro = "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。"
@@ -179,12 +197,15 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         else:
             intro = "誰かがマイクのそばで話してた。"
 
+        TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
+        target_name = TARGET_LABELS.get(target, target)
         message = (
-            f"{intro}{sound_desc}\n"
-            f"聞いた感想をありさんに伝えて（`python3 {scripts_dir}/write_mailbox.py {character_id} arisan '<メッセージ>'`）、"
-            f"聞いたことと感想を `remember` で記憶にも残して。"
-            f"スピーカーが使えるなら、感想を `speak` で一言声に出して、"
-            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
+            f"{intro}{sound_desc}{voice_hint_str}\n"
+            f"必ずやること:\n"
+            f"1. `remember` で「{speaker_name}が『{text}』と言っていた」という内容を記憶に残す\n"
+            f"2. `python3 {scripts_dir}/write_mailbox.py {character_id} {target} '<返事>'` で{target_name}にメールを送る（何を言っていたか＋感想を書く）\n"
+            f"3. スピーカーが使えるなら `speak` で一言声に出して反応する\n"
+            f"任意: `show_face` か `play_sound` で気持ちを表現してもいい。"
         )
         result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
         print(f"[m5_watcher] {character_id}: mic done ({result2[:40] if result2 else 'no result'})")
@@ -215,15 +236,22 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
                             if pcm_buffer:
                                 pcm_bytes = b"".join(pcm_buffer)
                                 pcm_buffer = []
-                                asyncio.create_task(_m5_mic_transcribe_and_respond(character_id, host, pcm_bytes))
+                                mail_target = _mail_targets.get(character_id, "arisan")
+                                asyncio.create_task(_m5_mic_transcribe_and_respond(character_id, host, pcm_bytes, mail_target))
                             else:
                                 pcm_buffer = []
+                        elif event == "set_cam_target":
+                            target = data.get("target", "arisan")
+                            if target:
+                                _mail_targets[character_id] = target
+                                print(f"[m5_watcher] {character_id}: mail_target → {target}")
                         elif event == "menu_select":
                             item = data.get("item")
+                            mail_target = _mail_targets.get(character_id, "arisan")
                             if item == "camera":
                                 asyncio.create_task(_m5_camera_analyze_and_mail(character_id, host))
                             elif item == "sensor":
-                                asyncio.create_task(_m5_sensor_analyze_and_mail(character_id, host))
+                                asyncio.create_task(_m5_sensor_analyze_and_mail(character_id, host, mail_target))
                 break
             except Exception:
                 continue
@@ -1775,6 +1803,11 @@ class GroupChatRequest(BaseModel):
     message: str
 
 
+class SelectChatRequest(BaseModel):
+    message: str
+    char_ids: list[str]
+
+
 @app.get("/api/group/history")
 def api_group_history():
     return load_group_log()[-200:]
@@ -1805,6 +1838,37 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
         }
         responses.append(r)
         append_group_log({"type": "group", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+    return {"responses": responses}
+
+
+@app.post("/api/select/chat")
+async def api_select_chat(req: SelectChatRequest, request: Request):
+    """選んだキャラに順番にメッセージを送る。"""
+    username = _get_username(request) or "arisan"
+    user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
+    chars_map = {c["id"]: c for c in list_characters()}
+    chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
+    if not chars:
+        return {"responses": []}
+    now = datetime.now(timezone.utc).isoformat()
+    responses = []
+    append_group_log({"type": "select", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
+    for char in chars:
+        context = req.message
+        if responses:
+            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
+            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+        reply = await call_claude(char["id"], context, username=username)
+        append_chat(char["id"], "user", req.message, username)
+        append_chat(char["id"], char["id"], reply, username)
+        r = {
+            "character_id": char["id"],
+            "name": char.get("name", char["id"]),
+            "color": char.get("color", "#cab8d9"),
+            "reply": reply,
+        }
+        responses.append(r)
+        append_group_log({"type": "select", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
     return {"responses": responses}
 
 
@@ -2364,6 +2428,10 @@ HTML = """<!DOCTYPE html>
     .msg-name { font-size: 0.7rem; font-weight: 700; margin-bottom: 3px; }
     .interact-btn { font-size: 0.8rem; background: none; border: 1px solid #ddd; border-radius: 20px; padding: 5px 14px; cursor: pointer; color: #888; margin-top: 10px; }
     .interact-btn:hover { background: #f9f9f9; }
+    /* 選んで話す */
+    #selectToggles { display:none; padding: 8px 0 4px; margin-bottom: 8px; border-bottom: 1px solid var(--char-soft,#eee); }
+    .select-pill { display:inline-flex; align-items:center; gap:5px; border-radius:20px; padding:4px 12px; margin:3px 4px; cursor:pointer; font-size:0.82rem; font-weight:600; border:2px solid transparent; transition:opacity 0.15s,border-color 0.15s; }
+    .select-pill.off { opacity:0.35; }
   </style>
 </head>
 <body>
@@ -2402,6 +2470,7 @@ HTML = """<!DOCTYPE html>
 
       <section>
         <h2 id="chatTitle">話す</h2>
+        <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
         <div class="chat-input">
           <input type="text" id="input" placeholder="話しかける..." />
@@ -2410,8 +2479,7 @@ HTML = """<!DOCTYPE html>
         <div>
           <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
           <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
-          <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ ふたりで話させる</button>
-          <button class="interact-btn" id="interactGroupBtn" onclick="startInteractGroup()" style="display:none">✨ さんにんで話させる</button>
+          <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
         </div>
       </section>
 
@@ -2544,6 +2612,7 @@ HTML = """<!DOCTYPE html>
     let currentCharId = "puchiko";
     let characters = [];
     const chatStates = {};
+    let selectedCharIds = new Set();
     let _memoryImages = {};
     let _myName = "ありさん";
     let _diaryImages = {};
@@ -2613,12 +2682,12 @@ HTML = """<!DOCTYPE html>
           onclick="switchChar('${c.id}')">
           <span class="m5-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ccc;vertical-align:middle;margin-right:4px;"></span>${c.name||c.id}</button>`;
       }).join("");
-      // 「三人で」「みんなで」タブを末尾に追加
-      const isTrio = currentCharId === "trio";
+      // 「選んで話す」「みんなで」タブを末尾に追加
+      const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
-      tabs.innerHTML += `<button class="char-tab group-tab${isTrio?" active":""}"
-        style="${isTrio?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('trio')">三人で 💬</button>`;
+      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
+        style="${isSelect?"opacity:1":"opacity:0.8"}"
+        onclick="switchChar('select')">だれかと 💬</button>`;
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
         onclick="switchChar('group')">みんなで 🌟</button>`;
@@ -2634,25 +2703,25 @@ HTML = """<!DOCTYPE html>
         document.getElementById("pageTitle").textContent = cur.name||cur.id;
         document.getElementById("chatTitle").textContent = `${cur.name||cur.id}と話す`;
         document.getElementById("interactBtn").style.display = "none";
-        document.getElementById("interactGroupBtn").style.display = "none";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "";
-      } else if (isTrio) {
-        applyTheme("#fff262");
-        document.getElementById("pageTitle").textContent = "三人で";
-        document.getElementById("chatTitle").textContent = "ぷちことぷちてゃと話す";
-        document.getElementById("interactBtn").style.display = characters.length >= 2 ? "" : "none";
-        document.getElementById("interactGroupBtn").style.display = "none";
+        document.getElementById("selectToggles").style.display = "none";
+      } else if (isSelect) {
+        applyTheme("#cab8d9");
+        document.getElementById("pageTitle").textContent = "選んで話す";
+        document.getElementById("chatTitle").textContent = "誰に話しかける？";
+        document.getElementById("interactBtn").style.display = "";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "none";
+        renderSelectToggles();
       } else if (isGroup) {
         applyTheme("#cab8d9");
         document.getElementById("pageTitle").textContent = "みんな";
         document.getElementById("chatTitle").textContent = "みんなで話す";
-        document.getElementById("interactBtn").style.display = characters.length >= 2 ? "" : "none";
-        document.getElementById("interactGroupBtn").style.display = "";
+        document.getElementById("interactBtn").style.display = "none";
         document.getElementById("historyBtn").style.display = "";
         document.getElementById("resetBtn").style.display = "none";
+        document.getElementById("selectToggles").style.display = "none";
       }
     }
 
@@ -2662,7 +2731,7 @@ HTML = """<!DOCTYPE html>
       currentCharId = id;
       chatEl.innerHTML = chatStates[id] || "";
       loadCharacters();
-      const isGroupLike = id === "group" || id === "trio";
+      const isGroupLike = id === "select" || id === "group";
       document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
       document.getElementById("sleepBtn").style.display = "none";
       document.getElementById("wakeBtn").style.display = "none";
@@ -2704,7 +2773,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function update() {
-      if (currentCharId === "group" || currentCharId === "trio") return;
+      if (currentCharId === "select" || currentCharId === "group") return;
       try {
         const res = await fetch(`/api/${currentCharId}/status`);
         const { desires, memories, m5_online, m5_sleeping } = await res.json();
@@ -2803,12 +2872,24 @@ HTML = """<!DOCTYPE html>
       btn.disabled = true;
       addMsg(text, "user");
 
-      if (currentCharId === "group" || currentCharId === "trio") {
-        const apiPath = currentCharId === "trio" ? "/api/trio/chat" : "/api/group/chat";
-        const thinkMsg = currentCharId === "trio" ? "ぷちことぷちてゃに聞いてる…" : "みんなに聞いてる…";
-        const thinking = addMsg(thinkMsg, "thinking");
+      if (currentCharId === "select") {
+        const charIds = [...selectedCharIds];
+        if (charIds.length === 0) { btn.disabled = false; return; }
+        const thinkNames = charIds.map(id => (characters.find(c=>c.id===id)||{}).name||id).join("と");
+        const thinking = addMsg(`${thinkNames}に聞いてる…`, "thinking");
         try {
-          const res = await fetch(apiPath, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
+          const res = await fetch("/api/select/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, char_ids:charIds}) });
+          const data = await res.json();
+          thinking.remove();
+          for (const r of data.responses) {
+            addMsg(r.reply, "group", r.color, r.name);
+          }
+        } catch(e) { thinking.textContent = "エラーが発生しました"; }
+        finally { btn.disabled = false; input.focus(); }
+      } else if (currentCharId === "group") {
+        const thinking = addMsg("みんなに聞いてる…", "thinking");
+        try {
+          const res = await fetch("/api/group/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
           const data = await res.json();
           thinking.remove();
           for (const r of data.responses) {
@@ -2836,39 +2917,41 @@ HTML = """<!DOCTYPE html>
       }
     }
 
+    function renderSelectToggles() {
+      const el = document.getElementById("selectToggles");
+      // 初回: 全キャラを選択状態にする
+      if (selectedCharIds.size === 0) {
+        characters.forEach(c => selectedCharIds.add(c.id));
+      }
+      el.style.display = "block";
+      const pills = characters.map(c => {
+        const on = selectedCharIds.has(c.id);
+        const bg = on ? (c.color || "#cab8d9") : "#555";
+        return `<span class="select-pill${on?"":" off"}" style="background:${bg};color:#fff"
+          onclick="toggleSelectChar('${c.id}')">${c.name||c.id}</span>`;
+      }).join("");
+      el.innerHTML = `<div>${pills}</div><div style="font-size:0.7rem;color:#bbb;margin-top:4px;pointer-events:none;user-select:none">タップで選択 / 解除</div>`;
+    }
+
+    function toggleSelectChar(id) {
+      if (selectedCharIds.has(id)) {
+        selectedCharIds.delete(id);
+      } else {
+        selectedCharIds.add(id);
+      }
+      renderSelectToggles();
+    }
+
     async function startInteract() {
-      if (characters.length < 2) { alert("キャラが2人必要です"); return; }
+      const charIds = [...selectedCharIds];
+      if (charIds.length < 2) { alert("2人以上選んでください"); return; }
       const btn = document.getElementById("interactBtn");
       btn.disabled = true;
       btn.textContent = "話し合い中…";
-      const [a, b] = characters;
-      try {
-        const res = await fetch("/api/interact", {
-          method: "POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({from_id: a.id, to_id: b.id, turns: 3})
-        });
-        const data = await res.json();
-        for (const ex of data.exchanges) {
-          const char = characters.find(c=>c.id===ex.from_id);
-          addMsg(ex.text, "group", ex.color, ex.name);
-          await new Promise(r=>setTimeout(r, 400)); // 少し間を置く
-        }
-      } catch(e) { addMsg("エラーが発生しました", "thinking"); }
-      finally { btn.disabled = false; btn.textContent = "✨ ふたりで話させる"; }
-    }
-
-    async function startInteractGroup() {
-      const btn = document.getElementById("interactGroupBtn");
-      btn.disabled = true;
-      btn.textContent = "話し合い中…";
-      let allChars;
-      try { allChars = await (await fetch("/api/characters/all")).json(); } catch { allChars = characters; }
-      if (allChars.length < 3) { alert("キャラが3人必要です"); btn.disabled = false; btn.textContent = "✨ さんにんで話させる"; return; }
-      const ids = allChars.map(c => c.id);
       try {
         const res = await fetch("/api/interact/group", {
           method: "POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({char_ids: ids, turns: 2})
+          body: JSON.stringify({char_ids: charIds, turns: 2})
         });
         const data = await res.json();
         for (const ex of data.exchanges) {
@@ -2876,7 +2959,7 @@ HTML = """<!DOCTYPE html>
           await new Promise(r=>setTimeout(r, 400));
         }
       } catch(e) { addMsg("エラーが発生しました", "thinking"); }
-      finally { btn.disabled = false; btn.textContent = "✨ さんにんで話させる"; }
+      finally { btn.disabled = false; btn.textContent = "✨ 話させる"; }
     }
 
     let _diaryDates = [];
@@ -2976,7 +3059,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function updateDiary(resetToToday = false) {
-      if (currentCharId === "group" || currentCharId === "trio") return;
+      if (currentCharId === "select" || currentCharId === "group") return;
       const prevDate = _diaryDates.length > 0 ? _diaryDates[_diaryIdx] : null;
       _diaryCache = {};
       try {
@@ -3018,9 +3101,8 @@ HTML = """<!DOCTYPE html>
       body.innerHTML = '<div class="empty">読み込み中…</div>';
       document.getElementById("historyOverlay").classList.add("open");
 
-      if (currentCharId === "group" || currentCharId === "trio") {
-        const historyApi = currentCharId === "trio" ? "/api/trio/history" : "/api/group/history";
-        const res = await fetch(historyApi);
+      if (currentCharId === "select" || currentCharId === "group") {
+        const res = await fetch("/api/group/history");
         const log = (await res.json()).slice().reverse();
         if (log.length === 0) {
           body.innerHTML = '<div class="empty">まだ会話がありません</div>';
@@ -3029,7 +3111,7 @@ HTML = """<!DOCTYPE html>
             const ts = new Date(m.timestamp).toLocaleString("ja-JP");
             const col = m.color || "#cab8d9";
             const nameColor = readableText(col);
-            const typeLabel = currentCharId === "trio" ? "💬 三人で" : (m.type === "interact" ? "💬 交流" : "🌟 みんなで");
+            const typeLabel = m.type === "interact" ? "💬 交流" : "💬 選んで話す";
             return `<div class="history-msg">
               <div class="history-role" style="color:${nameColor}">${m.name} · ${ts} <span style="color:#ccc;font-size:0.65rem">${typeLabel}</span></div>
               <div class="history-text">${m.text}</div>
