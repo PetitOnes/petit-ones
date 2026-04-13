@@ -1,4 +1,5 @@
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ImageContent
 import asyncio
 import websockets
 from websockets.protocol import State as WsState
@@ -23,6 +24,8 @@ _active_host: Optional[str] = None
 VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765"
 _TTS_URL = f"http://{VOICE_API_HOST}:8766"
+# GPU PCがつながらないときのフォールバック（localhost:8766）
+_TTS_FALLBACK_URL = os.environ.get("TTS_FALLBACK_URL", "http://localhost:8766")
 # ダッシュボードは常に同じマシン上で動くので127.0.0.1を使う
 _DASHBOARD_URL = f"http://{os.environ.get('DASHBOARD_HOST', '127.0.0.1')}:8765"
 
@@ -159,7 +162,7 @@ async def take_snapshot():
     if r.status_code != 200:
         return "camera failed"
     img_b64 = base64.b64encode(r.content).decode()
-    return {"image_base64": img_b64, "mime_type": "image/jpeg"}
+    return [ImageContent(type="image", data=img_b64, mimeType="image/jpeg")]
 
 
 @mcp.tool()
@@ -536,7 +539,7 @@ async def view_album_photo(album_owner_id: str, filename: str, viewer_id: str):
             params={"viewer": viewer_id}, timeout=5
         )
     )
-    return {"image_base64": img_b64, "mime_type": "image/jpeg", "filename": filename}
+    return [ImageContent(type="image", data=img_b64, mimeType="image/jpeg")]
 
 
 # ===================== ツール：音声合成・音声認識 =====================
@@ -678,8 +681,15 @@ async def speak(
                 "length_scale": length_scale, "noise_scale": noise_scale,
                 "noise_w": noise_w, "sentence_silence": sentence_silence,
             }
-        r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
-        r.raise_for_status()
+        for _tts_url in [_TTS_URL, _TTS_FALLBACK_URL]:
+            try:
+                r = requests.post(f"{_tts_url}/speak", json=payload, timeout=30)
+                r.raise_for_status()
+                break
+            except (requests.ConnectionError, requests.Timeout):
+                if _tts_url == _TTS_FALLBACK_URL:
+                    raise
+                continue
         wav_bytes = r.content
         if save_as_memo:
             wav_bytes_holder.append(wav_bytes)
@@ -830,8 +840,15 @@ async def save_tts_memo(text: str, title: str = ""):
             v = saved.get(saved_key)
             if v is not None:
                 payload[key] = v
-        r = requests.post(f"{_TTS_URL}/speak", json=payload, timeout=30)
-        r.raise_for_status()
+        for _tts_url in [_TTS_URL, _TTS_FALLBACK_URL]:
+            try:
+                r = requests.post(f"{_tts_url}/speak", json=payload, timeout=30)
+                r.raise_for_status()
+                break
+            except (requests.ConnectionError, requests.Timeout):
+                if _tts_url == _TTS_FALLBACK_URL:
+                    raise
+                continue
         memo_title = title or text[:20]
         requests.post(
             f"{_DASHBOARD_URL}/api/voice_memo/{char_id}/upload",
@@ -903,6 +920,241 @@ async def conversation_relay(to_character: str, message: str, turns_remaining: i
 
     result = await asyncio.to_thread(_relay)
     return f"リレー開始: {to_character} に渡しました ({result})"
+
+
+# ===================== 感熱紙プリンター (Phomemo M02S / Classic BT RFCOMM) =====================
+
+_PRINTER_ADDR    = os.environ.get("PRINTER_ADDRESS", "")
+_PRINTER_CHANNEL = int(os.environ.get("PRINTER_CHANNEL", "1"))
+_PRINTER_LOCK    = asyncio.Lock()
+
+# M02S: 57mm paper, 203 DPI, effective print width ~48mm = 384 dots = 48 bytes/row
+_PRINT_WIDTH_PX    = 384
+_PRINT_WIDTH_BYTES = _PRINT_WIDTH_PX // 8  # 48
+
+
+def _find_font(size: int):
+    from PIL import ImageFont
+    for path in [
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+    ]:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    return ImageFont.load_default()
+
+
+def _render_to_bitmap(text: str, font_size: int) -> tuple[list[bytes], int]:
+    """テキストを1bit bitmap に変換して (rows, height) を返す。"""
+    from PIL import Image, ImageDraw
+
+    padding = 10
+    font = _find_font(font_size)
+    img_w = _PRINT_WIDTH_PX
+
+    # 折り返し処理
+    dummy = Image.new("1", (img_w, 1))
+    draw = ImageDraw.Draw(dummy)
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        if not raw_line:
+            lines.append("")
+            continue
+        cur = ""
+        for ch in raw_line:
+            test = cur + ch
+            bbox = draw.textbbox((0, 0), test, font=font)
+            if bbox[2] - bbox[0] > img_w - padding * 2:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur = test
+        lines.append(cur)
+
+    line_h = font_size + 4
+    img_h = padding + len(lines) * line_h + 200  # 下余白
+
+    img = Image.new("1", (img_w, img_h), 1)  # 白地
+    draw = ImageDraw.Draw(img)
+    y = padding
+    for line in lines:
+        draw.text((padding, y), line, font=font, fill=0)
+        y += line_h
+
+    raw_rows = []
+    for row in range(img_h):
+        row_bytes = bytearray(_PRINT_WIDTH_BYTES)
+        for col in range(img_w):
+            if img.getpixel((col, row)) == 0:  # 黒ピクセル
+                row_bytes[col // 8] |= 0x80 >> (col % 8)
+        raw_rows.append(bytes(row_bytes))
+    return raw_rows, img_h
+
+
+def _build_print_packet(raw_rows: list[bytes], height: int) -> bytes:
+    """ESC/POS コマンド列を生成する。"""
+    w_lo = _PRINT_WIDTH_BYTES & 0xFF
+    w_hi = (_PRINT_WIDTH_BYTES >> 8) & 0xFF
+    h_lo = height & 0xFF
+    h_hi = (height >> 8) & 0xFF
+    init = b"\x1b\x40"
+    cmd  = bytes([0x1d, 0x76, 0x30, 0x00, w_lo, w_hi, h_lo, h_hi])
+    data = b"".join(raw_rows)
+    feed = b"\n\n\n\n\n\n"
+    return init + cmd + data + feed
+
+
+def _rfcomm_print(addr: str, channel: int, packet: bytes) -> str:
+    """RFCOMM ソケットで送信する（Classic BT SPP）。"""
+    import socket as _socket
+    sock = _socket.socket(_socket.AF_BLUETOOTH, _socket.SOCK_STREAM, _socket.BTPROTO_RFCOMM)
+    sock.settimeout(15)
+    sock.connect((addr, channel))
+    try:
+        chunk = 512
+        for i in range(0, len(packet), chunk):
+            sock.send(packet[i:i+chunk])
+        return f"印刷完了 ({len(packet)} bytes)"
+    finally:
+        sock.close()
+
+
+@mcp.tool()
+async def print_text(text: str, font_size: int = 28) -> str:
+    """感熱紙プリンター（Phomemo M02S）でテキストを印刷する。
+    PRINTER_ADDRESS 環境変数にBTアドレス（例: 24:70:06:1D:C4:8E）を設定しておくこと。
+    font_size: フォントサイズ（デフォルト28）
+    """
+    addr = _PRINTER_ADDR
+    if not addr:
+        return "エラー: PRINTER_ADDRESS 環境変数が未設定です（例: 24:70:06:1D:C4:8E）"
+
+    if _PRINTER_LOCK.locked():
+        return "プリンターは別のキャラクターが使用中です。少し待ってから再度呼んでください。"
+
+    def _do():
+        raw_rows, height = _render_to_bitmap(text, font_size)
+        packet = _build_print_packet(raw_rows, height)
+        return _rfcomm_print(addr, _PRINTER_CHANNEL, packet)
+
+    async with _PRINTER_LOCK:
+        return await asyncio.to_thread(_do)
+
+
+def _load_image_1bit(image_path: str) -> "Image.Image":
+    """画像ファイルを読み込んでプリント幅に合わせた1bit画像を返す。"""
+    from PIL import Image
+    img = Image.open(image_path).convert("L")  # グレースケール
+    # アスペクト比を保ってリサイズ
+    w, h = img.size
+    new_w = _PRINT_WIDTH_PX
+    new_h = int(h * new_w / w)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    # ディザリングして1bit変換
+    img = img.convert("1", dither=Image.Dither.FLOYDSTEINBERG)
+    return img
+
+
+def _render_text_block(text: str, font_size: int, padding: int = 10) -> "Image.Image":
+    """テキストブロックを1bit画像として返す（下余白なし）。"""
+    from PIL import Image, ImageDraw
+    font = _find_font(font_size)
+    img_w = _PRINT_WIDTH_PX
+
+    dummy = Image.new("1", (img_w, 1))
+    draw = ImageDraw.Draw(dummy)
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        if not raw_line:
+            lines.append("")
+            continue
+        cur = ""
+        for ch in raw_line:
+            test = cur + ch
+            bbox = draw.textbbox((0, 0), test, font=font)
+            if bbox[2] - bbox[0] > img_w - padding * 2:
+                lines.append(cur)
+                cur = ch
+            else:
+                cur = test
+        lines.append(cur)
+
+    line_h = font_size + 4
+    img_h = padding + len(lines) * line_h + padding
+    img = Image.new("1", (img_w, img_h), 1)
+    draw = ImageDraw.Draw(img)
+    y = padding
+    for line in lines:
+        draw.text((padding, y), line, font=font, fill=0)
+        y += line_h
+    return img
+
+
+def _stack_images(parts: list, bottom_margin: int = 200) -> tuple[list[bytes], int]:
+    """複数の1bit画像を縦に結合してビットマップ行リストを返す。"""
+    from PIL import Image
+    img_w = _PRINT_WIDTH_PX
+    total_h = sum(p.height for p in parts) + bottom_margin
+    canvas = Image.new("1", (img_w, total_h), 1)
+    y = 0
+    for part in parts:
+        canvas.paste(part, (0, y))
+        y += part.height
+
+    raw_rows = []
+    for row in range(total_h):
+        row_bytes = bytearray(_PRINT_WIDTH_BYTES)
+        for col in range(img_w):
+            if canvas.getpixel((col, row)) == 0:
+                row_bytes[col // 8] |= 0x80 >> (col % 8)
+        raw_rows.append(bytes(row_bytes))
+    return raw_rows, total_h
+
+
+@mcp.tool()
+async def print_image_text(
+    image_path: str,
+    text: str = "",
+    text_position: str = "bottom",
+    font_size: int = 24,
+) -> str:
+    """画像とテキストを組み合わせて感熱紙プリンター（Phomemo M02S）で印刷する。
+
+    image_path: 印刷する画像ファイルのパス
+    text: 一緒に印刷するテキスト（空でも可）
+    text_position: テキストの位置 "top"（画像の上）または "bottom"（画像の下、デフォルト）
+    font_size: テキストのフォントサイズ（デフォルト24）
+    """
+    addr = _PRINTER_ADDR
+    if not addr:
+        return "エラー: PRINTER_ADDRESS 環境変数が未設定です"
+
+    if _PRINTER_LOCK.locked():
+        return "プリンターは別のキャラクターが使用中です。少し待ってから再度呼んでください。"
+
+    def _do():
+        parts = []
+        img_block = _load_image_1bit(image_path)
+        if text and text_position == "top":
+            parts.append(_render_text_block(text, font_size))
+            parts.append(img_block)
+        elif text and text_position == "bottom":
+            parts.append(img_block)
+            parts.append(_render_text_block(text, font_size))
+        else:
+            parts.append(img_block)
+
+        raw_rows, height = _stack_images(parts)
+        packet = _build_print_packet(raw_rows, height)
+        return _rfcomm_print(addr, _PRINTER_CHANNEL, packet)
+
+    async with _PRINTER_LOCK:
+        return await asyncio.to_thread(_do)
 
 
 def main():
