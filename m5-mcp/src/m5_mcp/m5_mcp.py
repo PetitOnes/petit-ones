@@ -1157,5 +1157,196 @@ async def print_image_text(
         return await asyncio.to_thread(_do)
 
 
+# ===================== Rover =====================
+# カンマ区切りで複数URL指定可（例: "http://192.168.8.99,http://192.168.1.99"）
+_ROVER_URLS: list[str] = [
+    u.strip()
+    for u in os.environ.get("ROVER_URL", "http://rover.local").split(",")
+    if u.strip()
+]
+
+
+def _rover_get(path: str, timeout: int = 15) -> requests.Response:
+    last_exc: Optional[Exception] = None
+    for url in _ROVER_URLS:
+        try:
+            r = requests.get(f"{url}{path}", timeout=timeout)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            last_exc = e
+    raise last_exc or RuntimeError("ROVER_URL が未設定です")
+
+
+@mcp.tool()
+async def rover_status() -> str:
+    """ローバーの状態を確認する（現在のドライバー、移動中かどうか）。"""
+    def _do():
+        r = _rover_get("/status")
+        r.raise_for_status()
+        return r.json()
+    d = await asyncio.to_thread(_do)
+    driver = d.get("driver") or "なし"
+    moving = "移動中" if d.get("moving") else "待機中"
+    power = "ON" if d.get("motor_power") else "OFF"
+    bpct = d.get("battery_pct")
+    bv   = d.get("battery_v")
+    bat  = f"{bpct}% ({bv}V)" if bpct is not None else "不明"
+    return f"ドライバー: {driver} / 状態: {moving} / モーター電源: {power} / バッテリー: {bat}"
+
+
+@mcp.tool()
+async def rover_acquire() -> str:
+    """ローバーの操作権を取得する。他のキャラクターが使用中なら失敗する。
+    移動前に必ず呼ぶこと。30秒操作がないと自動解放される。
+    """
+    char_id = os.environ.get("CHARACTER_ID", "unknown")
+    def _do():
+        r = _rover_get(f"/acquire?driver={char_id}")
+        if r.status_code == 409:
+            return f"busy:{r.text.split('busy:')[-1]}"
+        r.raise_for_status()
+        return "ok"
+    result = await asyncio.to_thread(_do)
+    if result.startswith("busy:"):
+        return f"ローバーは {result[5:]} が使用中です。"
+    return f"ローバーの操作権を取得しました（{char_id}）。"
+
+
+@mcp.tool()
+async def rover_release() -> str:
+    """ローバーの操作権を解放する。移動が終わったら呼ぶこと。"""
+    char_id = os.environ.get("CHARACTER_ID", "unknown")
+    def _do():
+        r = _rover_get(f"/release?driver={char_id}")
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    return "ローバーを解放しました。"
+
+
+@mcp.tool()
+async def rover_move(
+    direction: str,
+    distance_cm: int = 20,
+    speed: int = 60,
+) -> str:
+    """ローバーを移動させる。rover_acquire() で操作権を取得してから呼ぶこと。
+
+    direction: "forward"（前進）/ "backward"（後退）/ "left"（左横移動）/ "right"（右横移動）
+    distance_cm: 移動距離（cm、目安）
+    speed: 速さ 0-100（デフォルト60）
+    """
+    def _do():
+        r = _rover_get(f"/move?dir={direction}&dist={distance_cm}&speed={speed}")
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    dir_ja = {"forward": "前進", "backward": "後退", "left": "左横移動", "right": "右横移動"}.get(direction, direction)
+    return f"{dir_ja} {distance_cm}cm 完了。"
+
+
+@mcp.tool()
+async def rover_rotate(
+    direction: str,
+    angle_deg: int = 90,
+    speed: int = 60,
+) -> str:
+    """ローバーをその場で回転させる。rover_acquire() で操作権を取得してから呼ぶこと。
+
+    direction: "right"（右回転）/ "left"（左回転）
+    angle_deg: 回転角度（度、目安）
+    speed: 速さ 0-100（デフォルト60）
+    """
+    def _do():
+        r = _rover_get(f"/rotate?dir={direction}&angle={angle_deg}&speed={speed}")
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    dir_ja = {"right": "右回転", "left": "左回転"}.get(direction, direction)
+    return f"{dir_ja} {angle_deg}度 完了。"
+
+
+@mcp.tool()
+async def rover_sequence(actions: list) -> str:
+    """ローバーに複数の動作を順番に実行させる（1回のMCP呼び出しで完結）。
+    rover_acquire() で操作権を取得してから呼ぶこと。
+
+    actions: 動作リスト。各要素は以下のいずれか:
+      {"action": "move",   "dir": "forward|backward|left|right", "dist": 20, "speed": 60}
+      {"action": "rotate", "dir": "right|left", "angle": 90, "speed": 60}
+      {"action": "beep",   "freq": 440, "dur": 300, "vol": 255}
+      {"action": "stop"}
+      {"action": "wait",   "ms": 500}
+
+    例:
+      [
+        {"action": "move",   "dir": "forward", "dist": 10},
+        {"action": "rotate", "dir": "right",   "angle": 90},
+        {"action": "beep",   "freq": 523,      "dur": 200},
+        {"action": "move",   "dir": "forward", "dist": 10}
+      ]
+    """
+    import json as _json
+    total_ms = sum(
+        a.get("dist", 20) * 25 if a.get("action") == "move" else
+        a.get("angle", 90) * 8 if a.get("action") == "rotate" else
+        a.get("dur", 300)      if a.get("action") == "beep" else
+        a.get("ms", 500)       if a.get("action") == "wait" else 0
+        for a in actions
+    )
+    timeout = max(15, total_ms // 1000 + 5)
+    def _do():
+        r = requests.post(
+            f"{_ROVER_URL}/sequence",
+            json=actions,
+            timeout=timeout,
+        )
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    return f"シーケンス完了: {len(actions)}ステップ"
+
+
+@mcp.tool()
+async def rover_beep(freq: int = 440, duration_ms: int = 300, volume: int = 255) -> str:
+    """ローバーのブザーを鳴らす。
+
+    freq: 周波数 Hz（20〜20000、低いほど低音。例: 262=ド, 330=ミ, 440=ラ）
+    duration_ms: 長さ ミリ秒（1〜3000）
+    volume: 音量 0〜255（デフォルト255=最大）
+    """
+    freq = max(20, min(20000, freq))
+    duration_ms = max(1, min(3000, duration_ms))
+    volume = max(0, min(255, volume))
+    def _do():
+        r = _rover_get(f"/beep?freq={freq}&dur={duration_ms}&vol={volume}", timeout=duration_ms // 1000 + 5)
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    return f"ビープ: {freq}Hz / {duration_ms}ms / 音量{volume}"
+
+
+@mcp.tool()
+async def rover_set_speed(speed: int) -> str:
+    """ローバーのデフォルト速度を変更する。
+
+    speed: 0-100（現在の設定は rover_status() で確認できる）
+    個別の move/rotate 呼び出しで speed を指定しない場合にこの値が使われる。
+    """
+    speed = max(0, min(100, speed))
+    def _do():
+        r = _rover_get(f"/speed?value={speed}")
+        r.raise_for_status()
+        return r.json()
+    d = await asyncio.to_thread(_do)
+    return f"デフォルト速度を {d.get('default_speed')} に設定しました。"
+
+
+@mcp.tool()
+async def rover_stop() -> str:
+    """ローバーを緊急停止する。"""
+    def _do():
+        r = _rover_get("/stop")
+        r.raise_for_status()
+    await asyncio.to_thread(_do)
+    return "ローバーを停止しました。"
+
+
 def main():
     mcp.run()

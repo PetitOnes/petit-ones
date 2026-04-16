@@ -1221,6 +1221,8 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     # 解決したM5ホストを環境変数で渡す（MCP サーバーが使う）
     if resolved_host:
         env["M5_HOST"] = resolved_host
+    # ローバーURL（カンマ区切りでフォールバック）
+    env.setdefault("ROVER_URL", "http://192.168.8.99,http://192.168.1.99")
     sf = session_file(character_id, username)
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
