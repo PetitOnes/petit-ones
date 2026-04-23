@@ -899,6 +899,9 @@ BASE_TOOLS = [
     "mcp__m5-mcp__look",
     "mcp__m5-mcp__blink",
     "mcp__m5-mcp__get_sensor_data",
+    "mcp__m5-module-mcp__get_env",
+    "mcp__m5-module-mcp__get_gps",
+    "mcp__m5-module-mcp__get_ble_rssi",
     "mcp__m5-mcp__show_face",
     "mcp__m5-mcp__list_faces",
     "mcp__m5-mcp__list_sounds",
@@ -938,6 +941,20 @@ BASE_TOOLS = [
     "mcp__notes__write_note",
     "mcp__notes__append_note",
     "mcp__notes__delete_note",
+    # m5-module (ENV PRO: 気温・湿度・気圧, GPS)
+    "mcp__m5-module__get_env",
+    "mcp__m5-module__get_gps",
+    # garmin-ble (BLEリアルタイム心拍・HRV)
+    "mcp__garmin-ble__get_realtime_heart_rate",
+    "mcp__garmin-ble__scan_ble_devices",
+    "mcp__garmin-ble__get_hrv_analysis",
+    # garmin-health (Garmin Connect履歴データ)
+    "mcp__garmin-health__get_heart_rate",
+    "mcp__garmin-health__get_sleep",
+    "mcp__garmin-health__get_stress",
+    "mcp__garmin-health__get_body_battery",
+    "mcp__garmin-health__get_steps",
+    "mcp__garmin-health__get_health_summary",
 ]
 CAMERA_TOOLS = ["mcp__m5-mcp__take_snapshot"]
 SOUND_TOOLS = ["mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon"]
