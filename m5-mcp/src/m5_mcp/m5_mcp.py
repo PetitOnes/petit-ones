@@ -1294,12 +1294,15 @@ async def rover_sequence(actions: list) -> str:
     )
     timeout = max(15, total_ms // 1000 + 5)
     def _do():
-        r = requests.post(
-            f"{_ROVER_URL}/sequence",
-            json=actions,
-            timeout=timeout,
-        )
-        r.raise_for_status()
+        last_exc: Optional[Exception] = None
+        for url in _ROVER_URLS:
+            try:
+                r = requests.post(f"{url}/sequence", json=actions, timeout=timeout)
+                r.raise_for_status()
+                return
+            except Exception as e:
+                last_exc = e
+        raise last_exc or RuntimeError("ROVER_URL が未設定です")
     await asyncio.to_thread(_do)
     return f"シーケンス完了: {len(actions)}ステップ"
 
