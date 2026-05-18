@@ -38,7 +38,7 @@
 
 ### フォーク元から引き継いでいるもの
 
-memory-mcp, tts-mcp, system-temperature-mcp, mobility-mcp, ip-webcam-mcp, mcp-pet, morning-call-mcp はフォーク元にも存在する。memory-mcp は視覚記憶・エピソード・因果リンク・Theory of Mind・記憶整理 (sleep) などが追加されている。
+memory-mcp はフォーク元にも存在する。このフォークでは視覚記憶・エピソード・因果リンク・Theory of Mind・記憶整理 (sleep) などが追加されている。wifi-cam-mcp, usb-webcam-mcp, system-temperature-mcp, ip-webcam-mcp, mcp-pet, mobility-mcp, morning-call-mcp は `archive/` に退避済み（未使用）。
 
 ## 概要
 
@@ -63,42 +63,48 @@ embodied-claude/              ← コード（git管理、public）
 ├── relations-mcp/            # 関係性 MCP
 ├── notes-mcp/                # 永続ノート MCP
 ├── dashboard/                # Web ダッシュボード
-├── tts-mcp/                  # 音声合成 MCP（ElevenLabs / VOICEVOX）
-├── system-temperature-mcp/   # 体温感覚 MCP
 ├── scripts/                  # ユーティリティスクリプト
 │   ├── write_mailbox.py      #   メールボックス書き込み
 │   ├── reader.py             #   メモリ読み出し
 │   ├── register_speaker.sh   #   話者声紋登録
-│   └── speaker_config.json.example # ↑の設定ファイルサンプル
+│   └── speaker_config.json.example
+├── docs/                     # 設計・移行計画ドキュメント
+├── archive/                  # 未使用 MCP（wifi-cam, usb-webcam, system-temperature 等）
 ├── autonomous-action.sh      # 自律行動スクリプト（.gitignore）
-├── autonomous-action.sample.sh # ↑のテンプレート
-├── create_character.py       # キャラ追加スクリプト
-│
-│  # フォーク元由来（未使用 or 用途限定）
-├── wifi-cam-mcp/             # Wi-Fi PTZ カメラ（Tapo 用）
-├── usb-webcam-mcp/           # USB カメラ
-├── ip-webcam-mcp/            # Android スマホカメラ
-├── mobility-mcp/             # ロボット掃除機
-├── mcp-pet/                  # PErsonal Terminal
-└── morning-call-mcp/         # 目覚ましコール
+└── autonomous-action.sample.sh # ↑のテンプレート
 
 ~/petit_claude/               ← データ（PETIT_DATA_DIR、private）
 ├── characters/
-│   ├── puchiko/
-│   │   ├── config.json       # M5ホスト・キャラ名・カラー
-│   │   ├── SOUL.md           # 性格設定
-│   │   ├── settings.json     # アクティブ時間帯・機能ON/OFF
-│   │   ├── desires.json      # 現在の欲求レベル（5分毎更新）
-│   │   ├── desire_config.json # 欲求定義・sensor_effects・cross_effects
-│   │   ├── relations.json    # 他キャラ/ユーザーへの感情
-│   │   ├── autonomous-mcp.json # 自律行動用 MCP 設定
-│   │   ├── chat_history.json # チャット履歴
-│   │   └── notes/            # 永続ノート
-│   └── puchiteya/
+│   └── puchiko/              # キャラクターごとにサブディレクトリ
+│       ├── config/
+│       │   ├── config.json          # M5ホスト・キャラ名・カラー
+│       │   ├── settings.json        # アクティブ時間帯・機能ON/OFF
+│       │   ├── autonomous-mcp.json  # 自律行動用 MCP 設定
+│       │   ├── desire_config.json   # 欲求定義・sensor_effects・cross_effects
+│       │   └── voice_settings.json  # TTS 声設定
+│       ├── data/
+│       │   ├── desires.json         # 現在の欲求レベル（5分毎更新）
+│       │   └── relations.json       # 他キャラ/ユーザーへの感情
+│       ├── state/                   # セッション状態ファイル
+│       ├── resources/               # petit.png など
+│       ├── m5_scripts/              # M5Stack スケッチ
+│       ├── chat_histories/          # 1対1チャット履歴
+│       ├── diary/                   # 日記テキスト（YYYY-MM-DD.txt）
+│       ├── diary_summary.md         # 常時ロード用サマリー（generate_diary.py が生成）
+│       ├── notes/                   # 永続ノート（notes-mcp）
+│       ├── SOUL.md                  # 人格コア（常時ロード）
+│       ├── SOUL_REFLECTIONS.md      # 思索・深層記憶（参照用）
+│       ├── REFLECTION_INDEX.md      # 思索索引（常時ロード）
+│       ├── ROUTINES.md              # 生活リズム（常時ロード）
+│       ├── ROUTINES_DETAIL.md       # 詳細手順（参照用）
+│       ├── TODO_ACTIVE.md           # 今やること（常時ロード）
+│       └── TODO_ARCHIVE.md          # 完了タスク（参照用）
+├── chat_history/             # グループチャット・交換ノート
+│   ├── exchange_notebook.json
+│   ├── group_chat.json
+│   └── trio_chat.json
 ├── mailbox/                  # キャラ間メッセージ
 ├── .autonomous-logs/         # 自律行動ログ
-├── SOUL.md, TODO.md, ROUTINES.md
-├── settings.json, group_chat.json
 ├── auth.json                 # ダッシュボード認証（オプション）
 └── backup/                   # バックアップスクリプト + データ
 ```
@@ -130,7 +136,7 @@ cd embodied-claude
 ### 3. 依存関係インストール
 
 ```bash
-for dir in m5-mcp memory-mcp desire-system dashboard relations-mcp notes-mcp system-temperature-mcp; do
+for dir in m5-mcp memory-mcp desire-system dashboard relations-mcp notes-mcp; do
   echo "--- $dir ---"
   (cd "$dir" && uv sync)
 done
@@ -139,14 +145,14 @@ done
 ### 4. キャラクター追加
 
 ```bash
-uv run python create_character.py <id> <名前> <カラー> <M5のIP>
+uv run python scripts/create_character.py <id> <名前> <カラー> <M5のIP>
 
 # 例:
-uv run python create_character.py puchiko ぷちこ "#cab8d9" 10.42.138.100
+uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" 10.42.138.100
 ```
 
 自動で以下が作られる:
-- `~/petit_claude/characters/{id}/` に設定ファイル一式
+- `~/petit_claude/characters/{id}/` に設定ファイル一式（config/, data/, state/ 等）
 - crontab に欲求更新（5分毎）と自律行動（20分毎）
 
 追加後に `characters/{id}/SOUL.md` を編集して性格を書く。

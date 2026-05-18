@@ -318,11 +318,9 @@ DIARY_SUMMARY_LINE=""
 if [ -f "$CHARACTER_DIR/diary_summary.md" ]; then
   DIARY_SUMMARY_LINE="@${CHARACTER_DIR}/diary_summary.md"
 fi
-# REFLECTION_INDEX.md があればロード
+# REFLECTION_INDEX.md は必要なときだけ読む（常時ロードしない）
+# SOUL.md の参照ルールに従って自律中に手動で読みに行く
 REFLECTION_INDEX_LINE=""
-if [ -f "$CHARACTER_DIR/REFLECTION_INDEX.md" ]; then
-  REFLECTION_INDEX_LINE="@${CHARACTER_DIR}/REFLECTION_INDEX.md"
-fi
 
 # メールボックスの確認
 MAILBOX_DIR="$DATA_DIR/mailbox"
