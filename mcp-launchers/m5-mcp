@@ -1,0 +1,2 @@
+#!/bin/bash
+exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/work/embodied-claude/m5-mcp m5-mcp "$@"
