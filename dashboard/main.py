@@ -662,7 +662,8 @@ PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
-NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
+CHAT_HISTORY_DIR = DATA_DIR / "chat_history"
+NOTEBOOK_FILE = CHAT_HISTORY_DIR / "exchange_notebook.json"
 ALBUM_DIR = DATA_DIR / "photo_album"
 ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
 ALBUM_MAX_PHOTOS = 50
@@ -671,8 +672,8 @@ ALBUM_JPEG_QUALITY = 80
 
 # ユーザー別交換ノートのマッピング
 _USER_NOTEBOOK = {
-    "arisan": DATA_DIR / "exchange_notebook.json",
-    "kazahaya": DATA_DIR / "exchange_notebook_kazahaya.json",
+    "arisan": CHAT_HISTORY_DIR / "exchange_notebook.json",
+    "kazahaya": CHAT_HISTORY_DIR / "exchange_notebook_kazahaya.json",
 }
 
 
@@ -852,7 +853,7 @@ async def resolve_m5_host(cfg: dict, port: int = 80, timeout: float = 2.0) -> st
 
 
 def get_char_config(character_id: str) -> dict:
-    cfg_path = char_dir(character_id) / "config.json"
+    cfg_path = char_dir(character_id) / "config" / "config.json"
     if cfg_path.exists():
         try:
             return json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -868,7 +869,8 @@ def char_dir(character_id: str) -> Path:
 def _record_last_session(character_id: str, username: str) -> None:
     """ダッシュボードチャット後に last_session.txt へ時刻とユーザーを記録する。"""
     try:
-        p = char_dir(character_id) / "last_session.txt"
+        p = char_dir(character_id) / "state" / "last_session.txt"
+        p.parent.mkdir(exist_ok=True)
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         p.write_text(f"{now} {username}\n")
     except Exception:
@@ -877,22 +879,24 @@ def _record_last_session(character_id: str, username: str) -> None:
 
 def session_file(character_id: str, username: str | None = None) -> Path:
     if username and username != "arisan":
-        return char_dir(character_id) / f".dashboard-session-id.{username}"
-    return char_dir(character_id) / ".dashboard-session-id"
+        return char_dir(character_id) / "state" / f".dashboard-session-id.{username}"
+    return char_dir(character_id) / "state" / ".dashboard-session-id"
 
 
 def chat_log_file(character_id: str, username: str | None = None) -> Path:
+    history_dir = char_dir(character_id) / "chat_histories"
+    history_dir.mkdir(exist_ok=True)
     if username and username != "arisan":
-        return char_dir(character_id) / f"chat_history_{username}.json"
-    return char_dir(character_id) / "chat_history.json"
+        return history_dir / f"chat_history_{username}.json"
+    return history_dir / "chat_history.json"
 
 
 def desires_path(character_id: str) -> Path:
-    return char_dir(character_id) / "desires.json"
+    return char_dir(character_id) / "data" / "desires.json"
 
 
 def settings_file(character_id: str) -> Path:
-    return char_dir(character_id) / "settings.json"
+    return char_dir(character_id) / "config" / "settings.json"
 
 BASE_TOOLS = [
     # m5-mcp（全ツール）
@@ -990,7 +994,7 @@ def list_characters() -> list[dict]:
     for d in sorted(CHARACTERS_DIR.iterdir()):
         if not d.is_dir():
             continue
-        cfg_path = d / "config.json"
+        cfg_path = d / "config" / "config.json"
         if cfg_path.exists():
             try:
                 cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
@@ -1125,11 +1129,11 @@ def append_chat(character_id: str, role: str, text: str, username: str | None = 
 
 
 def group_log_file() -> Path:
-    return DATA_DIR / "group_chat.json"
+    return CHAT_HISTORY_DIR / "group_chat.json"
 
 
 def trio_log_file() -> Path:
-    return DATA_DIR / "trio_chat.json"
+    return CHAT_HISTORY_DIR / "trio_chat.json"
 
 
 TRIO_CHAR_IDS = ["puchiko", "puchiteya"]
@@ -1172,7 +1176,7 @@ def append_trio_log(entry: dict) -> None:
 
 
 async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False) -> str:
-    char_mcp = char_dir(character_id) / "autonomous-mcp.json"
+    char_mcp = char_dir(character_id) / "config" / "autonomous-mcp.json"
     mcp_config = char_mcp if char_mcp.exists() else PROJECT_DIR / "autonomous-mcp.json"
     soul = get_soul(character_id)
     settings = get_settings(character_id)
@@ -1382,7 +1386,7 @@ def _recolor_avatar(character_id: str) -> bytes:
     color_hex = cfg.get("color", "#cab8d9")
     target_rgb = _hex_to_rgb(color_hex)
 
-    petit_path = char_dir(character_id) / "petit.png"
+    petit_path = char_dir(character_id) / "resources" / "petit.png"
     if not petit_path.exists():
         data = _make_color_circle(color_hex)
         _avatar_cache[character_id] = data
@@ -1428,7 +1432,7 @@ def api_relations(request: Request):
     nodes = []
     for c in chars:
         cfg = get_char_config(c["id"])
-        rel_path = char_dir(c["id"]) / "relations.json"
+        rel_path = char_dir(c["id"]) / "data" / "relations.json"
         self_info = {}
         if rel_path.exists():
             try:
@@ -1440,7 +1444,7 @@ def api_relations(request: Request):
             "id": c["id"],
             "name": cfg.get("name", c["id"]),
             "color": cfg.get("color", "#cab8d9"),
-            "has_avatar": (char_dir(c["id"]) / "petit.png").exists(),
+            "has_avatar": (char_dir(c["id"]) / "resources" / "petit.png").exists(),
             "self_info": self_info,
         })
 
@@ -1471,7 +1475,7 @@ def api_relations(request: Request):
 
     edges = []
     for c in chars:
-        rel_path = char_dir(c["id"]) / "relations.json"
+        rel_path = char_dir(c["id"]) / "data" / "relations.json"
         if not rel_path.exists():
             continue
         try:
@@ -2409,7 +2413,7 @@ async def _speak_direct(character_id: str, text: str):
     import requests as req, tempfile
     try:
         # voice_settings.json から voicevox_speaker 取得
-        vs_path = char_dir(character_id) / "voice_settings.json"
+        vs_path = char_dir(character_id) / "config" / "voice_settings.json"
         vs = json.loads(vs_path.read_text()) if vs_path.exists() else {}
         speaker = vs.get("voicevox_speaker", 1)
 
@@ -3228,7 +3232,7 @@ async def api_public_chat(req: PublicChatRequest, request: Request):
     audio_id = None
     try:
         import requests as req_lib
-        vs_path = char_dir(req.character_id) / "voice_settings.json"
+        vs_path = char_dir(req.character_id) / "config" / "voice_settings.json"
         vs = json.loads(vs_path.read_text()) if vs_path.exists() else {}
         tts_payload = {"text": reply, "engine": "voicevox", "voicevox_speaker": vs.get("voicevox_speaker", 1)}
         for key in ("speed_scale", "pitch_scale", "intonation_scale", "volume_scale",
@@ -3761,7 +3765,7 @@ def api_set_m5_hosts(character_id: str, data: dict):
     if not isinstance(hosts, list):
         return {"ok": False, "error": "m5_hosts must be a list"}
     hosts = [h.strip() for h in hosts if isinstance(h, str) and h.strip()]
-    cfg_path = char_dir(character_id) / "config.json"
+    cfg_path = char_dir(character_id) / "config" / "config.json"
     cfg = get_char_config(character_id)
     cfg["m5_hosts"] = hosts
     if hosts:
@@ -4078,7 +4082,7 @@ def api_photo_serve(character_id: str, filename: str):
 
 def _char_display_name(char_id: str) -> str:
     """キャラクターIDから表示名を取得する。"""
-    config_path = CHARACTERS_DIR / char_id / "config.json"
+    config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
     if config_path.exists():
         try:
             cfg = json.loads(config_path.read_text(encoding="utf-8"))

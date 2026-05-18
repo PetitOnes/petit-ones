@@ -52,7 +52,7 @@ def get_relations() -> str:
     data = _load()
     others_data = {}
     for cid in _other_chars():
-        other_path = CHARACTERS_DIR / cid / "relations.json"
+        other_path = CHARACTERS_DIR / cid / "data" / "relations.json"
         if other_path.exists():
             try:
                 others_data[cid] = json.loads(other_path.read_text(encoding="utf-8"))

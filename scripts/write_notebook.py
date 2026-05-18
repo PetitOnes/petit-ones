@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
-NOTEBOOK_FILE = DATA_DIR / "exchange_notebook.json"
+NOTEBOOK_FILE = DATA_DIR / "chat_history" / "exchange_notebook.json"
 
 VALID_AUTHORS = {"ぷちてゃ", "ぷちこ", "ぷちる", "ありさん"}
 

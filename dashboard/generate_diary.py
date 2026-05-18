@@ -28,6 +28,36 @@ from main import (
 )
 
 
+def update_diary_summary(cid: str, recent_days: int = 7) -> None:
+    """diary/ 以下のファイルから diary_summary.md を生成・更新する。"""
+    diary_dir = char_dir(cid) / "diary"
+    if not diary_dir.exists():
+        return
+
+    files = sorted(diary_dir.glob("*.txt"), reverse=True)
+    if not files:
+        return
+
+    latest_file = files[0]
+    latest_date = latest_file.stem
+    latest_text = latest_file.read_text(encoding="utf-8").strip()
+
+    lines = [f"## 最新の日記（{latest_date}）\n", latest_text, ""]
+
+    past_files = files[1: recent_days + 1]
+    if past_files:
+        lines.append("## 直近の日記")
+        for f in past_files:
+            text = f.read_text(encoding="utf-8").strip()
+            first_line = text.splitlines()[0] if text else ""
+            if len(first_line) > 80:
+                first_line = first_line[:80] + "…"
+            lines.append(f"- {f.stem}: {first_line}")
+
+    summary_path = char_dir(cid) / "diary_summary.md"
+    summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 async def generate_all(date: str) -> None:
     chars = list_characters()
     if not chars:
@@ -51,6 +81,8 @@ async def generate_all(date: str) -> None:
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / f"{date}.txt").write_text(summary, encoding="utf-8")
             print(f"[{name}] 保存完了: {summary[:60]}...")
+            update_diary_summary(cid)
+            print(f"[{name}] diary_summary.md 更新完了")
         else:
             print(f"[{name}] 生成失敗")
 

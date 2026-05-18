@@ -41,7 +41,7 @@ _default_memory_db = str(Path.home() / ".claude" / "memories" / CHARACTER_ID / "
 MEMORY_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", _default_memory_db))
 
 # 欲求レベル出力先（キャラクター別）
-_default_desires_path = str(DATA_DIR / "characters" / CHARACTER_ID / "desires.json")
+_default_desires_path = str(DATA_DIR / "characters" / CHARACTER_ID / "data" / "desires.json")
 DESIRES_PATH = Path(os.getenv("DESIRES_PATH", _default_desires_path))
 
 # 一緒にいる人の名前（miss_companion 欲求で使う）
@@ -94,7 +94,7 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
     """desire_config.json を読み込む。"""
     if data_dir is None:
         data_dir = DATA_DIR
-    config_path = data_dir / "characters" / char_id / "desire_config.json"
+    config_path = data_dir / "characters" / char_id / "config" / "desire_config.json"
     if not config_path.exists():
         raise FileNotFoundError(f"desire_config.json が見つかりません: {config_path}")
 
@@ -248,7 +248,7 @@ def fetch_sensor_data(char_id: str, data_dir: Path | None = None) -> dict[str, A
     """
     if data_dir is None:
         data_dir = DATA_DIR
-    config_path = data_dir / "characters" / char_id / "config.json"
+    config_path = data_dir / "characters" / char_id / "config" / "config.json"
     if not config_path.exists():
         return {}
 
