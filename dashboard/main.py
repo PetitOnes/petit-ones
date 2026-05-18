@@ -80,7 +80,9 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
             f"スピーカーが使えるなら、写真を見た感想を `speak` で一言声に出して、"
             f"`show_face` か `play_sound` で気持ちを表現してもいい。"
         )
-        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        cam_backend = os.getenv("M5_CAM_BACKEND")
+        cam_model = f"{cam_backend}:{os.getenv('M5_CAM_MODEL', '')}" if cam_backend else None
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=cam_model)
         print(f"[m5_watcher] {character_id}: camera done ({result[:40] if result else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: camera error: {e}")
@@ -113,7 +115,9 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str 
             f"スピーカーが使えるなら、今の感じを `speak` で一言声に出して、"
             f"`show_face` か `play_sound` で気持ちを表現してもいい。"
         )
-        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        sen_backend = os.getenv("M5_SEN_BACKEND")
+        sen_model = f"{sen_backend}:{os.getenv('M5_SEN_MODEL', '')}" if sen_backend else None
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=sen_model)
         print(f"[m5_watcher] {character_id}: sensor done ({result[:40] if result else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: sensor error: {e}")
@@ -229,7 +233,9 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             f"3. スピーカーが使えるなら `speak` で一言声に出して反応する\n"
             f"任意: `show_face` か `play_sound` で気持ちを表現してもいい。"
         )
-        result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True)
+        mic_backend = os.getenv("M5_MIC_BACKEND")
+        mic_model = f"{mic_backend}:{os.getenv('M5_MIC_MODEL', '')}" if mic_backend else None
+        result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=mic_model)
         print(f"[m5_watcher] {character_id}: mic done ({result2[:40] if result2 else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: mic error: {e}")
@@ -1238,34 +1244,77 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
     )
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
-    # 解決したM5ホストを環境変数で渡す（MCP サーバーが使う）
-    if resolved_host:
-        env["M5_HOST"] = resolved_host
-    # ローバーURL（カンマ区切りでフォールバック）
-    env.setdefault("ROVER_URL", "http://192.168.8.99,http://192.168.1.99")
-    sf = session_file(character_id, username)
-
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
     effective_message = message
     if username and username != "arisan":
         effective_message = f"[{user_display_name}から] {message}"
 
-    model = model or os.getenv("CLAUDE_MODEL", "sonnet")
+    backend = model.split(":", 1)[0] if model and ":" in (model or "") else os.getenv("CHAT_BACKEND", "claude")
+    model_name = model.split(":", 1)[1] if model and ":" in (model or "") else model
+
+    # --- Gemini backend ---
+    if backend == "gemini":
+        try:
+            import google.genai as genai
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                return "GOOGLE_API_KEY not set"
+            m = model_name or os.getenv("CHAT_MODEL", "gemini-2.5-flash")
+            client = genai.Client(api_key=api_key)
+            full_prompt = f"{system_prompt}\n\n{effective_message}"
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, lambda: client.models.generate_content(model=m, contents=full_prompt)
+            )
+            return response.text.strip()
+        except asyncio.TimeoutError:
+            return "タイムアウトしました"
+        except Exception as e:
+            return f"エラー: {e}"
+
+    # --- OpenAI backend ---
+    if backend == "openai":
+        try:
+            from openai import AsyncOpenAI
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                return "OPENAI_API_KEY not set"
+            m = model_name or os.getenv("CHAT_MODEL", "gpt-4o-mini")
+            oai = AsyncOpenAI(api_key=api_key)
+            response = await oai.chat.completions.create(
+                model=m,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": effective_message},
+                ],
+            )
+            return response.choices[0].message.content.strip()
+        except asyncio.TimeoutError:
+            return "タイムアウトしました"
+        except Exception as e:
+            return f"エラー: {e}"
+
+    # --- Claude backend (default) ---
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    if resolved_host:
+        env["M5_HOST"] = resolved_host
+    env.setdefault("ROVER_URL", "http://192.168.8.99,http://192.168.1.99")
+    sf = session_file(character_id, username)
+
+    model_name = model_name or os.getenv("CLAUDE_MODEL", "sonnet")
     _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                      "--dangerously-skip-permissions", "--output-format", "json", "--verbose"]
 
     if sf.exists():
         sid = sf.read_text().strip()
-        cmd = ["claude", "-p", "--model", model, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
+        cmd = ["claude", "-p", "--model", model_name, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
     else:
-        cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt] + _common_flags
+        cmd = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
 
     def _extract_reply(raw: str) -> tuple[str, str]:
         """verbose JSONから返答テキストとsession_idを抽出する。"""
         try:
             data = json.loads(raw)
-            # verbose出力はJSON配列
             if isinstance(data, list):
                 session_id = ""
                 text_parts = []
@@ -1278,7 +1327,6 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
                             if block.get("type") == "text":
                                 text_parts.append(block["text"])
                 return "\n".join(text_parts), session_id
-            # 非verboseのフォールバック
             if isinstance(data, dict):
                 return data.get("result", raw), data.get("session_id", "")
         except (json.JSONDecodeError, TypeError):
@@ -1298,10 +1346,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
 
     try:
         output, err = await _run_cmd(cmd)
-        # resume失敗（セッション切れ）なら新規セッションでリトライ
         if sf.exists() and "No conversation found" in output:
             sf.unlink(missing_ok=True)
-            cmd = ["claude", "-p", "--model", model, "--append-system-prompt", system_prompt] + _common_flags
+            cmd = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
             output, err = await _run_cmd(cmd)
         reply, new_sid = _extract_reply(output)
         if new_sid:
@@ -1314,8 +1361,50 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         return f"エラー: {e}"
 
 
+async def _generate_diary_with_claude(prompt: str) -> str:
+    diary_model = os.getenv("CLAUDE_MODEL", "sonnet")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    proc = await asyncio.create_subprocess_exec(
+        "claude", "-p", "--model", diary_model, prompt,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=env, cwd=str(PROJECT_DIR),
+    )
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
+    return stdout.decode().strip() or stderr.decode().strip()
+
+
+async def _generate_diary_with_gemini(prompt: str) -> str:
+    import google.genai as genai
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY not set")
+    model_name = os.getenv("DIARY_MODEL", "gemini-2.5-flash")
+    client = genai.Client(api_key=api_key)
+    loop = asyncio.get_event_loop()
+    response = await loop.run_in_executor(
+        None,
+        lambda: client.models.generate_content(model=model_name, contents=prompt),
+    )
+    return response.text.strip()
+
+
+async def _generate_diary_with_openai(prompt: str) -> str:
+    from openai import AsyncOpenAI
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not set")
+    model_name = os.getenv("DIARY_MODEL", "gpt-4o-mini")
+    client = AsyncOpenAI(api_key=api_key)
+    response = await client.chat.completions.create(
+        model=model_name,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content.strip()
+
+
 async def generate_diary_summary(character_id: str, date: str, memories: list[dict]) -> str:
-    """1日の記憶をClaudeで短くまとめる。過去の日付のみキャッシュ。"""
+    """1日の記憶をAIで短くまとめる。DIARY_BACKEND=gemini でGemini Flashを使用。"""
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     cache_dir = char_dir(character_id) / "diary"
     cache_file = cache_dir / f"{date}.txt"
@@ -1335,17 +1424,14 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
         "この日を自分の口調で2〜3文の日記にまとめて。余計な前置きなしで日記の文章だけ書いて。"
     )
 
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
-    diary_model = os.getenv("CLAUDE_MODEL", "sonnet")
+    backend = os.getenv("DIARY_BACKEND", "claude")
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", "--model", diary_model, prompt,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=env, cwd=str(PROJECT_DIR),
-        )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
-        summary = stdout.decode().strip() or stderr.decode().strip()
+        if backend == "gemini":
+            summary = await _generate_diary_with_gemini(prompt)
+        elif backend == "openai":
+            summary = await _generate_diary_with_openai(prompt)
+        else:
+            summary = await _generate_diary_with_claude(prompt)
     except Exception as e:
         return f"（サマリー生成失敗: {e}）"
 
@@ -1495,6 +1581,11 @@ def api_relations(request: Request):
             })
 
     return {"nodes": nodes, "edges": edges}
+
+
+@app.get("/terminal", response_class=HTMLResponse)
+def terminal_page():
+    return HTMLResponse(TERMINAL_HTML)
 
 
 @app.get("/kankei", response_class=HTMLResponse)
@@ -5641,6 +5732,37 @@ HTML = """<!DOCTYPE html>
 """
 
 
+TERMINAL_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ターミナル</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; font-family: -apple-system, sans-serif; }
+    .header { background: #16213e; padding: 10px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #0f3460; }
+    .header a { color: #cab8d9; text-decoration: none; font-size: 0.85rem; opacity: 0.7; }
+    .header a:hover { opacity: 1; }
+    .header span { color: #cab8d9; font-size: 0.95rem; font-weight: 600; }
+    iframe { flex: 1; border: none; width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <a href="/">← ダッシュボード</a>
+    <span>Claude Code ターミナル</span>
+  </div>
+  <iframe id="terminal-frame" allowfullscreen></iframe>
+  <script>
+    const ttydUrl = location.protocol + '//' + location.hostname + ':7682';
+    document.getElementById('terminal-frame').src = ttydUrl;
+  </script>
+</body>
+</html>
+"""
+
+
 KANKEI_HTML = """<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -7280,6 +7402,10 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 
 def main():
     import uvicorn
+    from dotenv import load_dotenv
+    _env_file = Path.home() / "petit_claude" / ".env.dashboard"
+    if _env_file.exists():
+        load_dotenv(_env_file, override=False)
     port = int(os.getenv("DASHBOARD_PORT", "8765"))
     host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     uvicorn.run(app, host=host, port=port)

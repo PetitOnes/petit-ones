@@ -1,7 +1,7 @@
 ---
 description: "キャラクターとチャットする。複数人も可。/chat puchiko puchiteya のように並べる。/endchat で終了。"
 argument-hint: "<id> [id2] [id3]  例: puchiko / puchiteya puchiru / puchiko puchiteya puchiru"
-allowed-tools: Read(/home/cube-petit/petit_claude/**), mcp__memory__remember, mcp__memory__search_memories
+allowed-tools: Read(/home/cube-petit/petit_claude/**), mcp__memory__remember, mcp__memory__search_memories, mcp__memory-puchiko__remember, mcp__memory-puchiko__search_memories, mcp__memory-puchiteya__remember, mcp__memory-puchiteya__search_memories, mcp__memory-puchiru__remember, mcp__memory-puchiru__search_memories
 ---
 
 キャラクターとのチャットモードを開始する。
@@ -35,8 +35,11 @@ allowed-tools: Read(/home/cube-petit/petit_claude/**), mcp__memory__remember, mc
 - Claude Code の機能は使わない（コード実行・ファイル編集など）
 - `/endchat` または「終わり」「おわり」で → 以下の順で終了する:
   1. 各キャラがさよならを言う
-  2. **会話の中で印象的だったこと・気づき・ありさんとの話題を `mcp__memory__remember` で保存する**
-     - 複数キャラの場合: 各キャラの視点で1件ずつ（合計最大3件）
+  2. **会話の中で印象的だったこと・気づき・ありさんとの話題を各キャラの専用 memory MCP で保存する**
+     - ぷちこ → `mcp__memory-puchiko__remember`
+     - ぷちてゃ → `mcp__memory-puchiteya__remember`
+     - ぷちる → `mcp__memory-puchiru__remember`
+     - 1キャラの場合はそのキャラのツールを使う
      - content には「ありさんとの会話（/chat）: ～」と明記する
      - emotion, importance（0.0〜1.0）, category（"conversation"）を付ける
      - 特に印象的なことがなければ保存しなくてよい
@@ -44,7 +47,6 @@ allowed-tools: Read(/home/cube-petit/petit_claude/**), mcp__memory__remember, mc
 
 ## 記憶保存の注意
 
-- このセッションの memory MCP は1キャラ分しか接続されていない可能性がある
 - 保存を試みてエラーになった場合はスキップしてよい（会話の質を優先）
 - 保存できた場合は「〇〇の記憶に残しました」と一言添える
 
