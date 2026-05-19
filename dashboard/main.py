@@ -4206,20 +4206,44 @@ def _char_display_name(char_id: str) -> str:
     return char_id
 
 
+def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
+    """ファイル名からメタ情報を抽出（コンテンツ未読）。対象外はNone。"""
+    name = f.stem
+    if not (name.startswith(f"to_{username}") or f"_to_{username}_" in name):
+        return None
+    parts = name.split("_")
+    date_str = ""
+    sender = ""
+    if parts[0] == "from" and "to" in parts:
+        ti = parts.index("to")
+        sender_id = "_".join(parts[1:ti])
+        sender = _char_display_name(sender_id)
+        rest = parts[ti + 2:]
+        if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
+            date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
+    else:
+        if len(parts) >= 4:
+            date_str = parts[2]
+            time_str = parts[3] if len(parts) > 3 else ""
+            if len(date_str) == 8 and len(time_str) >= 4:
+                date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
+    return {"_file": f, "filename": f.name, "date": date_str, "sender": sender}
+
+
 @app.get("/api/mailbox")
-def api_mailbox(filter: str = "inbox", request: Request = None):
+def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, request: Request = None):
     """ログインユーザー宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
     username = _get_username(request) or "arisan" if request else "arisan"
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
-        return []
-    mails = []
+        return {"total": 0, "items": []}
+    # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）
+    candidates = []
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
             continue
-        name = f.stem
-        # 新形式: from_送信元_to_<user>_日時 / 旧形式: to_<user>_日時
-        if not (name.startswith(f"to_{username}") or f"_to_{username}_" in name):
+        info = _parse_mail_meta_from_file(f, username)
+        if info is None:
             continue
         meta = _get_mail_meta(f.name)
         if filter == "inbox" and meta["archived"]:
@@ -4228,38 +4252,31 @@ def api_mailbox(filter: str = "inbox", request: Request = None):
             continue
         if filter == "starred" and not meta["starred"]:
             continue
-        content = f.read_text(encoding="utf-8")
-        parts = name.split("_")
-        date_str = ""
-        sender = ""
-        if parts[0] == "from" and "to" in parts:
-            ti = parts.index("to")
-            sender_id = "_".join(parts[1:ti])
-            sender = _char_display_name(sender_id)
-            rest = parts[ti + 2:]
-            if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
-                date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
-        else:
-            if len(parts) >= 4:
-                date_str = parts[2]
-                time_str = parts[3] if len(parts) > 3 else ""
-                if len(date_str) == 8 and len(time_str) >= 4:
-                    date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
+        info["archived"] = meta["archived"]
+        info["starred"] = meta["starred"]
+        info["read_by"] = meta.get("read_by", [])
+        candidates.append(info)
+    candidates.sort(key=lambda m: m["date"], reverse=True)
+    total = len(candidates)
+    # Phase2: 該当ページ分だけコンテンツ読み込み
+    items = []
+    for c in candidates[offset:offset + limit]:
+        content = c["_file"].read_text(encoding="utf-8")
+        sender = c["sender"]
         if not sender:
             lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
             if lines:
                 sender = lines[-1]
-        mails.append({
-            "filename": f.name,
+        items.append({
+            "filename": c["filename"],
             "content": content,
-            "date": date_str,
+            "date": c["date"],
             "sender": sender,
-            "archived": meta["archived"],
-            "starred": meta["starred"],
-            "read_by": meta.get("read_by", []),
+            "archived": c["archived"],
+            "starred": c["starred"],
+            "read_by": c["read_by"],
         })
-    mails.sort(key=lambda m: m["date"], reverse=True)
-    return mails
+    return {"total": total, "offset": offset, "items": items}
 
 
 @app.get("/api/mailbox/all")
@@ -5536,46 +5553,85 @@ HTML = """<!DOCTYPE html>
       loadMailbox();
     }
 
+    let _mailboxOffset = 0, _mailboxTotal = 0;
+    const MAIL_INIT = 100, MAIL_MORE = 500;
+
+    function _mailItemHtml(m) {
+      const bodyText = m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const starCls = m.starred ? "active" : "";
+      const archiveIcon = m.archived ? "📤" : "📥";
+      const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
+      const fn = m.filename.replace(/'/g,"\\'");
+      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}">
+        <div class="mail-header">
+          <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
+          <div class="mail-actions">
+            <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
+            <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
+          </div>
+        </div>
+        <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
+        <div class="mail-body">${bodyText}</div>
+      </div>`;
+    }
+
+    function _renderLoadMoreBtn() {
+      const remaining = _mailboxTotal - _mailboxOffset;
+      const el = document.getElementById("mailLoadMore");
+      if (el) el.remove();
+      if (remaining <= 0) return;
+      const body = document.getElementById("mailboxBody");
+      const btn = document.createElement("button");
+      btn.id = "mailLoadMore";
+      btn.textContent = `さらに${Math.min(remaining, MAIL_MORE)}件読み込む（残り${remaining}件）`;
+      btn.style.cssText = "width:100%;margin-top:8px;padding:10px;background:#16213e;border:1px solid #0f3460;color:#cab8d9;border-radius:8px;cursor:pointer;font-size:0.85rem;";
+      btn.onclick = loadMoreMailbox;
+      body.parentElement.appendChild(btn);
+    }
+
     async function loadMailbox() {
+      _mailboxOffset = 0; _mailboxTotal = 0;
       const body = document.getElementById("mailboxBody");
       body.innerHTML = "<div class='empty'>読み込み中...</div>";
+      const el = document.getElementById("mailLoadMore"); if (el) el.remove();
       try {
-        const res = await fetch(`/api/mailbox?filter=${currentMailTab}`);
-        const mails = await res.json();
-        if (!mails.length) {
+        const res = await fetch(`/api/mailbox?filter=${currentMailTab}&offset=0&limit=${MAIL_INIT}`);
+        const data = await res.json();
+        _mailboxTotal = data.total;
+        _mailboxOffset = data.items.length;
+        if (!data.items.length) {
           const labels = {inbox:"メールはありません", starred:"スター付きメールはありません", archived:"アーカイブはありません"};
           body.innerHTML = `<div class='empty'>${labels[currentMailTab] || "メールはありません"}</div>`;
           return;
         }
-        body.innerHTML = mails.map((m, i) => {
-          const bodyText = m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
-          const starCls = m.starred ? "active" : "";
-          const archiveIcon = m.archived ? "📤" : "📥";
-          const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
-          return `<div class="mail-item" id="mail-${i}">
-            <div class="mail-header">
-              <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
-              <div class="mail-actions">
-                <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${m.filename}',${i})">⭐</button>
-                <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${m.filename}',${!m.archived},${i})">${archiveIcon}</button>
-              </div>
-            </div>
-            <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
-            <div class="mail-body">${bodyText}</div>
-          </div>`;
-        }).join("");
+        body.innerHTML = data.items.map(_mailItemHtml).join("");
+        _renderLoadMoreBtn();
       } catch(e) {
         body.innerHTML = "<div class='empty'>読み込みに失敗しました</div>";
       }
     }
 
-    async function toggleStar(filename, index) {
-      const btn = document.querySelector(`#mail-${index} .mail-action-btn`);
+    async function loadMoreMailbox() {
+      const btn = document.getElementById("mailLoadMore");
+      if (btn) { btn.textContent = "読み込み中…"; btn.disabled = true; }
+      try {
+        const res = await fetch(`/api/mailbox?filter=${currentMailTab}&offset=${_mailboxOffset}&limit=${MAIL_MORE}`);
+        const data = await res.json();
+        _mailboxTotal = data.total;
+        _mailboxOffset += data.items.length;
+        const body = document.getElementById("mailboxBody");
+        body.insertAdjacentHTML("beforeend", data.items.map(_mailItemHtml).join(""));
+        _renderLoadMoreBtn();
+      } catch(e) {
+        if (btn) { btn.textContent = "読み込みに失敗しました"; btn.disabled = false; }
+      }
+    }
+
+    async function toggleStar(filename, btn) {
       const isActive = btn.classList.contains("active");
       try {
         await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
-          method: "PATCH",
-          headers: {"Content-Type": "application/json"},
+          method: "PATCH", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({starred: !isActive})
         });
         if (currentMailTab === "starred") { loadMailbox(); }
@@ -5583,11 +5639,10 @@ HTML = """<!DOCTYPE html>
       } catch(e) {}
     }
 
-    async function toggleArchive(filename, archive, index) {
+    async function toggleArchive(filename, archive, btn) {
       try {
         await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
-          method: "PATCH",
-          headers: {"Content-Type": "application/json"},
+          method: "PATCH", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({archived: archive})
         });
         loadMailbox();
@@ -6357,29 +6412,59 @@ NOTES_HTML = """<!DOCTYPE html>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
-    .top-bar { display: flex; align-items: center; gap: 16px; padding: 16px 20px 0; }
+    .top-bar { display: flex; align-items: center; gap: 16px; padding: 14px 20px 0; }
     .top-bar h1 { font-size: 1.2rem; color: white; }
     .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
     .back-btn:hover { background: #0f3460; }
-    .layout { display: flex; flex: 1; padding: 16px; gap: 16px; min-height: 0; }
-    .sidebar { width: 240px; flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
-    .char-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
-    .char-tab-btn { flex: 1; padding: 6px 0; border: 1px solid #0f3460; background: #16213e; color: #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+    .layout { display: flex; flex: 1; padding: 14px; gap: 14px; min-height: 0; overflow: hidden; }
+    .sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+
+    /* キャラタブ */
+    .char-tabs { display: flex; gap: 4px; }
+    .char-tab-btn { flex: 1; padding: 5px 0; border: 1px solid #0f3460; background: #16213e; color: #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
     .char-tab-btn.active { background: #0f3460; color: white; }
-    .note-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
-    .note-list::-webkit-scrollbar { width: 6px; }
+
+    /* ツールバー（検索・ソート） */
+    .toolbar { display: flex; gap: 5px; }
+    .search-input {
+      flex: 1; background: #16213e; border: 1px solid #0f3460; color: #e0e0e0;
+      border-radius: 7px; padding: 5px 10px; font-size: 0.82rem; outline: none;
+    }
+    .search-input::placeholder { color: #555; }
+    .search-input:focus { border-color: #4a7abf; }
+    .sort-select {
+      background: #16213e; border: 1px solid #0f3460; color: #e0e0e0;
+      border-radius: 7px; padding: 5px 6px; font-size: 0.78rem; cursor: pointer; outline: none;
+    }
+
+    /* フォルダチップ */
+    .folder-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+    .folder-chip {
+      padding: 3px 9px; border-radius: 12px; font-size: 0.75rem; cursor: pointer;
+      border: 1px solid #0f3460; background: #16213e; color: #aaa; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .folder-chip:hover { color: #e0e0e0; border-color: #4a7abf; }
+    .folder-chip.active { background: #0f3460; color: white; border-color: #4a7abf; }
+
+    /* ノートリスト */
+    .note-count { font-size: 0.75rem; color: #555; padding: 0 2px; }
+    .note-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; min-height: 0; }
+    .note-list::-webkit-scrollbar { width: 5px; }
     .note-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    .note-item { padding: 8px 12px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; display: flex; align-items: center; gap: 6px; }
+    .note-item { padding: 7px 10px; background: #16213e; border: 1px solid #0f3460; border-radius: 7px; cursor: pointer; font-size: 0.83rem; transition: background 0.12s; display: flex; align-items: center; gap: 6px; }
     .note-item:hover { background: #1a2a4e; }
     .note-item.active { background: #0f3460; border-color: #4a7abf; }
     .note-item .note-info { flex: 1; min-width: 0; }
-    .note-item .note-name { font-weight: 600; margin-bottom: 2px; word-break: break-all; }
-    .note-item .note-meta { font-size: 0.75rem; color: #888; }
-    .note-item .note-actions { display: flex; gap: 2px; flex-shrink: 0; }
-    .note-item .note-actions button { background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; opacity: 0.6; }
+    .note-item .note-name { font-weight: 600; margin-bottom: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .note-item .note-meta { font-size: 0.72rem; color: #888; }
+    .note-item .note-actions button { background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; opacity: 0.5; }
     .note-item .note-actions button:hover { opacity: 1; }
-    .create-btn { padding: 8px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.85rem; text-align: center; }
+
+    .create-btn { padding: 7px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.83rem; text-align: center; flex-shrink: 0; }
     .create-btn:hover { background: #1a4a7a; }
+
+    /* メインコンテンツ */
     .main-content { flex: 1; background: #16213e; border: 1px solid #0f3460; border-radius: 12px; padding: 24px; overflow-y: auto; min-height: 0; }
     .main-content::-webkit-scrollbar { width: 6px; }
     .main-content::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
@@ -6387,11 +6472,8 @@ NOTES_HTML = """<!DOCTYPE html>
     .edit-toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
     .edit-toolbar button { background: #0f3460; border: 1px solid #4a7abf; color: white; padding: 5px 14px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
     .edit-toolbar button:hover { background: #1a4a7a; }
-    .edit-toolbar button.danger { background: #4a1020; border-color: #8a2040; }
-    .edit-toolbar button.danger:hover { background: #6a1830; }
     .title-input { background: #2a2a4a; border: 1px solid #0f3460; color: #e0e0e0; padding: 8px 12px; border-radius: 8px; font-size: 1rem; width: 100%; margin-bottom: 10px; }
     .editor-area { background: #2a2a4a; border: 1px solid #0f3460; color: #e0e0e0; padding: 12px; border-radius: 8px; font-size: 0.9rem; width: 100%; min-height: 400px; resize: vertical; font-family: monospace; line-height: 1.6; }
-    /* markdown styles */
     .md-body h1 { font-size: 1.4rem; color: white; margin: 0 0 12px; border-bottom: 1px solid #2a2a4a; padding-bottom: 8px; }
     .md-body h2 { font-size: 1.15rem; color: #ccc; margin: 20px 0 8px; }
     .md-body h3 { font-size: 1rem; color: #bbb; margin: 16px 0 6px; }
@@ -6408,8 +6490,8 @@ NOTES_HTML = """<!DOCTYPE html>
     .md-body th, .md-body td { border: 1px solid #2a2a4a; padding: 6px 10px; font-size: 0.9rem; }
     .md-body th { background: #2a2a4a; }
     @media (max-width: 640px) {
-      .layout { flex-direction: column; }
-      .sidebar { width: 100%; max-height: 240px; }
+      .layout { flex-direction: column; overflow: auto; }
+      .sidebar { width: 100%; min-height: 0; max-height: 55vh; }
     }
   </style>
 </head>
@@ -6421,6 +6503,16 @@ NOTES_HTML = """<!DOCTYPE html>
   <div class="layout">
     <div class="sidebar">
       <div class="char-tabs" id="charTabs"></div>
+      <div class="toolbar">
+        <input class="search-input" id="searchInput" placeholder="🔍 検索…" oninput="renderList()">
+        <select class="sort-select" id="sortSelect" onchange="renderList()">
+          <option value="name">名前順</option>
+          <option value="date">更新順</option>
+          <option value="size">サイズ順</option>
+        </select>
+      </div>
+      <div class="folder-chips" id="folderChips"></div>
+      <div class="note-count" id="noteCount"></div>
       <div id="createArea"></div>
       <div class="note-list" id="noteList"></div>
     </div>
@@ -6431,112 +6523,140 @@ NOTES_HTML = """<!DOCTYPE html>
   <script>
     let chars = [];
     let currentChar = new URLSearchParams(location.search).get("char") || "";
-
-    async function initChars() {
-      try {
-        const [charsRes, meRes] = await Promise.all([fetch("/api/characters"), fetch("/api/me")]);
-        const charList = await charsRes.json();
-        const me = await meRes.json();
-        chars = charList.map(c => ({ id: c.id, name: c.name || c.id }));
-        chars.push({ id: me.username, name: me.name, editable: true });
-        if (!currentChar) currentChar = chars[0].id;
-        renderCharTabs();
-        loadNotes();
-      } catch(e) { console.error(e); }
-    }
-    let currentNote = null;
-    let currentNoteTitle = null;
-    let currentNoteContent = null;
+    let allNotes = [];
+    let currentFolder = "";
+    let currentNote = null, currentNoteTitle = null, currentNoteContent = null;
 
     function isEditable() {
-      const c = chars.find(x => x.id === currentChar);
-      return c && c.editable;
+      return !!chars.find(x => x.id === currentChar && x.editable);
     }
 
-    function renderCharTabs() {
-      const el = document.getElementById("charTabs");
-      el.innerHTML = chars.map(c =>
-        `<button class="char-tab-btn${c.id === currentChar ? " active" : ""}" onclick="switchChar('${c.id}')">${c.name}</button>`
-      ).join("");
-      const createArea = document.getElementById("createArea");
-      createArea.innerHTML = isEditable()
-        ? '<button class="create-btn" onclick="createNote()">＋ 新規作成</button>'
-        : '';
+    function getFolder(name) {
+      const base = name.replace(/\\.md$/, "");
+      const m = base.match(/^([a-zA-Z][a-zA-Z0-9]*)_/);
+      return m ? m[1].toLowerCase() : "other";
     }
 
-    function switchChar(id) {
-      currentChar = id;
-      currentNote = null;
-      currentNoteTitle = null;
-      currentNoteContent = null;
-      history.replaceState(null, "", "/notes?char=" + id);
-      renderCharTabs();
-      loadNotes();
-      document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
+    function buildFolders(notes) {
+      const counts = {};
+      notes.forEach(n => {
+        const f = getFolder(n.name);
+        counts[f] = (counts[f] || 0) + 1;
+      });
+      return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    }
+
+    function renderFolderChips(notes) {
+      const folders = buildFolders(notes);
+      const el = document.getElementById("folderChips");
+      el.innerHTML = `<div class="folder-chip${currentFolder===''?' active':''}" onclick="setFolder('')">全て (${notes.length})</div>` +
+        folders.slice(0, 3).map(([f, c]) =>
+          `<div class="folder-chip${currentFolder===f?' active':''}" onclick="setFolder('${f}')">${f} (${c})</div>`
+        ).join("");
+    }
+
+    function setFolder(f) {
+      currentFolder = f;
+      renderFolderChips(allNotes);
+      renderList();
+    }
+
+    function sortedFiltered() {
+      const q = document.getElementById("searchInput").value.toLowerCase();
+      const sort = document.getElementById("sortSelect").value;
+      let notes = allNotes.filter(n => {
+        const inFolder = !currentFolder || getFolder(n.name) === currentFolder;
+        const inSearch = !q || n.name.toLowerCase().includes(q) || (n.title||"").toLowerCase().includes(q);
+        return inFolder && inSearch;
+      });
+      if (sort === "date") notes.sort((a,b) => new Date(b.modified) - new Date(a.modified));
+      else if (sort === "size") notes.sort((a,b) => b.size - a.size);
+      else notes.sort((a,b) => a.name.localeCompare(b.name));
+      return notes;
+    }
+
+    function renderList() {
+      const notes = sortedFiltered();
+      const el = document.getElementById("noteList");
+      document.getElementById("noteCount").textContent = `${notes.length} 件`;
+      if (!notes.length) {
+        el.innerHTML = '<div style="color:#666;font-size:0.85rem;padding:8px">該当なし</div>';
+        return;
+      }
+      const editable = isEditable();
+      el.innerHTML = notes.map(n => {
+        const d = new Date(n.modified);
+        const dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,"0")}/${d.getDate().toString().padStart(2,"0")}`;
+        const sizeStr = n.size < 1024 ? n.size + "B" : (n.size/1024).toFixed(1)+"KB";
+        const disp = n.title || n.name.replace(/\\.md$/,"");
+        const esc = disp.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
+        const nameEsc = n.name.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
+        const del = editable ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button></div>` : "";
+        return `<div class="note-item${currentNote===n.name?" active":""}" onclick="loadNote('${nameEsc}')">
+          <div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
+        </div>`;
+      }).join("");
     }
 
     async function loadNotes() {
-      const list = document.getElementById("noteList");
       try {
         const res = await fetch(`/api/${currentChar}/notes`);
-        const notes = await res.json();
-        if (!notes.length) {
-          list.innerHTML = '<div style="color:#666;font-size:0.85rem;padding:8px">ノートがありません</div>';
-          return;
-        }
-        const editable = isEditable();
-        list.innerHTML = notes.map(n => {
-          const d = new Date(n.modified);
-          const dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,"0")}/${d.getDate().toString().padStart(2,"0")}`;
-          const sizeStr = n.size < 1024 ? n.size + " B" : (n.size / 1024).toFixed(1) + " KB";
-          const dispName = n.title || n.name.replace(/\\.md$/, "");
-          const actions = editable
-            ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${n.name.replace(/'/g,"\\\\'")}','${dispName.replace(/'/g,"\\\\'")}')">🗑</button></div>`
-            : '';
-          return `<div class="note-item${currentNote === n.name ? " active" : ""}" onclick="loadNote('${n.name.replace(/'/g, "\\\\'")}')">
-            <div class="note-info">
-              <div class="note-name">${dispName}</div>
-              <div class="note-meta">${dateStr} · ${sizeStr}</div>
-            </div>
-            ${actions}
-          </div>`;
-        }).join("");
+        allNotes = await res.json();
+        currentFolder = "";
+        renderFolderChips(allNotes);
+        renderList();
       } catch(e) {
-        list.innerHTML = '<div style="color:#888;font-size:0.85rem;padding:8px">読み込めませんでした</div>';
+        document.getElementById("noteList").innerHTML = '<div style="color:#888;font-size:0.85rem;padding:8px">読み込めませんでした</div>';
       }
     }
 
+    function renderCharTabs() {
+      document.getElementById("charTabs").innerHTML = chars.map(c =>
+        `<button class="char-tab-btn${c.id===currentChar?" active":""}" onclick="switchChar('${c.id}')">${c.name}</button>`
+      ).join("");
+      document.getElementById("createArea").innerHTML = isEditable()
+        ? '<button class="create-btn" onclick="createNote()">＋ 新規作成</button>' : "";
+    }
+
+    function switchChar(id) {
+      currentChar = id; currentNote = null; currentNoteTitle = null; currentNoteContent = null;
+      history.replaceState(null,"","/notes?char="+id);
+      renderCharTabs(); loadNotes();
+      document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
+    }
+
+    async function initChars() {
+      const [charsRes, meRes] = await Promise.all([fetch("/api/characters"), fetch("/api/me")]);
+      const charList = await charsRes.json(), me = await meRes.json();
+      chars = charList.map(c => ({ id: c.id, name: c.name||c.id }));
+      chars.push({ id: me.username, name: me.name, editable: true });
+      if (!currentChar) currentChar = chars[0].id;
+      renderCharTabs(); loadNotes();
+    }
+
     async function loadNote(name) {
-      currentNote = name;
-      loadNotes(); // refresh active state
-      const content = document.getElementById("mainContent");
+      currentNote = name; renderList();
       try {
         const res = await fetch(`/api/${currentChar}/notes/${encodeURIComponent(name)}`);
         const data = await res.json();
-        currentNoteTitle = data.title;
-        currentNoteContent = data.content;
+        currentNoteTitle = data.title; currentNoteContent = data.content;
         showViewMode(data);
       } catch(e) {
-        content.innerHTML = '<div class="empty-state">読み込めませんでした</div>';
+        document.getElementById("mainContent").innerHTML = '<div class="empty-state">読み込めませんでした</div>';
       }
     }
 
     function showViewMode(data) {
       const content = document.getElementById("mainContent");
-      const toolbar = isEditable()
-        ? `<div class="edit-toolbar"><button onclick="startEdit()">✏️ 編集</button></div>`
-        : '';
-      // 連続空行を保持: 余分な空行を&nbsp;行に変換してmarkedに渡す
-      const md = data.content.replace(/\\r\\n/g, '\\n').replace(/\\n{3,}/g,
-        m => '\\n\\n' + '&nbsp;\\n\\n'.repeat(m.length - 2));
-      if (typeof marked !== 'undefined' && !marked._breaksSet) { marked.use({ breaks: true }); marked._breaksSet = true; }
-      const html = (typeof marked !== 'undefined') ? marked.parse(md) : md.split('&').join('&amp;').split('\\x3c').join('&lt;').split('\\n').join('<br>');
+      const toolbar = isEditable() ? `<div class="edit-toolbar"><button onclick="startEdit()">✏️ 編集</button></div>` : '';
+      const md = data.content.replace(/\\r\\n/g,'\\n').replace(/\\n{3,}/g, m=>'\\n\\n'+'&nbsp;\\n\\n'.repeat(m.length-2));
+      if (typeof marked!=='undefined'&&!marked._breaksSet){marked.use({breaks:true});marked._breaksSet=true;}
+      const html = typeof marked!=='undefined' ? marked.parse(md) : md.split('\\n').join('<br>');
       content.innerHTML = toolbar + '<div class="md-body">' + html + '</div>';
     }
 
     function startEdit() {
-      const content = document.getElementById("mainContent");
-      content.innerHTML = `
+      document.getElementById("mainContent").innerHTML = `
         <input class="title-input" id="editTitle" value="${(currentNoteTitle||'').replace(/"/g,'&quot;')}" placeholder="タイトル">
         <textarea class="editor-area" id="editArea">${currentNoteContent||''}</textarea>
         <div class="edit-toolbar" style="margin-top:10px">
@@ -6548,52 +6668,30 @@ NOTES_HTML = """<!DOCTYPE html>
     async function saveEdit() {
       const newTitle = document.getElementById("editTitle").value.trim();
       const newContent = document.getElementById("editArea").value;
-      // save content
-      await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`, {
-        method: "PUT", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ content: newContent })
-      });
-      // rename if title changed
+      await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({content:newContent})});
       if (newTitle && newTitle !== currentNoteTitle) {
-        const res = await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`, {
-          method: "PATCH", headers: {"Content-Type":"application/json"},
-          body: JSON.stringify({ title: newTitle })
-        });
+        const res = await fetch(`/api/my/notes/${encodeURIComponent(currentNote)}`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({title:newTitle})});
         const data = await res.json();
         if (data.name) currentNote = data.name;
       }
-      currentNoteTitle = newTitle;
-      currentNoteContent = newContent;
-      loadNotes();
-      showViewMode({ content: newContent });
+      currentNoteTitle = newTitle; currentNoteContent = newContent;
+      await loadNotes(); showViewMode({content:newContent});
     }
 
     async function createNote() {
-      const title = prompt("ノートのタイトル:");
-      if (!title) return;
-      const res = await fetch("/api/my/notes", {
-        method: "POST", headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ title, content: "" })
-      });
+      const title = prompt("ノートのタイトル:"); if (!title) return;
+      const res = await fetch("/api/my/notes",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({title,content:""})});
       const data = await res.json();
-      await loadNotes();
-      currentNote = data.name;
-      currentNoteTitle = data.title;
-      currentNoteContent = "";
-      startEdit();
+      await loadNotes(); currentNote=data.name; currentNoteTitle=data.title; currentNoteContent=""; startEdit();
     }
 
     async function deleteNote(name, dispName) {
       if (!confirm(`「${dispName}」を削除しますか？`)) return;
-      await fetch(`/api/my/notes/${encodeURIComponent(name)}`, { method: "DELETE" });
-      if (currentNote === name) {
-        currentNote = null;
-        document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
-      }
+      await fetch(`/api/my/notes/${encodeURIComponent(name)}`,{method:"DELETE"});
+      if (currentNote===name){currentNote=null;document.getElementById("mainContent").innerHTML='<div class="empty-state">ノートを選んでね</div>';}
       loadNotes();
     }
 
-    if (typeof marked !== 'undefined') marked.use({ breaks: true });
     initChars();
   </script>
 </body>

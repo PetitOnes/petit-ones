@@ -33,6 +33,11 @@ done
 crontab -l > "$DEST/crontab_backup.txt"
 echo "  crontab: saved"
 
+mkdir -p "$DEST/dotfiles"
+for f in .tmux.conf; do
+    [ -f "$HOME/$f" ] && cp "$HOME/$f" "$DEST/dotfiles/$f" && echo "  dotfile: $f"
+done
+
 mkdir -p "$DEST/systemd"
 find "$HOME/.config/systemd" \( -name "*.service" -o -name "*.timer" \) \
     ! -path "*/snap*" \
