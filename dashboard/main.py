@@ -15,6 +15,7 @@ import sqlite3
 import hashlib
 import hmac
 import secrets
+import subprocess
 import time
 
 import base64
@@ -3967,6 +3968,28 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
     return {"responses": responses}
 
 
+@app.post("/api/terminal/chat")
+async def api_terminal_chat(request: Request):
+    """tmux send-keys でターミナルに /chat または /endchat コマンドを送る。"""
+    body = await request.json()
+    if body.get("endchat"):
+        cmd = "/endchat"
+    else:
+        char_ids = body.get("char_ids", [])
+        valid = {"puchiteya", "puchiko", "puchiru"}
+        chars = [c for c in char_ids if c in valid]
+        if not chars:
+            return JSONResponse({"error": "no valid chars"}, status_code=400)
+        cmd = "/chat " + " ".join(chars)
+    result = subprocess.run(
+        ["tmux", "send-keys", "-t", "claude", cmd, "Enter"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return JSONResponse({"error": result.stderr.strip() or "tmux error"}, status_code=500)
+    return {"ok": True, "command": cmd}
+
+
 @app.get("/api/trio/history")
 def api_trio_history():
     return load_trio_log()[-200:]
@@ -4921,6 +4944,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
       tabs.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
       tabs.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
+      tabs.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -5740,23 +5764,179 @@ TERMINAL_HTML = """<!DOCTYPE html>
   <title>ターミナル</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; font-family: -apple-system, sans-serif; }
-    .header { background: #16213e; padding: 10px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #0f3460; }
-    .header a { color: #cab8d9; text-decoration: none; font-size: 0.85rem; opacity: 0.7; }
-    .header a:hover { opacity: 1; }
-    .header span { color: #cab8d9; font-size: 0.95rem; font-weight: 600; }
-    iframe { flex: 1; border: none; width: 100%; }
+    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; font-family: -apple-system, sans-serif; color: #e0e0e0; }
+
+    /* 上段：ナビ */
+    .topbar {
+      background: #16213e; padding: 7px 14px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .topbar .back { color: #cab8d9; text-decoration: none; font-size: 0.85rem; opacity: 0.7; }
+    .topbar .back:hover { opacity: 1; }
+    .topbar .title { color: #cab8d9; font-size: 0.95rem; font-weight: 600; }
+    .topbar .sep { flex: 1; }
+    .fullscreen-btn {
+      background: transparent; border: 1px solid #2a3a5a; color: #888;
+      border-radius: 8px; padding: 4px 9px; font-size: 1rem;
+      transition: all 0.18s; text-decoration: none; display: flex; align-items: center;
+    }
+    .fullscreen-btn:hover { color: #cab8d9; border-color: #cab8d9; }
+
+    /* 下段：キャラ選択＋操作 */
+    .ctrlbar {
+      background: #16213e; padding: 5px 14px;
+      display: flex; align-items: center; gap: 6px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .ctrlbar .sep { flex: 1; }
+
+    .char-btns { display: flex; gap: 4px; align-items: center; }
+    .char-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      cursor: pointer; padding: 3px 7px; border-radius: 10px;
+      border: 2px solid transparent; transition: all 0.18s; opacity: 0.45;
+      background: transparent; user-select: none;
+    }
+    .char-btn:hover { opacity: 0.8; background: rgba(255,255,255,0.05); }
+    .char-btn.selected { opacity: 1; border-color: currentColor; background: rgba(255,255,255,0.08); }
+    .char-btn img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+    .char-btn .char-name { font-size: 0.58rem; font-weight: 600; }
+    .char-btn[data-id="puchiteya"] { color: #fff262; }
+    .char-btn[data-id="puchiko"]   { color: #cab8d9; }
+    .char-btn[data-id="puchiru"]   { color: #00afcc; }
+
+    .start-btn {
+      background: #0f3460; border: 1px solid #1a5090; color: #cab8d9;
+      border-radius: 8px; padding: 5px 12px; cursor: pointer;
+      font-size: 0.82rem; font-weight: 600; transition: background 0.18s;
+      white-space: nowrap; opacity: 0.35; pointer-events: none;
+    }
+    .start-btn.active { opacity: 1; pointer-events: auto; }
+    .start-btn.active:hover { background: #1a4a80; }
+    .end-btn {
+      background: transparent; border: 1px solid #3a1a1a; color: #e05555;
+      border-radius: 8px; padding: 5px 10px; cursor: pointer;
+      font-size: 0.82rem; font-weight: 600; transition: background 0.18s;
+      white-space: nowrap;
+    }
+    .end-btn:hover { background: rgba(224,85,85,0.12); }
+
+    iframe { flex: 1; border: none; width: 100%; min-height: 0; }
+
+    .toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+      background: #16213e; border: 1px solid #0f3460; color: #e0e0e0;
+      padding: 10px 20px; border-radius: 10px; font-size: 0.85rem;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.5); opacity: 0;
+      transition: opacity 0.3s; pointer-events: none; white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+    .toast.error { border-color: #c0392b; color: #e74c3c; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <a href="/">← ダッシュボード</a>
-    <span>Claude Code ターミナル</span>
+  <div class="topbar">
+    <a class="back" href="/">← 戻る</a>
+    <span class="title">ターミナル</span>
+    <div class="sep"></div>
+    <a class="fullscreen-btn" id="fullscreenBtn" target="_blank" title="別タブで開く（スマホ推奨）">⛶</a>
+  </div>
+  <div class="ctrlbar">
+    <div class="char-btns" id="charBtns">
+      <div class="char-btn" data-id="puchiko">
+        <img src="/api/avatar/puchiko.png" alt="ぷちこ">
+        <span class="char-name">ぷちこ</span>
+      </div>
+      <div class="char-btn" data-id="puchiru">
+        <img src="/api/avatar/puchiru.png" alt="ぷちる">
+        <span class="char-name">ぷちる</span>
+      </div>
+      <div class="char-btn" data-id="puchiteya">
+        <img src="/api/avatar/puchiteya.png" alt="ぷちてゃ">
+        <span class="char-name">ぷちてゃ</span>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <button class="start-btn" id="startBtn">チャット開始 ▶</button>
+    <button class="end-btn" id="endBtn">終了 ✕</button>
   </div>
   <iframe id="terminal-frame" allowfullscreen></iframe>
+  <div class="toast" id="toast"></div>
+
   <script>
     const ttydUrl = location.protocol + '//' + location.hostname + ':7682';
     document.getElementById('terminal-frame').src = ttydUrl;
+    document.getElementById('fullscreenBtn').href = ttydUrl;
+
+    const CHARS = {
+      puchiteya: { name: 'ぷちてゃ', color: '#fff262' },
+      puchiko:   { name: 'ぷちこ',   color: '#cab8d9' },
+      puchiru:   { name: 'ぷちる',   color: '#00afcc' },
+    };
+
+    let selected = new Set();
+    let toastTimer = null;
+
+    function showToast(msg, isError) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show' + (isError ? ' error' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.className = 'toast', 3000);
+    }
+
+    function updateStartBtn() {
+      const btn = document.getElementById('startBtn');
+      if (selected.size > 0) btn.classList.add('active');
+      else btn.classList.remove('active');
+    }
+
+    document.getElementById('charBtns').addEventListener('click', e => {
+      const btn = e.target.closest('.char-btn');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (selected.has(id)) { selected.delete(id); btn.classList.remove('selected'); }
+      else { selected.add(id); btn.classList.add('selected'); }
+      updateStartBtn();
+    });
+
+    document.getElementById('endBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('endBtn');
+      btn.textContent = '送信中…';
+      try {
+        const res = await fetch('/api/terminal/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ char_ids: [], endchat: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'error');
+        showToast('チャット終了を送信しました', false);
+      } catch (e) {
+        showToast('エラー: ' + e.message, true);
+      }
+      btn.textContent = '終了 ✕';
+    });
+
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (selected.size === 0) return;
+      const btn = document.getElementById('startBtn');
+      btn.textContent = '送信中…';
+      try {
+        const res = await fetch('/api/terminal/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ char_ids: [...selected] }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'error');
+        showToast('ターミナルに送信しました: ' + data.command, false);
+      } catch (e) {
+        showToast('エラー: ' + e.message, true);
+      }
+      btn.textContent = 'チャット開始 ▶';
+    });
   </script>
 </body>
 </html>
