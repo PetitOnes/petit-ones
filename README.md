@@ -126,7 +126,12 @@ npm install -g @anthropic-ai/claude-code
 
 # その他
 sudo apt install -y jq sqlite3
+
+# ブラウザターミナル（/terminal ページ用）
+sudo apt install -y ttyd tmux
 ```
+
+> ターミナル機能の詳細なセットアップ（systemd サービス・tmux 設定など）は [`docs/terminal-setup.md`](docs/terminal-setup.md) を参照。
 
 ### 2. コード取得
 
