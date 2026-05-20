@@ -83,7 +83,7 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
         )
         cam_backend = os.getenv("M5_CAM_BACKEND")
         cam_model = f"{cam_backend}:{os.getenv('M5_CAM_MODEL', '')}" if cam_backend else None
-        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=cam_model)
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=cam_model, source="camera", use_session=False)
         print(f"[m5_watcher] {character_id}: camera done ({result[:40] if result else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: camera error: {e}")
@@ -118,7 +118,7 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str 
         )
         sen_backend = os.getenv("M5_SEN_BACKEND")
         sen_model = f"{sen_backend}:{os.getenv('M5_SEN_MODEL', '')}" if sen_backend else None
-        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=sen_model)
+        result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=sen_model, source="sensor", use_session=False)
         print(f"[m5_watcher] {character_id}: sensor done ({result[:40] if result else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: sensor error: {e}")
@@ -236,7 +236,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         )
         mic_backend = os.getenv("M5_MIC_BACKEND")
         mic_model = f"{mic_backend}:{os.getenv('M5_MIC_MODEL', '')}" if mic_backend else None
-        result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=mic_model)
+        result2 = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=mic_model, source="mic", use_session=False)
         print(f"[m5_watcher] {character_id}: mic done ({result2[:40] if result2 else 'no result'})")
     except Exception as e:
         print(f"[m5_watcher] {character_id}: mic error: {e}")
@@ -345,11 +345,17 @@ async def _generate_display_phrase(character_id: str) -> str:
         proc = await asyncio.create_subprocess_exec(
             "claude", "-p", prompt,
             "--model", "claude-haiku-4-5-20251001",
+            "--output-format", "json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        return stdout.decode().strip()
+        raw = stdout.decode()
+        _append_token_log("display_phrase", character_id, raw)
+        try:
+            return json.loads(raw).get("result", "").strip()
+        except Exception:
+            return raw.strip()
     except Exception as e:
         print(f"[display_phrase] {character_id}: error {e}")
         return ""
@@ -670,6 +676,53 @@ DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 CHAT_HISTORY_DIR = DATA_DIR / "chat_history"
+_TOKEN_LOG = DATA_DIR / "token_logs" / "token_log.jsonl"
+_STREAM_LOG_ROOT = DATA_DIR / ".autonomous-logs"
+
+
+def _save_stream_log(character_id: str, source: str, raw_json: str) -> None:
+    """verbose JSON出力（イベントリスト）をJSONLとしてstream logに保存する。"""
+    try:
+        events = json.loads(raw_json)
+        if not isinstance(events, list) or not events:
+            return
+        char_id = character_id or "shared"
+        log_dir = _STREAM_LOG_ROOT / char_id
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = log_dir / f"{ts}_{source}_stream.jsonl"
+        with open(log_path, "w", encoding="utf-8") as f:
+            for ev in events:
+                f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
+    try:
+        data = json.loads(raw_json)
+        if isinstance(data, list):
+            result_item = next((d for d in data if d.get("type") == "result"), {})
+        else:
+            result_item = data if isinstance(data, dict) else {}
+        usage = result_item.get("usage", {})
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source": source,
+            "character": character_id,
+            "session_type": None,
+            "turns": result_item.get("num_turns", 0),
+            "input": usage.get("input_tokens", 0),
+            "output": usage.get("output_tokens", 0),
+            "cache_creation": usage.get("cache_creation_input_tokens", 0),
+            "cache_read": usage.get("cache_read_input_tokens", 0),
+            "cost_usd": result_item.get("total_cost_usd", 0),
+        }
+        _TOKEN_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_TOKEN_LOG, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
 NOTEBOOK_FILE = CHAT_HISTORY_DIR / "exchange_notebook.json"
 ALBUM_DIR = DATA_DIR / "photo_album"
 ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
@@ -981,6 +1034,20 @@ FILE_TOOLS = [
     f"Glob({PROJECT_DIR}/**)",
 ]
 
+# センサー/カメラ/マイク用のスリムなツールセット
+SENSOR_ALLOWED_TOOLS = ",".join([
+    "mcp__m5-mcp__speak",
+    "mcp__m5-mcp__show_face",
+    "mcp__m5-mcp__set_face_color",
+    "mcp__m5-mcp__play_sound",
+    "mcp__m5-mcp__play_icon",
+    "mcp__m5-mcp__take_snapshot",
+    "mcp__m5-mcp__save_to_album",
+    "mcp__memory__remember",
+    "mcp__memory__recall",
+    "Bash",
+])
+
 
 def build_allowed_tools(settings: dict) -> str:
     tools = BASE_TOOLS.copy()
@@ -1182,9 +1249,17 @@ def append_trio_log(entry: dict) -> None:
         json.dump(log[-500:], f, ensure_ascii=False, indent=2)
 
 
-async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False) -> str:
+async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False, source: str = "chat", use_session: bool = True) -> str:
+    # センサー/カメラ/マイクはスリムなMCP設定を使う
+    _m5_sources = {"sensor", "camera", "mic"}
+    char_sensor_mcp = char_dir(character_id) / "config" / "sensor-mcp.json"
     char_mcp = char_dir(character_id) / "config" / "autonomous-mcp.json"
-    mcp_config = char_mcp if char_mcp.exists() else PROJECT_DIR / "autonomous-mcp.json"
+    if source in _m5_sources and char_sensor_mcp.exists():
+        mcp_config = char_sensor_mcp
+    elif char_mcp.exists():
+        mcp_config = char_mcp
+    else:
+        mcp_config = PROJECT_DIR / "autonomous-mcp.json"
     soul = get_soul(character_id)
     settings = get_settings(character_id)
 
@@ -1202,7 +1277,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     if allow_sound_override and m5_online:
         effective_settings["allow_sound"] = True
 
-    allowed_tools = build_allowed_tools(effective_settings)
+    if source in _m5_sources:
+        allowed_tools = SENSOR_ALLOWED_TOOLS
+    else:
+        allowed_tools = build_allowed_tools(effective_settings)
 
     restrictions = []
     if not settings.get("allow_camera", True):
@@ -1300,39 +1378,87 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     if resolved_host:
         env["M5_HOST"] = resolved_host
     env.setdefault("ROVER_URL", "http://192.168.8.99,http://192.168.1.99")
-    sf = session_file(character_id, username)
+    sf = session_file(character_id, username) if use_session else None
+
+    # 毎朝4時(JST)を過ぎたら旧セッションをリセット
+    if sf and sf.exists():
+        from zoneinfo import ZoneInfo
+        _jst = ZoneInfo("Asia/Tokyo")
+        _now_jst = datetime.now(_jst)
+        _reset_hour = 4
+        _cutoff = _now_jst.replace(hour=_reset_hour, minute=0, second=0, microsecond=0)
+        if _now_jst < _cutoff:
+            import datetime as _dt
+            _cutoff -= _dt.timedelta(days=1)
+        _sf_mtime = datetime.fromtimestamp(sf.stat().st_mtime, tz=_jst)
+        if _sf_mtime < _cutoff:
+            sf.unlink(missing_ok=True)
 
     model_name = model_name or os.getenv("CLAUDE_MODEL", "sonnet")
-    _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
-                     "--dangerously-skip-permissions", "--output-format", "json", "--verbose"]
 
-    if sf.exists():
+    # stream-json形式でファイルに保存 → タイムアウト時も途中まで記録される
+    char_id = character_id or "shared"
+    stream_log_dir = _STREAM_LOG_ROOT / char_id
+    stream_log_dir.mkdir(parents=True, exist_ok=True)
+    stream_path = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
+
+    _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+                     "--dangerously-skip-permissions",
+                     "--output-format", "stream-json", "--output-file", str(stream_path),
+                     "--verbose"]
+
+    if sf and sf.exists():
         sid = sf.read_text().strip()
         cmd = ["claude", "-p", "--model", model_name, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
     else:
         cmd = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
 
-    def _extract_reply(raw: str) -> tuple[str, str]:
-        """verbose JSONから返答テキストとsession_idを抽出する。"""
+    def _parse_stream_file(path: Path) -> tuple[str, str, dict]:
+        """stream.jsonlからreply text・session_id・result eventを抽出する。"""
+        text_parts: list[str] = []
+        session_id = ""
+        result_ev: dict = {}
         try:
-            data = json.loads(raw)
-            if isinstance(data, list):
-                session_id = ""
-                text_parts = []
-                for item in data:
-                    t = item.get("type", "")
-                    if t == "result":
-                        session_id = item.get("session_id", "")
-                    elif t == "assistant":
-                        for block in item.get("message", {}).get("content", []):
-                            if block.get("type") == "text":
-                                text_parts.append(block["text"])
-                return "\n".join(text_parts), session_id
-            if isinstance(data, dict):
-                return data.get("result", raw), data.get("session_id", "")
-        except (json.JSONDecodeError, TypeError):
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = ev.get("type", "")
+                if t == "assistant":
+                    for block in ev.get("message", {}).get("content", []):
+                        if block.get("type") == "text":
+                            text_parts.append(block["text"])
+                elif t == "result":
+                    session_id = ev.get("session_id", "")
+                    result_ev = ev
+        except Exception:
             pass
-        return raw, ""
+        return "\n".join(text_parts).strip(), session_id, result_ev
+
+    def _append_token_log_from_stream(result_ev: dict) -> None:
+        try:
+            usage = result_ev.get("usage", {})
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "source": source,
+                "character": character_id,
+                "session_type": None,
+                "turns": result_ev.get("num_turns", 0),
+                "input": usage.get("input_tokens", 0),
+                "output": usage.get("output_tokens", 0),
+                "cache_creation": usage.get("cache_creation_input_tokens", 0),
+                "cache_read": usage.get("cache_read_input_tokens", 0),
+                "cost_usd": result_ev.get("total_cost_usd", 0),
+            }
+            _TOKEN_LOG.parent.mkdir(parents=True, exist_ok=True)
+            with open(_TOKEN_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
 
     async def _run_cmd(c: list[str]) -> tuple[str, str]:
         proc = await asyncio.create_subprocess_exec(
@@ -1340,24 +1466,45 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             env=env, cwd=str(PROJECT_DIR),
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(input=effective_message.encode()), timeout=120,
-        )
-        return stdout.decode(), stderr.decode()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=effective_message.encode()), timeout=120,
+            )
+            return stdout.decode(), stderr.decode()
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            return "", "timeout"
 
     try:
         output, err = await _run_cmd(cmd)
-        if sf.exists() and "No conversation found" in output:
+        if err == "timeout":
+            # タイムアウト: 途中まで保存されたstream logから部分的に情報を取る
+            if stream_path.exists():
+                _, _, result_ev = _parse_stream_file(stream_path)
+                if result_ev:
+                    _append_token_log_from_stream(result_ev)
+            return "タイムアウトしました"
+        if sf and sf.exists() and "No conversation found" in output:
             sf.unlink(missing_ok=True)
-            cmd = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
-            output, err = await _run_cmd(cmd)
-        reply, new_sid = _extract_reply(output)
-        if new_sid:
+            stream_path2 = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
+            cmd2 = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt,
+                    "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+                    "--dangerously-skip-permissions",
+                    "--output-format", "stream-json", "--output-file", str(stream_path2),
+                    "--verbose"]
+            output, err = await _run_cmd(cmd2)
+            stream_path = stream_path2
+        reply, new_sid, result_ev = _parse_stream_file(stream_path)
+        _append_token_log_from_stream(result_ev)
+        if use_session and sf and new_sid:
             sf.parent.mkdir(parents=True, exist_ok=True)
             sf.write_text(new_sid)
-        return reply or err or "返答がありませんでした"
-    except asyncio.TimeoutError:
-        return "タイムアウトしました"
+        return reply or output.strip() or err or "返答がありませんでした"
+    except Exception as e:
+        return f"エラー: {e}"
     except Exception as e:
         return f"エラー: {e}"
 
@@ -1367,12 +1514,18 @@ async def _generate_diary_with_claude(prompt: str) -> str:
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     proc = await asyncio.create_subprocess_exec(
         "claude", "-p", "--model", diary_model, prompt,
+        "--output-format", "json",
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env=env, cwd=str(PROJECT_DIR),
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
-    return stdout.decode().strip() or stderr.decode().strip()
+    raw = stdout.decode()
+    _append_token_log("diary", "", raw)
+    try:
+        return json.loads(raw).get("result", "").strip() or stderr.decode().strip()
+    except Exception:
+        return raw.strip() or stderr.decode().strip()
 
 
 async def _generate_diary_with_gemini(prompt: str) -> str:
@@ -4962,6 +5115,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
       tabs.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
       tabs.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
+      tabs.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -7672,6 +7826,475 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       document.getElementById("recStatus").textContent = "⚠️ マイク録音はHTTPS環境でのみ使えます。ファイルアップロードをご利用ください。";
     }
     loadMemos();
+  </script>
+</body>
+</html>
+"""
+
+
+# ===================== stream-logs =====================
+
+_LOG_ROOT = DATA_DIR / ".autonomous-logs"
+
+
+@app.get("/stream-logs", response_class=HTMLResponse)
+def stream_logs_page():
+    return HTMLResponse(STREAM_LOGS_HTML)
+
+
+@app.get("/api/stream-logs/{character_id}")
+async def api_stream_logs_list(character_id: str):
+    char_dir = _LOG_ROOT / character_id
+    if not char_dir.is_dir():
+        return []
+    files = sorted(char_dir.glob("*_stream.jsonl"), reverse=True)
+    result = []
+    for f in files:
+        if f.stat().st_size == 0:
+            continue
+        has_event = False
+        for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and obj.get("type"):
+                    has_event = True
+                    break
+            except json.JSONDecodeError:
+                pass
+        if has_event:
+            result.append(f.name)
+        if len(result) >= 50:
+            break
+    return result
+
+
+@app.get("/api/stream-logs/{character_id}/{filename}")
+async def api_stream_logs_get(character_id: str, filename: str):
+    if not filename.endswith("_stream.jsonl") or "/" in filename or ".." in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    path = _LOG_ROOT / character_id / filename
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    events = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+
+    out = []
+    tool_names: dict[str, str] = {}
+    for ev in events:
+        t = ev.get("type", "")
+        if t == "system" and ev.get("subtype") == "init":
+            out.append({"kind": "init", "model": ev.get("model"), "session_id": ev.get("session_id")})
+        elif t == "assistant":
+            for block in ev.get("message", {}).get("content", []):
+                btype = block.get("type", "")
+                if btype == "thinking":
+                    out.append({"kind": "thinking", "text": block.get("thinking", "")})
+                elif btype == "text":
+                    text = block.get("text", "").strip()
+                    if text:
+                        out.append({"kind": "text", "text": text})
+                elif btype == "tool_use":
+                    tid = block.get("id", "")
+                    name = block.get("name", "?")
+                    tool_names[tid] = name
+                    out.append({"kind": "tool_call", "id": tid, "name": name, "input": block.get("input", {})})
+        elif t == "user":
+            for block in ev.get("message", {}).get("content", []):
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_result":
+                    tid = block.get("tool_use_id", "")
+                    name = tool_names.get(tid, "?")
+                    content = block.get("content", "")
+                    if isinstance(content, list):
+                        text = "\n".join(
+                            b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text"
+                        )
+                    else:
+                        text = str(content)
+                    out.append({"kind": "tool_result", "id": tid, "name": name, "text": text, "is_error": block.get("is_error", False)})
+        elif t == "result":
+            usage = ev.get("usage", {})
+            out.append({
+                "kind": "result",
+                "subtype": ev.get("subtype"),
+                "turns": ev.get("num_turns"),
+                "cost_usd": ev.get("total_cost_usd", 0),
+                "result": ev.get("result", ""),
+                "usage": {
+                    "input": usage.get("input_tokens", 0),
+                    "output": usage.get("output_tokens", 0),
+                    "cache_creation": usage.get("cache_creation_input_tokens", 0),
+                    "cache_read": usage.get("cache_read_input_tokens", 0),
+                },
+                "permission_denials": [d.get("tool_name") for d in ev.get("permission_denials", [])],
+            })
+    return out
+
+
+STREAM_LOGS_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>行動ログ</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f0f1a; display: flex; flex-direction: column; height: 100vh; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; color: #d0d0e8; }
+
+    .topbar {
+      background: #16213e; padding: 7px 14px;
+      display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .topbar .back { color: #cab8d9; text-decoration: none; font-size: 0.85rem; opacity: 0.7; }
+    .topbar .back:hover { opacity: 1; }
+    .topbar .title { color: #cab8d9; font-size: 0.95rem; font-weight: 600; }
+    .topbar .sep { flex: 1; }
+
+    .ctrlbar {
+      background: #16213e; padding: 5px 14px;
+      display: flex; align-items: center; gap: 8px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0; flex-wrap: wrap;
+    }
+
+    .char-btns { display: flex; gap: 4px; align-items: center; }
+    .char-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      cursor: pointer; padding: 3px 7px; border-radius: 10px;
+      border: 2px solid transparent; transition: all 0.18s; opacity: 0.45;
+      background: transparent; user-select: none;
+    }
+    .char-btn:hover { opacity: 0.8; background: rgba(255,255,255,0.05); }
+    .char-btn.selected { opacity: 1; border-color: currentColor; background: rgba(255,255,255,0.08); }
+    .char-btn img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+    .char-btn .char-name { font-size: 0.58rem; font-weight: 600; }
+    .char-btn[data-id="puchiteya"] { color: #fff262; }
+    .char-btn[data-id="puchiko"]   { color: #cab8d9; }
+    .char-btn[data-id="puchiru"]   { color: #00afcc; }
+
+    .file-select {
+      background: #1a2a4a; border: 1px solid #2a3a5a; color: #d0d0e8;
+      border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; max-width: 300px;
+    }
+
+    .toggle-btn {
+      background: #1a2a4a; border: 1px solid #2a3a5a; color: #8090b0;
+      border-radius: 6px; padding: 4px 8px; font-size: 0.75rem; cursor: pointer;
+      transition: all 0.15s;
+    }
+    .toggle-btn.active { color: #cab8d9; border-color: #4a5a8a; background: #2a3a6a; }
+    .toggle-btn:hover { color: #c0c0e0; }
+
+    .sep { flex: 1; }
+
+    .sidebar-toggle {
+      background: transparent; border: 1px solid #2a3a5a; color: #6080a0;
+      border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .sidebar-toggle:hover { color: #c0c0e0; border-color: #4a6a9a; }
+
+    .main { display: flex; flex: 1; min-height: 0; position: relative; }
+
+    /* 左: ファイル一覧 */
+    .sidebar {
+      width: 220px; flex-shrink: 0;
+      background: #131324; border-right: 1px solid #1a2a4a;
+      overflow-y: auto; padding: 8px 0;
+      transition: width 0.2s, padding 0.2s;
+    }
+    .sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
+    .sidebar .file-item {
+      padding: 5px 12px; font-size: 0.72rem; color: #8090b0; cursor: pointer;
+      border-left: 2px solid transparent; transition: all 0.12s; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis;
+    }
+    .sidebar .file-item:hover { color: #c0c0e0; background: rgba(255,255,255,0.04); }
+    .sidebar .file-item.selected { color: #cab8d9; border-left-color: #cab8d9; background: rgba(202,184,217,0.07); }
+    .sidebar .empty { padding: 12px; font-size: 0.75rem; color: #4a5a7a; }
+
+    /* 右: ログ本体 */
+    .logview {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .logview .empty { color: #4a5a7a; font-size: 0.85rem; padding: 20px; text-align: center; }
+
+    /* ブロック共通 */
+    .block {
+      border-radius: 8px; padding: 10px 13px; font-size: 0.78rem; line-height: 1.6;
+    }
+    .block .label {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.06em;
+      margin-bottom: 5px; opacity: 0.75;
+    }
+    .block .body { white-space: pre-wrap; word-break: break-all; }
+
+    /* init */
+    .block-init { background: #1a2238; border: 1px solid #2a3a58; color: #7090b0; }
+    .block-init .label { color: #4a7aaa; }
+
+    /* thinking */
+    .block-thinking { background: #1a1530; border: 1px solid #2a2248; color: #9080c0; }
+    .block-thinking .label { color: #7060a8; }
+    .block-thinking .body { font-size: 0.73rem; opacity: 0.85; }
+    .block-thinking.collapsed .body { display: none; }
+    .block-thinking .toggle-link { font-size: 0.65rem; color: #6050a0; cursor: pointer; margin-left: 6px; }
+    .block-thinking .toggle-link:hover { color: #9080c0; }
+
+    /* text (Claudeの発言) */
+    .block-text { background: #0d2016; border: 1px solid #1a4028; color: #80d0a0; }
+    .block-text .label { color: #40a060; }
+
+    /* tool_call */
+    .block-tool-call { background: #0d1f30; border: 1px solid #1a3448; color: #70b0d8; }
+    .block-tool-call .label { color: #3080b0; }
+    .block-tool-call .tool-name { color: #50c0e8; font-weight: 700; }
+    .block-tool-call .tool-input { color: #7090b0; font-size: 0.73rem; }
+
+    /* tool_result */
+    .block-tool-result { background: #1a1a0f; border: 1px solid #2a2a18; color: #b0b060; }
+    .block-tool-result .label { color: #909040; }
+    .block-tool-result.error { background: #2a1010; border-color: #4a2020; color: #d08080; }
+    .block-tool-result.error .label { color: #c06060; }
+    .block-tool-result .body { font-size: 0.73rem; }
+    .block-tool-result.collapsed .body { display: none; }
+    .block-tool-result .toggle-link { font-size: 0.65rem; color: #707030; cursor: pointer; margin-left: 6px; }
+    .block-tool-result .toggle-link:hover { color: #a0a050; }
+
+    /* result */
+    .block-result { background: #1a2a1a; border: 1px solid #2a4a2a; }
+    .block-result .label { color: #50a050; }
+    .block-result .stat { color: #70d070; font-size: 0.82rem; }
+    .block-result .final-text { color: #a0e0a0; margin-top: 6px; }
+    .block-result.error { background: #2a1a1a; border-color: #4a2a2a; }
+    .block-result.error .label { color: #c05050; }
+    .block-result.error .stat { color: #e07070; }
+
+    .spinner { color: #4a5a7a; font-size: 0.85rem; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/" class="back">← ホーム</a>
+    <span class="title">行動ログビューア</span>
+    <span class="sep"></span>
+  </div>
+  <div class="ctrlbar">
+    <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">☰ ログ一覧</button>
+    <div class="char-btns" id="charBtns"></div>
+    <button class="toggle-btn active" id="thinkingBtn" onclick="toggleThinking()">思考</button>
+    <button class="toggle-btn active" id="toolResultBtn" onclick="toggleToolResult()">ツール結果</button>
+    <span class="sep"></span>
+    <span id="fileCount" style="font-size:0.72rem;color:#4a5a7a;"></span>
+  </div>
+  <div class="main">
+    <div class="sidebar" id="sidebar">
+      <div class="empty">キャラを選んでください</div>
+    </div>
+    <div class="logview" id="logview">
+      <div class="empty">ファイルを選んでください</div>
+    </div>
+  </div>
+
+  <script>
+    const CHARS = [
+      {id:"puchiteya", name:"ぷちてゃ"},
+      {id:"puchiko",   name:"ぷちこ"},
+      {id:"puchiru",   name:"ぷちる"},
+    ];
+
+    let currentChar = null;
+    let currentFile = null;
+    let showThinking = true;
+    let showToolResult = true;
+    let sidebarOpen = true;
+
+    // スマホでは最初からサイドバーを閉じる
+    if (window.innerWidth < 600) { sidebarOpen = false; document.getElementById("sidebar").classList.add("collapsed"); document.getElementById("sidebarToggle").style.opacity = "0.5"; }
+
+    // キャラボタン生成
+    const charBtns = document.getElementById("charBtns");
+    CHARS.forEach(c => {
+      const btn = document.createElement("div");
+      btn.className = "char-btn";
+      btn.dataset.id = c.id;
+      btn.innerHTML = `<img src="/api/avatar/${c.id}.png" onerror="this.style.display='none'"><span class="char-name">${c.name}</span>`;
+      btn.onclick = () => selectChar(c.id);
+      charBtns.appendChild(btn);
+    });
+
+    async function selectChar(id) {
+      currentChar = id;
+      currentFile = null;
+      document.querySelectorAll(".char-btn").forEach(b => b.classList.toggle("selected", b.dataset.id === id));
+      await loadFileList(id);
+    }
+
+    async function loadFileList(id) {
+      const sidebar = document.getElementById("sidebar");
+      sidebar.innerHTML = '<div class="empty">読み込み中…</div>';
+      document.getElementById("logview").innerHTML = '<div class="empty">ファイルを選んでください</div>';
+      try {
+        const res = await fetch(`/api/stream-logs/${id}`);
+        const files = await res.json();
+        document.getElementById("fileCount").textContent = files.length ? `${files.length}件` : "";
+        if (!files.length) { sidebar.innerHTML = '<div class="empty">ログなし</div>'; return; }
+        sidebar.innerHTML = "";
+        files.forEach(f => {
+          const el = document.createElement("div");
+          el.className = "file-item";
+          el.textContent = f.replace("_stream.jsonl", "");
+          el.title = f;
+          el.onclick = () => selectFile(f, el);
+          sidebar.appendChild(el);
+        });
+        // 最新を自動選択
+        sidebar.firstChild.click();
+      } catch(e) {
+        sidebar.innerHTML = `<div class="empty">エラー: ${e.message}</div>`;
+      }
+    }
+
+    async function selectFile(filename, el) {
+      currentFile = filename;
+      document.querySelectorAll(".file-item").forEach(e => e.classList.remove("selected"));
+      el.classList.add("selected");
+      await loadLog(currentChar, filename);
+    }
+
+    async function loadLog(charId, filename) {
+      const logview = document.getElementById("logview");
+      logview.innerHTML = '<div class="spinner">読み込み中…</div>';
+      try {
+        const res = await fetch(`/api/stream-logs/${charId}/${filename}`);
+        if (!res.ok) { logview.innerHTML = '<div class="empty">読み込みエラー</div>'; return; }
+        const events = await res.json();
+        renderLog(events);
+      } catch(e) {
+        logview.innerHTML = `<div class="empty">エラー: ${e.message}</div>`;
+      }
+    }
+
+    function trunc(s, n) {
+      if (!s) return "";
+      s = String(s);
+      if (s.length > n) return s.slice(0, n) + `\\n…(${s.length - n}文字省略)`;
+      return s;
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    }
+
+    function renderLog(events) {
+      const logview = document.getElementById("logview");
+      if (!events.length) { logview.innerHTML = '<div class="empty">イベントなし</div>'; return; }
+      logview.innerHTML = "";
+
+      events.forEach((ev, i) => {
+        if (ev.kind === "init") {
+          const el = document.createElement("div");
+          el.className = "block block-init";
+          el.innerHTML = `<div class="label">INIT</div><div class="body">model: ${esc(ev.model)}\\nsession: ${esc(ev.session_id)}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "thinking") {
+          if (!showThinking) return;
+          const el = document.createElement("div");
+          el.className = "block block-thinking";
+          const preview = trunc(ev.text, 2000);
+          el.innerHTML = `
+            <div class="label">THINKING <span class="toggle-link" onclick="toggleBlock(this)">▲ 折りたたむ</span></div>
+            <div class="body">${esc(preview)}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "text") {
+          const el = document.createElement("div");
+          el.className = "block block-text";
+          el.innerHTML = `<div class="label">CLAUDE</div><div class="body">${esc(ev.text)}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "tool_call") {
+          const el = document.createElement("div");
+          el.className = "block block-tool-call";
+          let inputStr = "";
+          try { inputStr = JSON.stringify(ev.input, null, 2); } catch(_) { inputStr = String(ev.input); }
+          el.innerHTML = `
+            <div class="label">→ TOOL CALL <span class="tool-name">${esc(ev.name)}</span></div>
+            <div class="body tool-input">${esc(trunc(inputStr, 1200))}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "tool_result") {
+          if (!showToolResult) return;
+          const el = document.createElement("div");
+          el.className = "block block-tool-result" + (ev.is_error ? " error" : "");
+          const preview = trunc(ev.text, 1500);
+          const label = ev.is_error ? `← ${esc(ev.name)} ERROR` : `← ${esc(ev.name)}`;
+          el.innerHTML = `
+            <div class="label">${label} <span class="toggle-link" onclick="toggleBlock(this)">▲ 折りたたむ</span></div>
+            <div class="body">${esc(preview)}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "result") {
+          const isErr = ev.subtype && ev.subtype.includes("error");
+          const el = document.createElement("div");
+          el.className = "block block-result" + (isErr ? " error" : "");
+          const u = ev.usage || {};
+          const denialHtml = (ev.permission_denials || []).length
+            ? `\\n権限拒否: ${ev.permission_denials.map(d=>esc(d)).join(", ")}`
+            : "";
+          const finalHtml = ev.result
+            ? `<div class="final-text">${esc(trunc(ev.result, 500))}</div>`
+            : "";
+          el.innerHTML = `
+            <div class="label">RESULT — ${esc(ev.subtype)}</div>
+            <div class="stat">turns=${ev.turns} | cost=$${(ev.cost_usd||0).toFixed(4)}</div>
+            <div class="stat" style="font-size:0.72rem;color:#5a8a5a;">input=${u.input} out=${u.output} cache_create=${u.cache_creation} cache_read=${u.cache_read}${denialHtml}</div>
+            ${finalHtml}`;
+          logview.appendChild(el);
+        }
+      });
+    }
+
+    function toggleBlock(link) {
+      const block = link.closest(".block");
+      block.classList.toggle("collapsed");
+      link.textContent = block.classList.contains("collapsed") ? "▼ 展開" : "▲ 折りたたむ";
+    }
+
+    function toggleSidebar() {
+      sidebarOpen = !sidebarOpen;
+      const sb = document.getElementById("sidebar");
+      sb.classList.toggle("collapsed", !sidebarOpen);
+      document.getElementById("sidebarToggle").textContent = sidebarOpen ? "☰ ログ一覧" : "☰ ログ一覧";
+      document.getElementById("sidebarToggle").style.opacity = sidebarOpen ? "1" : "0.5";
+    }
+
+    function toggleThinking() {
+      showThinking = !showThinking;
+      document.getElementById("thinkingBtn").classList.toggle("active", showThinking);
+      if (currentChar && currentFile) loadLog(currentChar, currentFile);
+    }
+
+    function toggleToolResult() {
+      showToolResult = !showToolResult;
+      document.getElementById("toolResultBtn").classList.toggle("active", showToolResult);
+      if (currentChar && currentFile) loadLog(currentChar, currentFile);
+    }
   </script>
 </body>
 </html>

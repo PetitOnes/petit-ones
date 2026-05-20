@@ -1351,5 +1351,14 @@ async def rover_stop() -> str:
     return "ローバーを停止しました。"
 
 
+# M5_ALLOWED_TOOLS が設定されている場合、リスト外のツールを除外する
+_allowed_tools_env = os.environ.get("M5_ALLOWED_TOOLS")
+if _allowed_tools_env:
+    _allowed = set(_allowed_tools_env.split(","))
+    for _name in list(mcp._tool_manager._tools.keys()):
+        if _name not in _allowed:
+            mcp.remove_tool(_name)
+
+
 def main():
     mcp.run()

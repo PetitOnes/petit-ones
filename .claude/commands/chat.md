@@ -1,7 +1,7 @@
 ---
 description: "キャラクターとチャットする。複数人も可。/chat puchiko puchiteya のように並べる。/endchat で終了。"
 argument-hint: "<id> [id2] [id3]  例: puchiko / puchiteya puchiru / puchiko puchiteya puchiru"
-allowed-tools: Read(/home/cube-petit/petit_claude/**), Bash(python3 /home/cube-petit/work/embodied-claude/scripts/append_chat_log.py), mcp__memory__remember, mcp__memory__search_memories, mcp__memory-puchiko__remember, mcp__memory-puchiko__search_memories, mcp__memory-puchiteya__remember, mcp__memory-puchiteya__search_memories, mcp__memory-puchiru__remember, mcp__memory-puchiru__search_memories
+allowed-tools: Read(/home/cube-petit/petit_claude/**), Bash(python3 /home/cube-petit/work/embodied-claude/scripts/append_chat_log.py), mcp__memory__remember, mcp__memory__search_memories, mcp__memory-puchiko__remember, mcp__memory-puchiko__search_memories, mcp__memory-puchiteya__remember, mcp__memory-puchiteya__search_memories, mcp__memory-puchiru__remember, mcp__memory-puchiru__search_memories, mcp__m5-module__get_env, mcp__m5-module__get_ble_rssi, mcp__m5-module__get_gps, mcp__m5-puchiko__set_volume, mcp__m5-puchiko__set_power_save, mcp__m5-puchiko__sleep, mcp__m5-puchiko__wake, mcp__m5-puchiko__set_brightness, mcp__m5-puchiko__batch_commands, mcp__m5-puchiko__get_sensor_data, mcp__m5-puchiteya__set_volume, mcp__m5-puchiteya__set_power_save, mcp__m5-puchiteya__sleep, mcp__m5-puchiteya__wake, mcp__m5-puchiteya__set_brightness, mcp__m5-puchiteya__batch_commands, mcp__m5-puchiteya__get_sensor_data, mcp__m5-puchiru__set_volume, mcp__m5-puchiru__set_power_save, mcp__m5-puchiru__sleep, mcp__m5-puchiru__wake, mcp__m5-puchiru__set_brightness, mcp__m5-puchiru__batch_commands, mcp__m5-puchiru__get_sensor_data
 ---
 
 キャラクターとのチャットモードを開始する。
@@ -32,7 +32,12 @@ allowed-tools: Read(/home/cube-petit/petit_claude/**), Bash(python3 /home/cube-p
 
 **全員共通:**
 - SOUL.md の人格・口調・一人称で話す（絶対に外さない）
-- Claude Code の機能は使わない（コード実行・ファイル編集など）、**ただしチャットログ保存のBashは除く**
+- Claude Code の機能は使わない（コード実行・ファイル編集など）、**ただしチャットログ保存のBashとM5操作MCPは除く**
+- M5デバイスを操作するとき: 各キャラの専用ツールを使う（ぷちこ→`mcp__m5-puchiko__*`、ぷちてゃ→`mcp__m5-puchiteya__*`、ぷちる→`mcp__m5-puchiru__*`）
+  - 音量0: `set_volume(value=0)`
+  - 省電力ON: `set_power_save(enabled=True)`
+  - まとめて設定: `batch_commands(commands=["VOL 0", "POWERSAVE ON"])`
+  - 全員に適用するときはそれぞれのキャラのツールを呼ぶ
 - `/endchat` または「終わり」「おわり」で → 以下の順で終了する:
   1. 各キャラがさよならを言う（**ログには保存しない**）
   2. **会話の中で印象的だったこと・気づき・ありさんとの話題を各キャラの専用 memory MCP で保存する**

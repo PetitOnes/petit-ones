@@ -34,7 +34,7 @@
 | **dashboard** | Web UI（チャット・グループチャット・欲求表示・記憶閲覧・日記・認証） |
 | **create_character.py** | キャラクター追加スクリプト（設定ファイル + cron 自動登録） |
 | **autonomous-action.sh** | 自律行動オーケストレーション（スケジュール・確率制御・セッション管理） |
-| **scripts/** | メールボックス書き込み (`write_mailbox.py`)、メモリ読み出し (`reader.py`) |
+| **scripts/** | メールボックス書き込み (`write_mailbox.py`)、チャットログ保存 (`append_chat_log.py`)、バックアップ/復元 (`backup_petit.sh` / `restore_petit.sh`)、メモリ読み出し (`reader.py`) |
 
 ### フォーク元から引き継いでいるもの
 
@@ -65,6 +65,12 @@ embodied-claude/              ← コード（git管理、public）
 ├── dashboard/                # Web ダッシュボード
 ├── scripts/                  # ユーティリティスクリプト
 │   ├── write_mailbox.py      #   メールボックス書き込み
+│   ├── mark_mail_read.py     #   メールを既読にする
+│   ├── append_chat_log.py    #   /chat スキルのチャットログ保存（stdin JSON）
+│   ├── check_usage.py        #   トークン使用量集計（今日/今週/今月）
+│   ├── create_character.py   #   キャラクター追加（設定ファイル + cron 登録）
+│   ├── backup_petit.sh       #   petit_claude + .claude バックアップ
+│   ├── restore_petit.sh      #   バックアップからの復元
 │   ├── reader.py             #   メモリ読み出し
 │   ├── register_speaker.sh   #   話者声紋登録
 │   └── speaker_config.json.example
@@ -106,9 +112,14 @@ embodied-claude/              ← コード（git管理、public）
 │   ├── group_chat.json
 │   └── trio_chat.json
 ├── mailbox/                  # キャラ間メッセージ
-├── .autonomous-logs/         # 自律行動ログ
+├── notes/                    # 人間ユーザー（arisan/kazahaya）のノート
+├── token_logs/               # APIトークン使用量ログ（全ソース統合）
+│   ├── token_log.jsonl       #   全キャラ・全ソース統合
+│   └── <character>/          #   キャラ別（autonomous のみ）
+├── claude_documents/         # セットアップ・構造ドキュメント（人間/Claude参照用）
 ├── auth.json                 # ダッシュボード認証（オプション）
-└── backup/                   # バックアップスクリプト + データ
+├── network.json              # 信頼済みIPリスト（認証スキップ）
+└── .autonomous-logs/         # 自律行動ログ
 ```
 
 コードとデータは分離されている。環境変数 `PETIT_DATA_DIR` でデータディレクトリを変更可能（デフォルト: `~/petit_claude`）。
@@ -152,17 +163,25 @@ done
 ### 4. キャラクター追加
 
 ```bash
-uv run python scripts/create_character.py <id> <名前> <カラー> <M5のIP>
+uv run python scripts/create_character.py <id> <名前> <カラー> <M5ホスト>
 
-# 例:
-uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" 10.42.138.100
+# 例（単一ホスト）:
+uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" "puchiko.local"
+
+# 例（複数ホスト・カンマ区切り）:
+uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" "puchiko.local,192.168.8.100"
 ```
 
 自動で以下が作られる:
-- `~/petit_claude/characters/{id}/` に設定ファイル一式（config/, data/, state/ 等）
-- crontab に欲求更新（5分毎）と自律行動（30分毎）
+- `~/petit_claude/characters/{id}/config/` — config.json, settings.json, autonomous-mcp.json, desire_config.json
+- `~/petit_claude/characters/{id}/` — SOUL.md, TODO_ACTIVE.md, ROUTINES.md（テンプレート）
+- その他サブディレクトリ: data/, state/, chat_histories/, diary/, notes/, resources/
+- crontab に欲求更新（5分毎）と自律行動（20分毎、時刻は手動調整が必要）
 
-追加後に `characters/{id}/SOUL.md` を編集して性格を書く。
+追加後の手順:
+1. `characters/{id}/SOUL.md` を編集して性格を書く
+2. `config/config.json` の `desc`・`color_name`・`examples` を編集する
+3. `resources/petit.png` にアバター画像を置く
 
 ### 5. 自律行動スクリプト
 
@@ -398,7 +417,8 @@ mcp-launchers/
 ## ダッシュボード
 
 - 欲求バー: 各プチの欲求レベルをリアルタイム表示
-- チャット: プチに直接話しかける
+- チャット: プチに直接話しかける（複数モデル対応: Claude / Gemini / ChatGPT）
+- **ターミナル（🖥️）**: ブラウザから Claude Code ターミナル（ttyd）を開く。キャラアイコンを選択して「チャット開始」を押すと `/chat` スキルが自動起動し、プチと SOUL.md ベースのチャットができる。セットアップは [`docs/terminal-setup.md`](docs/terminal-setup.md) を参照
 - **だれかと 💬**: 話しかけるプチをトグルで選択して送信。選んだプチ同士で話させることもできる（「✨ 話させる」ボタン）
 - **みんなで 🌟**: 全プチに同時送信（M5起動状態も確認できる）
 - 設定: アクティブタイム・カメラ/音/マイクの ON/OFF
@@ -735,14 +755,25 @@ crontab -l | sed 's/^#\(.*autonomous-action\)/\1/' | crontab -
 ## バックアップ・復元
 
 ```bash
-# バックアップ
-bash ~/petit_claude/backup/save.sh
+# バックアップ（保存先省略時: ~/work/petit_backup_YYYYMMDD）
+bash scripts/backup_petit.sh
+
+# 保存先を指定する場合
+bash scripts/backup_petit.sh /path/to/dest
 
 # 復元
-bash ~/petit_claude/backup/restore.sh ~/petit_claude/backup/YYYYMMDD_HHMMSS
+bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 ```
 
-cron で毎日4時に自動バックアップ（7日分保持）。詳細は `~/petit_claude/backup/README.md` を参照。
+バックアップ対象:
+- `~/petit_claude/` — キャラデータ・チャット履歴・ノート・トークンログなど全体
+- `~/.claude/` — Claude Code の会話ログ・メモリDB・プロジェクト設定
+- `~/work/embodied-claude/.claude/` — スラッシュコマンド・プロジェクト設定
+- `autonomous-action.sh` — gitignore 対象の個人設定スクリプト
+- `.env` ファイル各種
+- crontab
+- dotfiles (`.tmux.conf`, `.bashrc` 等)
+- systemd ユーザーサービス
 
 ## crontab
 
@@ -806,6 +837,26 @@ python3 scripts/check_usage.py --character puchiteya --json
 ```
 
 `~/.claude/projects/**/*.jsonl` からトークン使用量を集計し、今日・今週・今月の合計を表示。今日の時間帯別呼び出し数も表示される。キャラクター別集計は `autonomous-action.sh` が新規セッション作成時に `~/.autonomous-logs/<character>/session_history.txt` へセッションIDを追記することで実現。
+
+### claude -p のトークンログ
+
+`autonomous-action.sh` とダッシュボードの `claude -p` 呼び出しは、実行ごとに JSON 形式のトークンログを `~/petit_claude/token_logs/` に保存する。
+
+```bash
+# ログを確認（最新5件）
+tail -5 ~/petit_claude/token_logs/token_log.jsonl | python3 -m json.tool
+
+# キャラ別（autonomousのみ）
+cat ~/petit_claude/token_logs/puchiteya/token_log.jsonl
+```
+
+ログの1行フォーマット:
+
+```json
+{"timestamp":"2026-05-19T11:20:00+00:00","source":"chat","character":"puchiko","turns":5,"input":100,"output":800,"cache_creation":12000,"cache_read":50000,"cost_usd":0.12}
+```
+
+`source` の種類: `autonomous`（自律行動）, `chat`（ダッシュボード会話）, `display_phrase`（M5一言生成）, `diary`（日記サマリー生成）
 
 ### 自律セッションのターン数制限
 

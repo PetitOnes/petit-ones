@@ -94,3 +94,7 @@ scripts/business_card/
 scripts/flyer/
 
 scripts/poetry/
+
+*.svg
+
+*.pdf
