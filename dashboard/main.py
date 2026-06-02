@@ -1404,7 +1404,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
 
     _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                      "--dangerously-skip-permissions",
-                     "--output-format", "stream-json", "--output-file", str(stream_path),
+                     "--output-format", "stream-json",
                      "--verbose"]
 
     if sf and sf.exists():
@@ -1460,7 +1460,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         except Exception:
             pass
 
-    async def _run_cmd(c: list[str]) -> tuple[str, str]:
+    async def _run_cmd(c: list[str], out_path: Path | None = None) -> tuple[str, str]:
         proc = await asyncio.create_subprocess_exec(
             *c, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -1470,7 +1470,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(input=effective_message.encode()), timeout=120,
             )
-            return stdout.decode(), stderr.decode()
+            raw = stdout.decode()
+            if out_path:
+                out_path.write_text(raw, encoding="utf-8")
+            return raw, stderr.decode()
         except asyncio.TimeoutError:
             try:
                 proc.kill()
@@ -1479,9 +1482,8 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             return "", "timeout"
 
     try:
-        output, err = await _run_cmd(cmd)
+        output, err = await _run_cmd(cmd, stream_path)
         if err == "timeout":
-            # タイムアウト: 途中まで保存されたstream logから部分的に情報を取る
             if stream_path.exists():
                 _, _, result_ev = _parse_stream_file(stream_path)
                 if result_ev:
@@ -1493,9 +1495,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             cmd2 = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt,
                     "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                     "--dangerously-skip-permissions",
-                    "--output-format", "stream-json", "--output-file", str(stream_path2),
+                    "--output-format", "stream-json",
                     "--verbose"]
-            output, err = await _run_cmd(cmd2)
+            output, err = await _run_cmd(cmd2, stream_path2)
             stream_path = stream_path2
         reply, new_sid, result_ev = _parse_stream_file(stream_path)
         _append_token_log_from_stream(result_ev)
@@ -3034,7 +3036,7 @@ def public_chat_page():
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ぷちたちに話しかける</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -3682,6 +3684,18 @@ def display_page():
     color: var(--footer-color);
     letter-spacing: 0.1em;
   }
+  @media (max-width: 600px) {
+    body { padding: 16px 12px; }
+    .char-desc { font-size: 0.78rem; }
+    .section-label { font-size: 0.82rem; }
+    .sensor-label { font-size: 0.9rem; }
+    .sensor-value { font-size: 1.2rem; }
+    .sensor-value.hi { font-size: 1.6rem; }
+    .desire-label { font-size: 0.82rem; }
+    .phrase { font-size: 1.05rem; }
+    .ctrl-btn { padding: 10px 20px; font-size: 0.9rem; min-height: 44px; }
+    .card { min-width: 100%; }
+  }
   .phrase {
     font-size: 0.95rem;
     color: var(--text-phrase);
@@ -4141,6 +4155,51 @@ async def api_terminal_chat(request: Request):
     if result.returncode != 0:
         return JSONResponse({"error": result.stderr.strip() or "tmux error"}, status_code=500)
     return {"ok": True, "command": cmd}
+
+
+@app.post("/api/terminal/send")
+async def api_terminal_send(request: Request):
+    """ターミナルセッションにテキストを送る（/chat モード中のメッセージ送信）。"""
+    body = await request.json()
+    text = body.get("text", "").strip()
+    if not text:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    result = subprocess.run(
+        ["tmux", "send-keys", "-t", "claude", text, "Enter"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return JSONResponse({"error": result.stderr.strip() or "tmux error"}, status_code=500)
+    return {"ok": True}
+
+
+@app.get("/api/terminal/chat_log")
+async def api_terminal_chat_log(request: Request):
+    """chat_histories から指定キャラの新着メッセージを返す。"""
+    chars_param = request.query_params.get("chars", "")
+    since_param = request.query_params.get("since", "")
+    char_ids = [c for c in chars_param.split(",") if c]
+    messages = []
+    for char_id in char_ids:
+        hist_file = chat_log_file(char_id)
+        if not hist_file.exists():
+            continue
+        try:
+            data = json.loads(hist_file.read_text())
+        except Exception:
+            continue
+        for entry in data:
+            ts = entry.get("timestamp", "")
+            if since_param and ts <= since_param:
+                continue
+            messages.append({
+                "character_id": char_id,
+                "role": entry.get("role", ""),
+                "text": entry.get("text", ""),
+                "timestamp": ts,
+            })
+    messages.sort(key=lambda x: x["timestamp"])
+    return messages
 
 
 @app.get("/api/trio/history")
@@ -4772,7 +4831,17 @@ HTML = """<!DOCTYPE html>
     .hour-row .time-group { display: flex; align-items: center; gap: 2px; }
     .hour-del { background: none; border: none; color: #ccc; cursor: pointer; font-size: 1rem; }
     .add-hour-btn { font-size: 0.8rem; color: var(--char-mid); background: none; border: 1px dashed var(--char); border-radius: 8px; padding: 4px 12px; cursor: pointer; }
-    .save-settings-btn { width: 100%; margin-top: 12px; background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px; font-size: 0.9rem; cursor: pointer; }
+    .save-settings-btn { width: 100%; margin-top: 12px; background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 14px; font-size: 1rem; cursor: pointer; min-height: 44px; }
+    @media (max-width: 600px) {
+      .msg { font-size: 1rem; }
+      .chat-input input { font-size: 1rem; padding: 12px 16px; }
+      .chat-input button { font-size: 1rem; padding: 12px 20px; min-height: 44px; }
+      .char-tab { font-size: 0.95rem; padding: 8px 18px; min-height: 40px; }
+      .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
+      .setting-label { font-size: 1rem; }
+      .popup-title { font-size: 1rem; }
+      .chat-messages { max-height: 50vh; }
+    }
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
     .day-tab.active { background: var(--char); color: var(--char-btn-text); border-color: var(--char); }
@@ -4780,11 +4849,11 @@ HTML = """<!DOCTYPE html>
     /* ポップアップ */
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
     .overlay.open { display: flex; }
-    .popup { background: white; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 75vh; display: flex; flex-direction: column; }
-    .popup-header { padding: 14px 16px; border-bottom: 1px solid var(--char-soft); display: flex; justify-content: space-between; align-items: center; }
+    .popup { background: white; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
+    .popup-header { padding: 14px 16px; border-bottom: 1px solid var(--char-soft); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
     .popup-title { font-size: 0.9rem; font-weight: 600; color: var(--char-dark); }
-    .popup-close { background: none; border: none; font-size: 1.2rem; color: #aaa; cursor: pointer; }
-    .popup-body { overflow-y: auto; padding: 12px 16px; flex: 1; }
+    .popup-close { background: none; border: none; font-size: 1.4rem; color: #aaa; cursor: pointer; padding: 4px 8px; min-width: 44px; min-height: 44px; display: flex; align-items: center; justify-content: center; }
+    .popup-body { overflow-y: auto; padding: 12px 16px 20px; flex: 1; -webkit-overflow-scrolling: touch; }
 
     /* 会話ポップアップ */
     .history-msg { padding: 6px 0; border-bottom: 1px solid var(--char-bg); }
@@ -5116,6 +5185,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
       tabs.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
       tabs.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
+      tabs.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -5969,11 +6039,11 @@ TERMINAL_HTML = """<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>ターミナル</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; font-family: -apple-system, sans-serif; color: #e0e0e0; }
+    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; height: 100dvh; font-family: -apple-system, sans-serif; color: #e0e0e0; padding-bottom: env(safe-area-inset-bottom); }
 
     /* 上段：ナビ */
     .topbar {
@@ -6032,6 +6102,56 @@ TERMINAL_HTML = """<!DOCTYPE html>
     .end-btn:hover { background: rgba(224,85,85,0.12); }
 
     iframe { flex: 1; border: none; width: 100%; min-height: 0; }
+    iframe.hidden { display: none; }
+
+    /* チャットパネル */
+    .chat-panel { flex: 1; display: none; flex-direction: column; min-height: 0; background: #0d1117; }
+    .chat-panel.active { display: flex; }
+    .chat-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; -webkit-overflow-scrolling: touch; }
+    .chat-bubble { display: flex; gap: 8px; align-items: flex-end; }
+    .chat-bubble.user { flex-direction: row-reverse; }
+    .bubble-avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; object-fit: cover; }
+    .bubble-text { max-width: 75%; padding: 10px 13px; border-radius: 18px; font-size: 0.92rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+    .chat-bubble.user .bubble-text { background: #1a4a80; color: #e0e0e0; border-bottom-right-radius: 4px; }
+    .chat-bubble.char .bubble-text { background: #16213e; color: #e0e0e0; border-bottom-left-radius: 4px; }
+    .bubble-name { font-size: 0.68rem; opacity: 0.5; margin-bottom: 3px; }
+    .typing-indicator { display: flex; gap: 4px; align-items: center; padding: 10px 13px; }
+    .typing-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; animation: blink 1.2s infinite; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%,80%,100% { opacity: 0.2; } 40% { opacity: 1; } }
+    .terminal-notice { background: #1a1a2e; border-top: 1px solid #2a3a5a; padding: 6px 14px; font-size: 0.75rem; color: #888; text-align: center; flex-shrink: 0; display: none; }
+    .terminal-notice.show { display: block; }
+    .chat-input-row { display: flex; gap: 8px; padding: 10px 12px; background: #16213e; border-top: 1px solid #0f3460; flex-shrink: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+    .chat-input-row input { flex: 1; background: #0d1b36; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 20px; padding: 10px 16px; font-size: 0.95rem; outline: none; font-family: inherit; }
+    .chat-input-row input::placeholder { color: #555; }
+    .chat-send-btn { background: #0f3460; border: none; color: #cab8d9; border-radius: 20px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; white-space: nowrap; min-height: 44px; }
+    .view-toggle-btn { font-size: 0.75rem; color: #555; background: none; border: 1px solid #2a3a5a; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+
+    .hide-ctrl-btn {
+      background: transparent; border: 1px solid #2a3a5a; color: #888;
+      border-radius: 6px; padding: 4px 9px; font-size: 1rem; cursor: pointer;
+      transition: all 0.18s;
+    }
+    .hide-ctrl-btn:hover { color: #cab8d9; border-color: #cab8d9; }
+    .ctrlbar.hidden { display: none; }
+    .reply-btn {
+      background: transparent; border: 1px solid #2a3a5a; color: #aaa;
+      border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; cursor: pointer;
+      transition: all 0.18s; white-space: nowrap;
+    }
+    .reply-btn:hover { color: #e0e0e0; border-color: #cab8d9; }
+    .reply-btn.yes { border-color: #1a5a2a; color: #5aba7a; }
+    .reply-btn.yes:hover { background: rgba(90,186,122,0.15); }
+    .reply-btn.no { border-color: #5a1a1a; color: #ba5a5a; }
+    .reply-btn.no:hover { background: rgba(186,90,90,0.15); }
+    .reply-btns { display: flex; gap: 4px; align-items: center; }
+    .show-ctrl-btn {
+      position: fixed; bottom: 12px; right: 12px; z-index: 100;
+      background: #16213e; border: 1px solid #0f3460; color: #cab8d9;
+      border-radius: 24px; padding: 8px 14px; font-size: 0.85rem; cursor: pointer;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+    }
 
     .toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -6049,9 +6169,14 @@ TERMINAL_HTML = """<!DOCTYPE html>
     <a class="back" href="/">← 戻る</a>
     <span class="title">ターミナル</span>
     <div class="sep"></div>
-    <a class="fullscreen-btn" id="fullscreenBtn" target="_blank" title="別タブで開く（スマホ推奨）">⛶</a>
+    <button class="view-toggle-btn" id="viewToggleBtn" style="display:none" onclick="toggleView()">端末</button>
+    <button class="reply-btn yes" onclick="sendKey('1')" title="Yes">Y</button>
+    <button class="reply-btn yes" onclick="sendKey('2')" title="Yes during session">YS</button>
+    <button class="reply-btn no" onclick="sendKey('3')" title="No">N</button>
+    <button class="hide-ctrl-btn" onclick="toggleCtrl()" title="操作バー表示/非表示" id="hideCtrlBtn">≡</button>
+    <a class="fullscreen-btn" id="fullscreenBtn" target="_blank" title="別タブで開く">⛶</a>
   </div>
-  <div class="ctrlbar">
+  <div class="ctrlbar" id="ctrlbar">
     <div class="char-btns" id="charBtns">
       <div class="char-btn" data-id="puchiko">
         <img src="/api/avatar/puchiko.png" alt="ぷちこ">
@@ -6071,12 +6196,40 @@ TERMINAL_HTML = """<!DOCTYPE html>
     <button class="end-btn" id="endBtn">終了 ✕</button>
   </div>
   <iframe id="terminal-frame" allowfullscreen></iframe>
+  <div class="chat-panel" id="chatPanel">
+    <div class="chat-msgs" id="chatMsgs"></div>
+    <div class="terminal-notice" id="termNotice">⚠ ターミナルで確認が必要かもしれません →「端末」ボタンで確認</div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="メッセージを入力…" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="chat-send-btn" onclick="sendChat()">送信</button>
+    </div>
+  </div>
+  <button class="show-ctrl-btn" id="showCtrlBtn" style="display:none" onclick="toggleCtrl()">操作 ▲</button>
   <div class="toast" id="toast"></div>
 
   <script>
-    const ttydUrl = location.protocol + '//' + location.hostname + ':7682';
-    document.getElementById('terminal-frame').src = ttydUrl;
-    document.getElementById('fullscreenBtn').href = ttydUrl;
+    const ttydBase = location.protocol + '//' + location.hostname + ':7682';
+    document.getElementById('terminal-frame').src = ttydBase;
+    document.getElementById('fullscreenBtn').href = ttydBase;
+
+    async function sendKey(key) {
+      try {
+        await fetch('/api/terminal/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: key }),
+        });
+      } catch (e) {
+        showToast('送信エラー: ' + e.message, true);
+      }
+    }
+
+    function toggleCtrl() {
+      const bar = document.getElementById('ctrlbar');
+      const showBtn = document.getElementById('showCtrlBtn');
+      const hidden = bar.classList.toggle('hidden');
+      showBtn.style.display = hidden ? 'block' : 'none';
+    }
 
     const CHARS = {
       puchiteya: { name: 'ぷちてゃ', color: '#fff262' },
@@ -6110,6 +6263,162 @@ TERMINAL_HTML = """<!DOCTYPE html>
       updateStartBtn();
     });
 
+    // チャット状態
+    let chatActive = false;
+    let activeChars = [];
+    let lastTimestamp = '';
+    let pollTimer = null;
+    let showTerminal = false;
+
+    function toggleView() {
+      showTerminal = !showTerminal;
+      document.getElementById('terminal-frame').classList.toggle('hidden', !showTerminal);
+      document.getElementById('chatPanel').classList.toggle('active', !showTerminal);
+      document.getElementById('viewToggleBtn').textContent = showTerminal ? 'チャット' : '端末';
+    }
+
+    function appendBubble(role, text, charId) {
+      const msgs = document.getElementById('chatMsgs');
+      const isUser = role === 'user';
+      const char = CHARS[charId] || CHARS[role];
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-bubble ' + (isUser ? 'user' : 'char');
+      if (!isUser && char) {
+        const nameEl = document.createElement('div');
+        nameEl.className = 'bubble-name';
+        nameEl.textContent = char.name;
+        nameEl.style.color = char.color;
+        const img = document.createElement('img');
+        img.className = 'bubble-avatar';
+        img.src = '/api/avatar/' + charId + '.png';
+        const inner = document.createElement('div');
+        inner.style.display = 'flex';
+        inner.style.flexDirection = 'column';
+        inner.appendChild(nameEl);
+        const textEl = document.createElement('div');
+        textEl.className = 'bubble-text';
+        textEl.textContent = text;
+        textEl.style.borderLeft = '3px solid ' + char.color;
+        inner.appendChild(textEl);
+        wrap.appendChild(img);
+        wrap.appendChild(inner);
+      } else {
+        const textEl = document.createElement('div');
+        textEl.className = 'bubble-text';
+        textEl.textContent = text;
+        wrap.appendChild(textEl);
+      }
+      msgs.appendChild(wrap);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    async function pollChatLog() {
+      if (!chatActive) return;
+      try {
+        const url = '/api/terminal/chat_log?chars=' + activeChars.join(',') + '&since=' + encodeURIComponent(lastTimestamp);
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const msgs = await res.json();
+        if (msgs.length > 0) removeTyping();
+        for (const msg of msgs) {
+          if (msg.role !== 'user') appendBubble(msg.role, msg.text, msg.character_id);
+          lastTimestamp = msg.timestamp;
+        }
+      } catch (e) {}
+      pollTimer = setTimeout(pollChatLog, 2000);
+    }
+
+    let typingEl = null;
+    let noticeTimer = null;
+
+    function showTyping(charIds) {
+      removeTyping();
+      const msgs = document.getElementById('chatMsgs');
+      typingEl = document.createElement('div');
+      typingEl.className = 'chat-bubble char';
+      typingEl.id = 'typingBubble';
+      const ind = document.createElement('div');
+      ind.className = 'typing-indicator';
+      ind.innerHTML = '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>';
+      typingEl.appendChild(ind);
+      msgs.appendChild(typingEl);
+      msgs.scrollTop = msgs.scrollHeight;
+      // 10秒後に警告
+      noticeTimer = setTimeout(() => {
+        document.getElementById('termNotice').classList.add('show');
+      }, 10000);
+    }
+
+    function removeTyping() {
+      clearTimeout(noticeTimer);
+      document.getElementById('termNotice').classList.remove('show');
+      const el = document.getElementById('typingBubble');
+      if (el) el.remove();
+      typingEl = null;
+    }
+
+    async function sendChat() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = '';
+      appendBubble('user', text, 'user');
+      showTyping(activeChars);
+      try {
+        await fetch('/api/terminal/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+      } catch (e) {
+        removeTyping();
+        showToast('送信エラー: ' + e.message, true);
+      }
+    }
+
+    function startChatMode(chars) {
+      activeChars = chars;
+      chatActive = true;
+      lastTimestamp = new Date().toISOString();
+      document.getElementById('chatMsgs').innerHTML = '';
+      // チャットパネルに切り替え
+      document.getElementById('terminal-frame').classList.add('hidden');
+      document.getElementById('chatPanel').classList.add('active');
+      document.getElementById('viewToggleBtn').style.display = '';
+      document.getElementById('viewToggleBtn').textContent = '端末';
+      showTerminal = false;
+      clearTimeout(pollTimer);
+      pollChatLog();
+    }
+
+    function stopChatMode() {
+      chatActive = false;
+      clearTimeout(pollTimer);
+      document.getElementById('terminal-frame').classList.remove('hidden');
+      document.getElementById('chatPanel').classList.remove('active');
+      document.getElementById('viewToggleBtn').style.display = 'none';
+    }
+
+    document.getElementById('startBtn').addEventListener('click', async () => {
+      if (selected.size === 0) return;
+      const btn = document.getElementById('startBtn');
+      btn.textContent = '送信中…';
+      // チャット画面への切り替えは先に行う
+      startChatMode([...selected]);
+      try {
+        const res = await fetch('/api/terminal/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ char_ids: [...selected] }),
+        });
+        const data = await res.json();
+        if (!res.ok) showToast('tmuxエラー: ' + (data.error || 'error'), true);
+      } catch (e) {
+        showToast('送信エラー: ' + e.message, true);
+      }
+      btn.textContent = 'チャット開始 ▶';
+    });
+
     document.getElementById('endBtn').addEventListener('click', async () => {
       const btn = document.getElementById('endBtn');
       btn.textContent = '送信中…';
@@ -6121,30 +6430,12 @@ TERMINAL_HTML = """<!DOCTYPE html>
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'error');
-        showToast('チャット終了を送信しました', false);
+        stopChatMode();
+        showToast('チャット終了しました', false);
       } catch (e) {
         showToast('エラー: ' + e.message, true);
       }
       btn.textContent = '終了 ✕';
-    });
-
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      if (selected.size === 0) return;
-      const btn = document.getElementById('startBtn');
-      btn.textContent = '送信中…';
-      try {
-        const res = await fetch('/api/terminal/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ char_ids: [...selected] }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'error');
-        showToast('ターミナルに送信しました: ' + data.command, false);
-      } catch (e) {
-        showToast('エラー: ' + e.message, true);
-      }
-      btn.textContent = 'チャット開始 ▶';
     });
   </script>
 </body>
@@ -8310,6 +8601,295 @@ def main():
     port = int(os.getenv("DASHBOARD_PORT", "8765"))
     host = os.getenv("DASHBOARD_HOST", "0.0.0.0")
     uvicorn.run(app, host=host, port=port)
+
+
+# ===================== costs =====================
+
+_TOKEN_LOG = DATA_DIR / "token_logs" / "token_log.jsonl"
+_MONTHLY_BUDGET_USD = float(os.getenv("MONTHLY_BUDGET_USD", "200"))
+_BUDGET_RESET_DAY = int(os.getenv("BUDGET_RESET_DAY", "26"))
+
+
+@app.get("/costs", response_class=HTMLResponse)
+def costs_page():
+    return HTMLResponse(COSTS_HTML)
+
+
+@app.get("/api/costs")
+async def api_costs():
+    from zoneinfo import ZoneInfo
+    _jst = ZoneInfo("Asia/Tokyo")
+    now = datetime.now(_jst)
+    today_str = now.strftime("%Y-%m-%d")
+    month_str = now.strftime("%Y-%m")
+
+    entries = []
+    if _TOKEN_LOG.exists():
+        for line in _TOKEN_LOG.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+                ts_raw = ev.get("timestamp", "")
+                if not ts_raw:
+                    continue
+                # タイムゾーン正規化
+                from datetime import timezone
+                if "+" in ts_raw[10:] or "Z" in ts_raw:
+                    dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                    dt_jst = dt.astimezone(_jst)
+                else:
+                    dt_jst = datetime.fromisoformat(ts_raw).replace(tzinfo=_jst)
+                date_str = dt_jst.strftime("%Y-%m-%d")
+                cost = ev.get("cost_usd") or 0
+                if cost == 0:
+                    ci = ev.get("input", ev.get("input_tokens", 0)) or 0
+                    co = ev.get("output", ev.get("output_tokens", 0)) or 0
+                    cc = ev.get("cache_creation", ev.get("cache_creation_input_tokens", 0)) or 0
+                    cr = ev.get("cache_read", ev.get("cache_read_input_tokens", 0)) or 0
+                    cost = (ci * 3 + co * 15 + cc * 3.75 + cr * 0.30) / 1e6
+                entries.append({
+                    "date": date_str,
+                    "month": date_str[:7],
+                    "source": ev.get("source", "unknown"),
+                    "character": ev.get("character", "unknown"),
+                    "cost": cost,
+                })
+            except Exception:
+                continue
+
+    # 集計
+    from collections import defaultdict
+
+    def _sum(lst):
+        return sum(e["cost"] for e in lst)
+
+    today_entries = [e for e in entries if e["date"] == today_str]
+    month_entries = [e for e in entries if e["month"] == month_str]
+
+    # 過去30日
+    import datetime as _dt
+    days30 = [(now - _dt.timedelta(days=i)).strftime("%Y-%m-%d") for i in range(30)]
+    days30_entries = [e for e in entries if e["date"] in days30]
+
+    # 日別（サイクル全日付 — cycle_start〜今日）は後でサイクル計算後に生成する
+
+    # キャラ別（今月）
+    by_char = defaultdict(float)
+    for e in month_entries:
+        by_char[e["character"]] += e["cost"]
+
+    # ソース別（今月）
+    by_src = defaultdict(float)
+    for e in month_entries:
+        by_src[e["source"]] += e["cost"]
+
+    # サイクル計算（リセット日ベース）
+    reset_day = _BUDGET_RESET_DAY
+    if now.day >= reset_day:
+        cycle_start = now.replace(day=reset_day, hour=0, minute=0, second=0, microsecond=0)
+        import calendar
+        last_day = calendar.monthrange(now.year, now.month)[1]
+        next_reset_day = min(reset_day, last_day)
+        if now.month == 12:
+            cycle_end = now.replace(year=now.year+1, month=1, day=next_reset_day, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            nm = now.month + 1
+            last_nm = calendar.monthrange(now.year, nm)[1]
+            cycle_end = now.replace(month=nm, day=min(reset_day, last_nm), hour=0, minute=0, second=0, microsecond=0)
+    else:
+        cycle_end = now.replace(day=reset_day, hour=0, minute=0, second=0, microsecond=0)
+        if now.month == 1:
+            cycle_start = now.replace(year=now.year-1, month=12, day=reset_day, hour=0, minute=0, second=0, microsecond=0)
+        else:
+            pm = now.month - 1
+            import calendar
+            last_pm = calendar.monthrange(now.year, pm)[1]
+            cycle_start = now.replace(month=pm, day=min(reset_day, last_pm), hour=0, minute=0, second=0, microsecond=0)
+
+    cycle_start_str = cycle_start.strftime("%Y-%m-%d")
+    cycle_end_str = cycle_end.strftime("%Y-%m-%d")
+    import datetime as _dt2
+    days_remaining = (cycle_end.date() - now.date()).days
+    cycle_total_days = (cycle_end.date() - cycle_start.date()).days
+    days_elapsed = (now.date() - cycle_start.date()).days
+    ideal_cost = _MONTHLY_BUDGET_USD * days_elapsed / max(cycle_total_days, 1)
+
+    # サイクル内の実コスト
+    cycle_entries = [e for e in entries if cycle_start_str <= e["date"] < cycle_end_str]
+    cycle_total = _sum(cycle_entries)
+    remaining = max(0, _MONTHLY_BUDGET_USD - cycle_total)
+
+    # 日別（サイクル全日付: cycle_start〜today）
+    daily = {}
+    cur = cycle_start.date()
+    end_date = now.date()
+    while cur <= end_date:
+        d_str = cur.strftime("%Y-%m-%d")
+        day_e = [e for e in entries if e["date"] == d_str]
+        by_src_d = defaultdict(float)
+        for e in day_e:
+            by_src_d[e["source"]] += e["cost"]
+        daily[d_str] = {"total": _sum(day_e), "by_source": dict(by_src_d)}
+        cur += _dt.timedelta(days=1)
+
+    return {
+        "today": _sum(today_entries),
+        "days30": _sum(days30_entries),
+        "month_total": cycle_total,
+        "budget": _MONTHLY_BUDGET_USD,
+        "remaining": remaining,
+        "ideal": ideal_cost,
+        "days_remaining": days_remaining,
+        "cycle_start": cycle_start_str,
+        "cycle_end": cycle_end_str,
+        "by_character": dict(by_char),
+        "by_source": dict(by_src),
+        "daily": daily,
+        "month_str": cycle_start_str[:7] + "〜" + cycle_end_str[5:],
+        "today_str": today_str,
+    }
+
+
+COSTS_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>コスト管理</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f13; color: #e8e0f0; min-height: 100vh; padding: 16px; }
+h1 { font-size: 1.2rem; font-weight: 600; margin-bottom: 16px; opacity: 0.8; }
+h2 { font-size: 0.85rem; font-weight: 600; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.card { background: #1a1a24; border-radius: 10px; padding: 14px; }
+.card .label { font-size: 0.72rem; opacity: 0.5; margin-bottom: 4px; }
+.card .value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.card .sub { font-size: 0.72rem; opacity: 0.45; margin-top: 2px; }
+.budget-card { background: #1a1a24; border-radius: 10px; padding: 14px; margin-bottom: 16px; }
+.budget-bar-bg { background: #2a2a38; border-radius: 6px; height: 10px; margin: 8px 0; overflow: hidden; }
+.budget-bar { height: 100%; border-radius: 6px; transition: width 0.4s; }
+.budget-row { display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.6; }
+.section { background: #1a1a24; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+.row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #ffffff08; }
+.row:last-child { border-bottom: none; }
+.row .name { font-size: 0.85rem; opacity: 0.8; }
+.row .cost { font-size: 0.85rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+.bar-row { margin-top: 3px; }
+.mini-bar-bg { background: #2a2a38; border-radius: 3px; height: 4px; }
+.mini-bar { height: 4px; border-radius: 3px; }
+.daily-grid { display: grid; gap: 4px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
+.daily-grid::-webkit-scrollbar { width: 4px; }
+.daily-grid::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
+.day-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
+.day-label { width: 72px; opacity: 0.5; flex-shrink: 0; }
+.day-bar-bg { flex: 1; background: #2a2a38; border-radius: 3px; height: 8px; overflow: hidden; }
+.day-bar { height: 8px; border-radius: 3px; background: #8b7cf8; }
+.day-cost { width: 48px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.8; flex-shrink: 0; }
+.back { display: inline-block; margin-bottom: 14px; opacity: 0.5; font-size: 0.85rem; text-decoration: none; color: inherit; }
+.back:hover { opacity: 1; }
+.src-chip { display: inline-block; font-size: 0.68rem; padding: 1px 6px; border-radius: 10px; background: #2a2a38; margin-right: 4px; opacity: 0.7; }
+</style>
+</head>
+<body>
+<a class="back" href="/">← ダッシュボード</a>
+<h1>💰 コスト管理</h1>
+<div id="main">読み込み中…</div>
+<script>
+const SOURCE_COLORS = {
+  autonomous: '#8b7cf8',
+  chat: '#f87c8b',
+  sensor: '#7cf8c8',
+  camera: '#f8d87c',
+  mic: '#7cd4f8',
+  diary: '#c87cf8',
+};
+const SOURCE_LABELS = {
+  autonomous: '自律行動',
+  chat: 'チャット',
+  sensor: 'センサー',
+  camera: 'カメラ',
+  mic: 'マイク',
+  diary: '日記生成',
+};
+const CHAR_COLORS = {
+  puchiteya: '#fff262',
+  puchiko: '#cab8d9',
+  puchiru: '#00afcc',
+};
+
+function fmt(v) { return '$' + v.toFixed(3); }
+function fmtShort(v) { return '$' + v.toFixed(2); }
+
+async function load() {
+  const res = await fetch('/api/costs');
+  const d = await res.json();
+  const pct = Math.min(100, d.month_total / d.budget * 100);
+  const barColor = pct > 85 ? '#f87c8b' : pct > 60 ? '#f8d87c' : '#7cf8c8';
+  const dailyBudget = (d.budget / 30).toFixed(2);
+
+  // ソース別の合計（今月）
+  const srcTotal = Object.values(d.by_source).reduce((a,b)=>a+b, 0);
+
+  // 日別最大値
+  const dailyMax = Math.max(...Object.values(d.daily).map(v=>v.total), 0.01);
+
+  // 日別（サイクル全日付、古い順）
+  const days = Object.keys(d.daily).sort();
+
+  let html = '';
+  html += '<div class="grid">';
+  html += '<div class="card"><div class="label">今日</div><div class="value">' + fmtShort(d.today) + '</div><div class="sub">上限 $' + dailyBudget + '/日</div></div>';
+  html += '<div class="card"><div class="label">今月（' + d.cycle_start + '〜）</div><div class="value">' + fmtShort(d.month_total) + '</div><div class="sub">理想値 ' + fmtShort(d.ideal) + ' | 過去30日 ' + fmtShort(d.days30) + '</div></div>';
+  html += '<div class="card"><div class="label">残り予算</div><div class="value" style="color:' + barColor + '">' + fmtShort(d.remaining) + '</div><div class="sub">月額 $' + d.budget + '（' + d.days_remaining + '日まで）</div></div>';
+  html += '</div>';
+
+  html += '<div class="budget-card"><h2>月間予算</h2>';
+  html += '<div class="budget-bar-bg"><div class="budget-bar" style="width:' + pct + '%;background:' + barColor + '"></div></div>';
+  html += '<div class="budget-row"><span>使用 ' + fmtShort(d.month_total) + ' (' + pct.toFixed(1) + '%)</span><span>残 ' + fmtShort(d.remaining) + '</span></div></div>';
+
+  html += '<div class="section"><h2>キャラクター別（今月）</h2>';
+  Object.entries(d.by_character).sort((a,b)=>b[1]-a[1]).forEach(([char, cost]) => {
+    const pctChar = d.month_total > 0 ? cost/d.month_total*100 : 0;
+    const color = CHAR_COLORS[char] || '#8b7cf8';
+    html += '<div class="row"><div><div class="name">' + char + '</div>';
+    html += '<div class="bar-row"><div class="mini-bar-bg"><div class="mini-bar" style="width:' + pctChar + '%;background:' + color + '"></div></div></div></div>';
+    html += '<div class="cost">' + fmtShort(cost) + '</div></div>';
+  });
+  html += '</div>';
+
+  html += '<div class="section"><h2>ソース別（今月）</h2>';
+  Object.entries(d.by_source).sort((a,b)=>b[1]-a[1]).forEach(([src, cost]) => {
+    const pctSrc = srcTotal > 0 ? cost/srcTotal*100 : 0;
+    const color = SOURCE_COLORS[src] || '#8b7cf8';
+    const label = SOURCE_LABELS[src] || src;
+    html += '<div class="row"><div><div class="name">' + label + '</div>';
+    html += '<div class="bar-row"><div class="mini-bar-bg"><div class="mini-bar" style="width:' + pctSrc + '%;background:' + color + '"></div></div></div></div>';
+    html += '<div class="cost">' + fmtShort(cost) + '</div></div>';
+  });
+  html += '</div>';
+
+  html += '<div class="section"><h2>日別（' + d.cycle_start + '〜）</h2><div class="daily-grid">';
+  days.forEach(day => {
+    const info = d.daily[day];
+    const w = info.total / dailyMax * 100;
+    const isToday = day === d.today_str;
+    html += '<div class="day-row">';
+    html += '<div class="day-label">' + day.slice(5) + (isToday ? ' 今日' : '') + '</div>';
+    html += '<div class="day-bar-bg"><div class="day-bar" style="width:' + w + '%"></div></div>';
+    html += '<div class="day-cost">' + fmtShort(info.total) + '</div>';
+    html += '</div>';
+  });
+  html += '</div></div>';
+
+  document.getElementById('main').innerHTML = html;
+}
+load();
+</script>
+</body>
+</html>"""
 
 
 if __name__ == "__main__":
