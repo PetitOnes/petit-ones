@@ -343,7 +343,7 @@ async def _generate_display_phrase(character_id: str) -> str:
             f"今感じていることを一言（15字以内、上の口調の例に近い言い方で、体言止めか短文で）。一言だけ答えて。"
         )
         proc = await asyncio.create_subprocess_exec(
-            "claude", "-p", prompt,
+            "claude", prompt,
             "--model", "claude-haiku-4-5-20251001",
             "--output-format", "json",
             stdout=asyncio.subprocess.PIPE,
@@ -1409,9 +1409,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
 
     if sf and sf.exists():
         sid = sf.read_text().strip()
-        cmd = ["claude", "-p", "--model", model_name, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
+        cmd = ["claude", "--model", model_name, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
     else:
-        cmd = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
+        cmd = ["claude", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
 
     def _parse_stream_file(path: Path) -> tuple[str, str, dict]:
         """stream.jsonlからreply text・session_id・result eventを抽出する。"""
@@ -1492,7 +1492,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         if sf and sf.exists() and "No conversation found" in output:
             sf.unlink(missing_ok=True)
             stream_path2 = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
-            cmd2 = ["claude", "-p", "--model", model_name, "--append-system-prompt", system_prompt,
+            cmd2 = ["claude", "--model", model_name, "--append-system-prompt", system_prompt,
                     "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
                     "--dangerously-skip-permissions",
                     "--output-format", "stream-json",
@@ -1515,7 +1515,7 @@ async def _generate_diary_with_claude(prompt: str) -> str:
     diary_model = os.getenv("CLAUDE_MODEL", "sonnet")
     env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
     proc = await asyncio.create_subprocess_exec(
-        "claude", "-p", "--model", diary_model, prompt,
+        "claude", "--model", diary_model, prompt,
         "--output-format", "json",
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -4162,6 +4162,7 @@ async def api_terminal_send(request: Request):
     """ターミナルセッションにテキストを送る（/chat モード中のメッセージ送信）。"""
     body = await request.json()
     text = body.get("text", "").strip()
+    chars = body.get("chars", ["puchiko", "puchiru", "puchiteya"])
     if not text:
         return JSONResponse({"error": "empty"}, status_code=400)
     result = subprocess.run(
@@ -4170,6 +4171,14 @@ async def api_terminal_send(request: Request):
     )
     if result.returncode != 0:
         return JSONResponse({"error": result.stderr.strip() or "tmux error"}, status_code=500)
+    # ユーザー発言を各キャラのログに保存
+    scripts_dir = Path(__file__).parent.parent / "scripts"
+    for char_id in chars:
+        subprocess.run(
+            ["python3", str(scripts_dir / "append_chat_log.py"),
+             "--character-id", char_id, "--role", "user", "--text", text],
+            capture_output=True,
+        )
     return {"ok": True}
 
 
@@ -4200,6 +4209,289 @@ async def api_terminal_chat_log(request: Request):
             })
     messages.sort(key=lambda x: x["timestamp"])
     return messages
+
+
+# ============================================================
+# /terminal3 — 3プロセス版チャットページ（既存は触らない）
+# ============================================================
+
+@app.post("/api/terminal3/select")
+async def api_terminal3_select(request: Request):
+    """tmuxセッション claude3 のアクティブウィンドウを切り替える。"""
+    body = await request.json()
+    char_id = body.get("char_id", "")
+    if char_id not in {"puchiko", "puchiru", "puchiteya"}:
+        return JSONResponse({"error": "invalid char_id"}, status_code=400)
+    result = subprocess.run(
+        ["tmux", "select-window", "-t", f"claude3:{char_id}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return JSONResponse({"error": result.stderr.strip()}, status_code=500)
+    return {"ok": True}
+
+
+@app.post("/api/terminal3/send")
+async def api_terminal3_send(request: Request):
+    """tmuxセッション claude3 の指定ウィンドウへメッセージを送る。"""
+    body = await request.json()
+    text = body.get("text", "").strip()
+    chars = body.get("chars", ["puchiko", "puchiru", "puchiteya"])
+    if not text:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    valid = {"puchiko", "puchiru", "puchiteya"}
+    errors = []
+    scripts_dir = Path(__file__).parent.parent / "scripts"
+    for char_id in chars:
+        if char_id not in valid:
+            continue
+        result = subprocess.run(
+            ["tmux", "send-keys", "-t", f"claude3:{char_id}", text, "Enter"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            errors.append(f"{char_id}: {result.stderr.strip()}")
+        # ユーザー発言をログに保存
+        subprocess.run(
+            ["python3", str(scripts_dir / "append_chat_log.py"),
+             "--character-id", char_id, "--role", "user", "--text", text],
+            capture_output=True,
+        )
+    if errors:
+        return JSONResponse({"error": "; ".join(errors)}, status_code=500)
+    return {"ok": True}
+
+
+TERMINAL3_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>個別チャット</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: #0d1117; color: #e0e0e0; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; }
+    .topbar {
+      display: flex; align-items: center; gap: 8px;
+      background: #16213e; padding: 6px 14px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .topbar .back { color: #888; text-decoration: none; font-size: 0.85rem; }
+    .topbar .title { font-size: 0.95rem; font-weight: 600; color: #e0e0e0; }
+    .topbar .sep { flex: 1; }
+    .view-toggle-btn { font-size: 0.75rem; color: #555; background: none; border: 1px solid #2a3a5a; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+    .fullscreen-btn { color: #888; border: 1px solid #2a3a5a; border-radius: 8px; padding: 4px 9px; font-size: 1rem; text-decoration: none; display: flex; align-items: center; }
+    .ctrlbar {
+      background: #16213e; padding: 5px 14px;
+      display: flex; align-items: center; gap: 6px;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .ctrlbar .sep { flex: 1; }
+    .char-btns { display: flex; gap: 4px; align-items: center; }
+    .char-btn {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      cursor: pointer; padding: 3px 7px; border-radius: 10px;
+      border: 2px solid transparent; transition: all 0.18s; opacity: 0.45;
+      background: transparent; user-select: none;
+    }
+    .char-btn:hover { opacity: 0.8; background: rgba(255,255,255,0.05); }
+    .char-btn.selected { opacity: 1; border-color: currentColor; background: rgba(255,255,255,0.08); }
+    .char-btn img { width: 30px; height: 30px; border-radius: 50%; object-fit: cover; }
+    .char-btn .char-name { font-size: 0.58rem; font-weight: 600; }
+    .char-btn[data-id="puchiteya"] { color: #fff262; }
+    .char-btn[data-id="puchiko"]   { color: #cab8d9; }
+    .char-btn[data-id="puchiru"]   { color: #00afcc; }
+    iframe { flex: 1; border: none; width: 100%; min-height: 0; }
+    iframe.hidden { display: none; }
+    .chat-panel { flex: 1; display: none; flex-direction: column; min-height: 0; background: #0d1117; }
+    .chat-panel.active { display: flex; }
+    .chat-msgs { flex: 1; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; -webkit-overflow-scrolling: touch; }
+    .chat-bubble { display: flex; gap: 8px; align-items: flex-end; }
+    .chat-bubble.user { flex-direction: row-reverse; }
+    .bubble-avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; object-fit: cover; }
+    .bubble-text { max-width: 75%; padding: 10px 13px; border-radius: 18px; font-size: 0.92rem; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+    .chat-bubble.user .bubble-text { background: #1a4a80; color: #e0e0e0; border-bottom-right-radius: 4px; }
+    .chat-bubble.char .bubble-text { background: #16213e; color: #e0e0e0; border-bottom-left-radius: 4px; }
+    .bubble-name { font-size: 0.68rem; opacity: 0.5; margin-bottom: 3px; }
+    .typing-indicator { display: flex; gap: 4px; align-items: center; padding: 10px 13px; }
+    .typing-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; animation: blink 1.2s infinite; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%,80%,100% { opacity: 0.2; } 40% { opacity: 1; } }
+    .chat-input-row { display: flex; gap: 8px; padding: 10px 12px; background: #16213e; border-top: 1px solid #0f3460; flex-shrink: 0; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+    .chat-input-row input { flex: 1; background: #0d1b36; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 20px; padding: 10px 16px; font-size: 0.95rem; outline: none; font-family: inherit; }
+    .chat-input-row input::placeholder { color: #555; }
+    .chat-send-btn { background: #0f3460; border: none; color: #cab8d9; border-radius: 20px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; white-space: nowrap; min-height: 44px; }
+    .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 10px 20px; border-radius: 10px; font-size: 0.85rem; box-shadow: 0 4px 16px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.3s; pointer-events: none; white-space: nowrap; }
+    .toast.show { opacity: 1; }
+    .toast.error { border-color: #c0392b; color: #e74c3c; }
+    .badge { font-size: 0.6rem; background: #0f3460; color: #888; border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a class="back" href="/">← 戻る</a>
+    <span class="title">個別チャット</span>
+    <div class="sep"></div>
+    <a class="view-toggle-btn" href="/terminal" style="text-decoration:none">全員版</a>
+    <button class="view-toggle-btn" id="viewToggleBtn" onclick="toggleView()">端末</button>
+    <a class="fullscreen-btn" id="fullscreenBtn" target="_blank" title="別タブで開く">⛶</a>
+  </div>
+  <div class="ctrlbar">
+    <div class="char-btns" id="charBtns">
+      <div class="char-btn selected" data-id="puchiko">
+        <img src="/api/avatar/puchiko.png" alt="ぷちこ">
+        <span class="char-name">ぷちこ</span>
+      </div>
+      <div class="char-btn selected" data-id="puchiru">
+        <img src="/api/avatar/puchiru.png" alt="ぷちる">
+        <span class="char-name">ぷちる</span>
+      </div>
+      <div class="char-btn selected" data-id="puchiteya">
+        <img src="/api/avatar/puchiteya.png" alt="ぷちてゃ">
+        <span class="char-name">ぷちてゃ</span>
+      </div>
+    </div>
+    <div class="sep"></div>
+  </div>
+  <iframe id="terminal-frame" allowfullscreen></iframe>
+  <div class="chat-panel" id="chatPanel">
+    <div class="chat-msgs" id="chatMsgs"></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="メッセージを入力…" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="chat-send-btn" onclick="sendChat()">送信</button>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const ttydBase = location.protocol + '//' + location.hostname + ':7683';
+    document.getElementById('terminal-frame').src = ttydBase;
+    document.getElementById('fullscreenBtn').href = ttydBase;
+
+    const CHARS = {
+      puchiteya: { name: 'ぷちてゃ', color: '#fff262' },
+      puchiko:   { name: 'ぷちこ',   color: '#cab8d9' },
+      puchiru:   { name: 'ぷちる',   color: '#00afcc' },
+    };
+    const ALL_CHARS = ['puchiko', 'puchiru', 'puchiteya'];
+    let selectedChar = 'puchiko';
+    let lastTimestamp = new Date().toISOString();
+    let pollTimer = null;
+    let showTerminal = false;
+    let toastTimer = null;
+
+    // キャラボタン：1人だけ選択（ラジオ動作）、tmuxウィンドウも切替
+    document.getElementById('charBtns').addEventListener('click', async e => {
+      const btn = e.target.closest('.char-btn');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      selectedChar = id;
+      document.querySelectorAll('.char-btn').forEach(b => b.classList.toggle('selected', b.dataset.id === id));
+      try {
+        await fetch('/api/terminal3/select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ char_id: id }),
+        });
+      } catch (e) {}
+    });
+
+    function showToast(msg, isError) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = 'toast show' + (isError ? ' error' : '');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => el.className = 'toast', 3000);
+    }
+
+    function toggleView() {
+      showTerminal = !showTerminal;
+      document.getElementById('terminal-frame').classList.toggle('hidden', !showTerminal);
+      document.getElementById('chatPanel').classList.toggle('active', !showTerminal);
+      document.getElementById('viewToggleBtn').textContent = showTerminal ? 'チャット' : '端末';
+    }
+
+    function appendBubble(role, text, charId) {
+      const msgs = document.getElementById('chatMsgs');
+      const isUser = role === 'user';
+      const char = CHARS[charId] || CHARS[role];
+      const wrap = document.createElement('div');
+      wrap.className = 'chat-bubble ' + (isUser ? 'user' : 'char');
+      if (!isUser && char) {
+        const nameEl = document.createElement('div');
+        nameEl.className = 'bubble-name';
+        nameEl.textContent = char.name;
+        nameEl.style.color = char.color;
+        const img = document.createElement('img');
+        img.className = 'bubble-avatar';
+        img.src = '/api/avatar/' + charId + '.png';
+        const inner = document.createElement('div');
+        inner.style.display = 'flex';
+        inner.style.flexDirection = 'column';
+        inner.appendChild(nameEl);
+        const textEl = document.createElement('div');
+        textEl.className = 'bubble-text';
+        textEl.textContent = text;
+        textEl.style.borderLeft = '3px solid ' + char.color;
+        inner.appendChild(textEl);
+        wrap.appendChild(img);
+        wrap.appendChild(inner);
+      } else {
+        const textEl = document.createElement('div');
+        textEl.className = 'bubble-text';
+        textEl.textContent = text;
+        wrap.appendChild(textEl);
+      }
+      msgs.appendChild(wrap);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+
+    async function pollChatLog() {
+      try {
+        const url = '/api/terminal/chat_log?chars=' + ALL_CHARS.join(',') + '&since=' + encodeURIComponent(lastTimestamp);
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const msgs = await res.json();
+        for (const msg of msgs) {
+          if (msg.role !== 'user') appendBubble(msg.role, msg.text, msg.character_id);
+          lastTimestamp = msg.timestamp;
+        }
+      } catch (e) {}
+      pollTimer = setTimeout(pollChatLog, 2000);
+    }
+
+    async function sendChat() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text || !selectedChar) return;
+      input.value = '';
+      appendBubble('user', text, 'user');
+      try {
+        await fetch('/api/terminal3/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, chars: [selectedChar] }),
+        });
+      } catch (e) {
+        showToast('送信エラー: ' + e.message, true);
+      }
+    }
+
+    // 起動時：チャットパネルを表示してポーリング開始
+    document.getElementById('terminal-frame').classList.add('hidden');
+    document.getElementById('chatPanel').classList.add('active');
+    document.getElementById('viewToggleBtn').textContent = '端末';
+    pollChatLog();
+  </script>
+</body>
+</html>
+"""
+
+
+@app.get("/terminal3", response_class=HTMLResponse)
+def terminal3_page():
+    return HTMLResponse(TERMINAL3_HTML)
 
 
 @app.get("/api/trio/history")
@@ -6084,6 +6376,12 @@ TERMINAL_HTML = """<!DOCTYPE html>
     .char-btn[data-id="puchiteya"] { color: #fff262; }
     .char-btn[data-id="puchiko"]   { color: #cab8d9; }
     .char-btn[data-id="puchiru"]   { color: #00afcc; }
+    .all-on-btn {
+      background: transparent; border: 1px solid #2a3a5a; color: #888;
+      border-radius: 6px; padding: 3px 9px; font-size: 0.75rem; cursor: pointer;
+      transition: all 0.18s; white-space: nowrap;
+    }
+    .all-on-btn:hover { color: #cab8d9; border-color: #cab8d9; }
 
     .start-btn {
       background: #0f3460; border: 1px solid #1a5090; color: #cab8d9;
@@ -6167,9 +6465,10 @@ TERMINAL_HTML = """<!DOCTYPE html>
 <body>
   <div class="topbar">
     <a class="back" href="/">← 戻る</a>
-    <span class="title">ターミナル</span>
+    <span class="title">全員版</span>
     <div class="sep"></div>
-    <button class="view-toggle-btn" id="viewToggleBtn" style="display:none" onclick="toggleView()">端末</button>
+    <button class="view-toggle-btn" id="viewToggleBtn" onclick="toggleView()">端末</button>
+    <a class="view-toggle-btn" href="/terminal3" style="text-decoration:none">個別版</a>
     <button class="reply-btn yes" onclick="sendKey('1')" title="Yes">Y</button>
     <button class="reply-btn yes" onclick="sendKey('2')" title="Yes during session">YS</button>
     <button class="reply-btn no" onclick="sendKey('3')" title="No">N</button>
@@ -6178,22 +6477,21 @@ TERMINAL_HTML = """<!DOCTYPE html>
   </div>
   <div class="ctrlbar" id="ctrlbar">
     <div class="char-btns" id="charBtns">
-      <div class="char-btn" data-id="puchiko">
+      <div class="char-btn selected" data-id="puchiko">
         <img src="/api/avatar/puchiko.png" alt="ぷちこ">
         <span class="char-name">ぷちこ</span>
       </div>
-      <div class="char-btn" data-id="puchiru">
+      <div class="char-btn selected" data-id="puchiru">
         <img src="/api/avatar/puchiru.png" alt="ぷちる">
         <span class="char-name">ぷちる</span>
       </div>
-      <div class="char-btn" data-id="puchiteya">
+      <div class="char-btn selected" data-id="puchiteya">
         <img src="/api/avatar/puchiteya.png" alt="ぷちてゃ">
         <span class="char-name">ぷちてゃ</span>
       </div>
     </div>
+    <button class="all-on-btn" onclick="selectAll()">全員</button>
     <div class="sep"></div>
-    <button class="start-btn" id="startBtn">チャット開始 ▶</button>
-    <button class="end-btn" id="endBtn">終了 ✕</button>
   </div>
   <iframe id="terminal-frame" allowfullscreen></iframe>
   <div class="chat-panel" id="chatPanel">
@@ -6237,8 +6535,23 @@ TERMINAL_HTML = """<!DOCTYPE html>
       puchiru:   { name: 'ぷちる',   color: '#00afcc' },
     };
 
-    let selected = new Set();
     let toastTimer = null;
+    const selected = new Set(['puchiko', 'puchiru', 'puchiteya']);
+
+    document.getElementById('charBtns').addEventListener('click', e => {
+      const btn = e.target.closest('.char-btn');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      if (selected.has(id)) { selected.delete(id); btn.classList.remove('selected'); }
+      else { selected.add(id); btn.classList.add('selected'); }
+    });
+
+    function selectAll() {
+      document.querySelectorAll('#charBtns .char-btn').forEach(btn => {
+        selected.add(btn.dataset.id);
+        btn.classList.add('selected');
+      });
+    }
 
     function showToast(msg, isError) {
       const el = document.getElementById('toast');
@@ -6248,25 +6561,9 @@ TERMINAL_HTML = """<!DOCTYPE html>
       toastTimer = setTimeout(() => el.className = 'toast', 3000);
     }
 
-    function updateStartBtn() {
-      const btn = document.getElementById('startBtn');
-      if (selected.size > 0) btn.classList.add('active');
-      else btn.classList.remove('active');
-    }
-
-    document.getElementById('charBtns').addEventListener('click', e => {
-      const btn = e.target.closest('.char-btn');
-      if (!btn) return;
-      const id = btn.dataset.id;
-      if (selected.has(id)) { selected.delete(id); btn.classList.remove('selected'); }
-      else { selected.add(id); btn.classList.add('selected'); }
-      updateStartBtn();
-    });
-
-    // チャット状態
-    let chatActive = false;
-    let activeChars = [];
-    let lastTimestamp = '';
+    // チャット状態（常時アクティブ・3人全員）
+    const activeChars = ['puchiteya', 'puchiko', 'puchiru'];
+    let lastTimestamp = new Date().toISOString();
     let pollTimer = null;
     let showTerminal = false;
 
@@ -6313,7 +6610,6 @@ TERMINAL_HTML = """<!DOCTYPE html>
     }
 
     async function pollChatLog() {
-      if (!chatActive) return;
       try {
         const url = '/api/terminal/chat_log?chars=' + activeChars.join(',') + '&since=' + encodeURIComponent(lastTimestamp);
         const res = await fetch(url);
@@ -6364,11 +6660,17 @@ TERMINAL_HTML = """<!DOCTYPE html>
       input.value = '';
       appendBubble('user', text, 'user');
       showTyping(activeChars);
+      // 全員でなければ誰に話しかけているか注記を付ける
+      let messageToSend = text;
+      if (selected.size > 0 && selected.size < activeChars.length) {
+        const names = [...selected].map(id => CHARS[id]?.name || id).join('と');
+        messageToSend = text + `\n(${names}だけに話しかけています)`;
+      }
       try {
         await fetch('/api/terminal/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
+          body: JSON.stringify({ text: messageToSend, chars: [...selected] }),
         });
       } catch (e) {
         removeTyping();
@@ -6376,67 +6678,11 @@ TERMINAL_HTML = """<!DOCTYPE html>
       }
     }
 
-    function startChatMode(chars) {
-      activeChars = chars;
-      chatActive = true;
-      lastTimestamp = new Date().toISOString();
-      document.getElementById('chatMsgs').innerHTML = '';
-      // チャットパネルに切り替え
-      document.getElementById('terminal-frame').classList.add('hidden');
-      document.getElementById('chatPanel').classList.add('active');
-      document.getElementById('viewToggleBtn').style.display = '';
-      document.getElementById('viewToggleBtn').textContent = '端末';
-      showTerminal = false;
-      clearTimeout(pollTimer);
-      pollChatLog();
-    }
-
-    function stopChatMode() {
-      chatActive = false;
-      clearTimeout(pollTimer);
-      document.getElementById('terminal-frame').classList.remove('hidden');
-      document.getElementById('chatPanel').classList.remove('active');
-      document.getElementById('viewToggleBtn').style.display = 'none';
-    }
-
-    document.getElementById('startBtn').addEventListener('click', async () => {
-      if (selected.size === 0) return;
-      const btn = document.getElementById('startBtn');
-      btn.textContent = '送信中…';
-      // チャット画面への切り替えは先に行う
-      startChatMode([...selected]);
-      try {
-        const res = await fetch('/api/terminal/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ char_ids: [...selected] }),
-        });
-        const data = await res.json();
-        if (!res.ok) showToast('tmuxエラー: ' + (data.error || 'error'), true);
-      } catch (e) {
-        showToast('送信エラー: ' + e.message, true);
-      }
-      btn.textContent = 'チャット開始 ▶';
-    });
-
-    document.getElementById('endBtn').addEventListener('click', async () => {
-      const btn = document.getElementById('endBtn');
-      btn.textContent = '送信中…';
-      try {
-        const res = await fetch('/api/terminal/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ char_ids: [], endchat: true }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'error');
-        stopChatMode();
-        showToast('チャット終了しました', false);
-      } catch (e) {
-        showToast('エラー: ' + e.message, true);
-      }
-      btn.textContent = '終了 ✕';
-    });
+    // ページ読み込み時にチャットパネルを表示してポーリング開始
+    document.getElementById('terminal-frame').classList.add('hidden');
+    document.getElementById('chatPanel').classList.add('active');
+    document.getElementById('viewToggleBtn').textContent = '端末';
+    pollChatLog();
   </script>
 </body>
 </html>
