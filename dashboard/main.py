@@ -1253,9 +1253,12 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     # センサー/カメラ/マイクはスリムなMCP設定を使う
     _m5_sources = {"sensor", "camera", "mic"}
     char_sensor_mcp = char_dir(character_id) / "config" / "sensor-mcp.json"
+    char_chat_mcp = char_dir(character_id) / "config" / "chat-mcp.json"
     char_mcp = char_dir(character_id) / "config" / "autonomous-mcp.json"
     if source in _m5_sources and char_sensor_mcp.exists():
         mcp_config = char_sensor_mcp
+    elif source == "chat" and char_chat_mcp.exists():
+        mcp_config = char_chat_mcp
     elif char_mcp.exists():
         mcp_config = char_mcp
     else:

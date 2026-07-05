@@ -10,6 +10,7 @@ Claude に身体（目・首・耳・声・脳）を与える MCP サーバー�
 | `notes-mcp/` | ノート読み書き |
 | `relations-mcp/` | キャラクター間の関係性データ |
 | `m5-mcp/` | M5Stack 制御・センサー |
+| `switchbot-mcp/` | SwitchBot連携（プラグ・照明・カーテン・赤外線リモコン） |
 
 ## その他のコンポーネント
 
