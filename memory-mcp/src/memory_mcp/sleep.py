@@ -25,6 +25,18 @@ def _is_first_experience(content: str) -> bool:
     return any(kw in lower for kw in _FIRST_TIME_KEYWORDS)
 
 
+def _truncate_at_boundary(text: str, limit: int) -> str:
+    """文の途中でぶつ切りにせず、句読点の位置で切って省略記号を付ける."""
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    for punct in ("。", "、"):
+        idx = window.rfind(punct)
+        if idx > 0:
+            return window[: idx + 1] + "…"
+    return window + "…"
+
+
 def calculate_retention_score(memory: Memory, now: datetime | None = None) -> float:
     """保持スコアを計算する (0.0–1.0).
 
@@ -249,7 +261,7 @@ class SleepEngine:
                 merged_content = (
                     f"{category}の記録 {len(group_mems)}件"
                     f"（{oldest_date}〜{newest_date}）。"
-                    f"主な内容: {first_content[:100]}"
+                    f"主な内容: {_truncate_at_boundary(first_content, 150)}"
                 )
 
                 # Best importance and strongest emotion
@@ -261,7 +273,7 @@ class SleepEngine:
 
                 merged_results.append({
                     "group": [m.id for m in group_mems],
-                    "into": merged_content[:120],
+                    "into": merged_content,
                 })
 
                 if not dry_run:
