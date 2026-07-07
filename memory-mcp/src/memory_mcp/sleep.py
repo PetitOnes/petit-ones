@@ -259,7 +259,7 @@ class SleepEngine:
                 first_content = group_mems[0].content
 
                 merged_content = (
-                    f"{category}の記録 {len(group_mems)}件"
+                    f"🌙 記憶整理で統合: {category}の記録 {len(group_mems)}件"
                     f"（{oldest_date}〜{newest_date}）。"
                     f"主な内容: {_truncate_at_boundary(first_content, 150)}"
                 )
