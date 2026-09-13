@@ -23,6 +23,12 @@ import base64
 import anthropic
 import websockets
 
+# claude CLI(2026-09-02 からネイティブ版)は ~/.local/bin にある。cron 起動(generate_diary.py 等)の
+# 最小 PATH には無く、9/2〜9/13 の日記が「サマリー生成失敗: No such file or directory: 'claude'」になった
+_LOCAL_BIN = str(Path.home() / ".local" / "bin")
+if _LOCAL_BIN not in os.environ.get("PATH", "").split(os.pathsep):
+    os.environ["PATH"] = _LOCAL_BIN + os.pathsep + os.environ.get("PATH", "")
+
 VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765"
 _ASR_FALLBACK_URL = os.environ.get("ASR_FALLBACK_URL", "http://localhost:8767")
