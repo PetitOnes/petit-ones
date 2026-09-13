@@ -41,7 +41,7 @@ export HOME="/Users/yourname"
 # 例 (Linux):
 #   export PATH="/usr/local/bin:/usr/bin:$PATH"
 # 確認方法: "which claude" "which jq" でパスを確認
-export PATH="$HOME/.asdf/shims:/opt/homebrew/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.asdf/shims:/opt/homebrew/bin:$PATH"  # ~/.local/bin = ネイティブ版 Claude Code の既定の置き場
 
 # ★ プロジェクトディレクトリ（コード配置場所。MCP起動・subprocess cwd用）
 PROJECT_DIR="$HOME/yourproject"
