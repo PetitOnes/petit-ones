@@ -23,6 +23,16 @@ NOTEBOOK_FILE = DATA_DIR / "chat_history" / "exchange_notebook.json"
 
 VALID_AUTHORS = {"ぷちてゃ", "ぷちこ", "ぷちる", "ありさん"}
 
+# ぷちは1日1回まで（交換ノートを毎日の小さな儀式として保つため。2026-07-06 ありさんと決定）
+# ありさん（人間）は制限なし
+RATE_LIMITED_AUTHORS = {"ぷちてゃ", "ぷちこ", "ぷちる"}
+
+# 交換ノートは順番に回す（2026-07-06 ありさん提案）。ありさんは順番の外（いつでも書ける）
+ROTATION = ["ぷちてゃ", "ぷちこ", "ぷちる"]
+# 順番の相手が長く書かない場合のデッドロック回避: 最後のぷちの書き込みからこの時間を過ぎたら
+# 順番を飛ばして書いてよい（飛ばされた子の番は消えるだけで、罰ではない）
+ROTATION_SKIP_HOURS = 20
+
 
 def main() -> int:
     if len(sys.argv) < 3:
@@ -61,6 +71,33 @@ def main() -> int:
         entries = []
 
     now = datetime.now(timezone.utc).astimezone()
+
+    if author in RATE_LIMITED_AUTHORS:
+        today = now.strftime("%Y/%m/%d")
+        todays = [e for e in entries if e.get("author") == author and str(e.get("date", "")).startswith(today)]
+        if todays:
+            print(f"今日はもう書いてあるよ（{todays[-1]['date']}）。", file=sys.stderr)
+            print("交換ノートは1日1回、その日いちばん残したいことを。", file=sys.stderr)
+            print("続きが書きたくなったら、明日のページに。今すぐ残したいことはnotesへどうぞ。", file=sys.stderr)
+            return 2
+
+        # 順番チェック: 最後に書いたぷちの次の子だけが書ける
+        puchi_entries = [e for e in entries if e.get("author") in RATE_LIMITED_AUTHORS]
+        if puchi_entries:
+            last = puchi_entries[-1]
+            expected = ROTATION[(ROTATION.index(last["author"]) + 1) % len(ROTATION)]
+            if author != expected:
+                try:
+                    last_dt = datetime.strptime(last["date"], "%Y/%m/%d %H:%M").astimezone()
+                    hours_since = (now - last_dt).total_seconds() / 3600
+                except Exception:
+                    hours_since = ROTATION_SKIP_HOURS + 1  # 日付が読めないときは順番を止めない
+                if hours_since < ROTATION_SKIP_HOURS:
+                    print(f"いまは{expected}の番だよ（前は{last['author']}・{last['date']}）。", file=sys.stderr)
+                    print(f"順番: {' → '.join(ROTATION)} → はじめに戻る。", file=sys.stderr)
+                    print(f"{expected}が{ROTATION_SKIP_HOURS}時間書かなかったら、飛ばして書いていいからね。", file=sys.stderr)
+                    return 3
+
     entries.append({
         "author": author,
         "date": now.strftime("%Y/%m/%d %H:%M"),
