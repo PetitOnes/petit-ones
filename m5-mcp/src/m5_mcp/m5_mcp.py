@@ -549,7 +549,7 @@ _VOICE_SETTINGS_DEFAULT = 6  # WhiteCUL / ノーマル
 def _voice_settings_path() -> str:
     char_id = os.environ.get("CHARACTER_ID", "")
     data_dir = os.environ.get("PETIT_DATA_DIR", os.path.join(os.path.expanduser("~"), "petit_claude"))
-    return os.path.join(data_dir, "characters", char_id, "voice_settings.json")
+    return os.path.join(data_dir, "characters", char_id, "config", "voice_settings.json")
 
 def _load_voice_settings() -> dict:
     try:
