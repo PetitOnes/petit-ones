@@ -71,7 +71,12 @@ notes/                 # notes-mcp で読み書きするノート
 - `.env` はコミット不可（.gitignore 済み）
 - カメラパスワード・API キーは環境変数管理
 
-## 注意: WSL2 環境
+## 実行環境
+
+- **メイン機: ネイティブ Ubuntu 24**（claude・cron・ダッシュボード・M5連携。このリポジトリが動く場所）
+- **GPU機: 別筐体の Ubuntu 24**（TTS :8766 / ASR :8767 の音声処理）
+
+### 別PC（Windows + WSL2）で動かす場合の注意
 
 - USB カメラ: `usbipd` で転送が必要
 - 温度センサー: `/sys/class/thermal/` アクセス不可

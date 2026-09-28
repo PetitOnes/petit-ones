@@ -28,6 +28,9 @@ node_modules
 venv/
 ENV/
 
+# 分析パイプラインの生成物
+analysis/mail_analysis/output/
+
 # IDE
 .idea/
 .vscode/
