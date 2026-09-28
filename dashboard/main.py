@@ -53,7 +53,7 @@ PUBLIC_CHAT_LIMIT = 5  # 1時間あたり最大リクエスト数
 _relay_state: dict = {"active": False, "cancel": False, "from_char": "", "to_char": "", "turns_remaining": 0, "characters": []}
 
 from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
@@ -1072,7 +1072,7 @@ def list_characters() -> list[dict]:
         return []
     chars = []
     for d in sorted(CHARACTERS_DIR.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or d.name == "all":
             continue
         cfg_path = d / "config" / "config.json"
         if cfg_path.exists():
@@ -1217,6 +1217,10 @@ def trio_log_file() -> Path:
 
 
 TRIO_CHAR_IDS = ["puchiko", "puchiteya"]
+
+# 「みんなで話す」「だれかと（選んで話す）」の対象キャラ
+# puchiku は個人チャットのみ（グループ・選択には出さない）
+GROUP_CHAR_IDS = ["puchiteya", "puchiko", "puchiru"]
 
 
 def load_group_log() -> list[dict]:
@@ -1411,7 +1415,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     stream_log_dir.mkdir(parents=True, exist_ok=True)
     stream_path = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
 
-    _common_flags = ["--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+    _common_flags = ["--mcp-config", str(mcp_config), "--strict-mcp-config", "--allowedTools", allowed_tools,
                      "--dangerously-skip-permissions",
                      "--output-format", "stream-json",
                      "--verbose"]
@@ -1502,7 +1506,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             sf.unlink(missing_ok=True)
             stream_path2 = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
             cmd2 = ["claude", "--model", model_name, "--append-system-prompt", system_prompt,
-                    "--mcp-config", str(mcp_config), "--allowedTools", allowed_tools,
+                    "--mcp-config", str(mcp_config), "--strict-mcp-config", "--allowedTools", allowed_tools,
                     "--dangerously-skip-permissions",
                     "--output-format", "stream-json",
                     "--verbose"]
@@ -2461,8 +2465,8 @@ def api_characters(request: Request):
 
 @app.get("/api/characters/all")
 def api_characters_all():
-    """全キャラ一覧（アクセス制御なし、グループステータス用）"""
-    return list_characters()
+    """グループ対象キャラ一覧（アクセス制御なし、グループステータス用）"""
+    return [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
 
 
 class ConversationRelayRequest(BaseModel):
@@ -4073,11 +4077,26 @@ def api_chat_history(character_id: str, request: Request):
 
 class GroupChatRequest(BaseModel):
     message: str
+    client_msg_id: str | None = None
 
 
 class SelectChatRequest(BaseModel):
     message: str
     char_ids: list[str]
+    client_msg_id: str | None = None
+
+
+# ---- スマホのバックグラウンド切断対策 ----
+# ブラウザがバックグラウンドに回ると通信が切られるが、サーバー側の処理は続いている。
+# client_msg_id 付きの送信をここに記録し、同じIDの再送には保存済みの結果を返す
+# （二重処理の防止＋切断後の返事回収）。
+_chat_jobs: dict[tuple, dict] = {}
+
+
+def _chat_jobs_gc() -> None:
+    now = time.time()
+    for k in [k for k, v in _chat_jobs.items() if now - v["ts"] > 900]:
+        _chat_jobs.pop(k, None)
 
 
 @app.get("/api/group/history")
@@ -4090,7 +4109,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
     username = _get_username(request) or "arisan"
     user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    chars = list_characters()
+    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_group_log({"type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
@@ -4113,12 +4132,85 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     return {"responses": responses}
 
 
+async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, username: str, log_type: str):
+    """キャラに順番に聞き、1人返ってくるたびに entry["messages"] に追記する。
+    HTTPコネクションから切り離して実行するので、クライアントが切断しても処理は完走する。"""
+    try:
+        user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
+        now = datetime.now(timezone.utc).isoformat()
+        append_group_log({"type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": message, "timestamp": now})
+        responses = []
+        for char in chars:
+            context = message
+            if responses:
+                prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
+                context = f"{message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+            reply = await call_claude(char["id"], context, username=username)
+            append_chat(char["id"], "user", message, username)
+            append_chat(char["id"], char["id"], reply, username)
+            r = {
+                "character_id": char["id"],
+                "name": char.get("name", char["id"]),
+                "color": char.get("color", "#cab8d9"),
+                "reply": reply,
+            }
+            responses.append(r)
+            append_group_log({"type": log_type, "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+            entry["messages"].append(r)
+    finally:
+        entry["done"] = True
+        entry["ts"] = time.time()
+
+
+def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username: str, log_type: str) -> StreamingResponse:
+    """ジョブをバックグラウンドで走らせ、進捗をNDJSONで垂れ流す。
+    同じ client_msg_id で再接続されたら、途中まで済んだ結果を最初から再生して続きを流す。"""
+    _chat_jobs_gc()
+    entry = _chat_jobs.get(key) if key else None
+    if entry is None:
+        entry = {"messages": [], "done": False, "ts": time.time()}
+        if key:
+            _chat_jobs[key] = entry
+        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type))
+
+    async def tail():
+        i = 0
+        while True:
+            while i < len(entry["messages"]):
+                yield json.dumps(entry["messages"][i], ensure_ascii=False) + "\n"
+                i += 1
+            if entry["done"]:
+                break
+            await asyncio.sleep(0.3)
+
+    return StreamingResponse(tail(), media_type="application/x-ndjson")
+
+
+@app.post("/api/group/chat/stream")
+async def api_group_chat_stream(req: GroupChatRequest, request: Request):
+    """全キャラに順番に聞き、返ってきた順にNDJSONでストリーム返却する。"""
+    username = _get_username(request) or "arisan"
+    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    key = (username, "group", req.client_msg_id) if req.client_msg_id else None
+    return _stream_via_job(key, chars, req.message, username, "group")
+
+
+@app.post("/api/select/chat/stream")
+async def api_select_chat_stream(req: SelectChatRequest, request: Request):
+    """選んだキャラに順番に聞き、返ってきた順にNDJSONでストリーム返却する。"""
+    username = _get_username(request) or "arisan"
+    chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
+    chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
+    key = (username, "select", req.client_msg_id) if req.client_msg_id else None
+    return _stream_via_job(key, chars, req.message, username, "select")
+
+
 @app.post("/api/select/chat")
 async def api_select_chat(req: SelectChatRequest, request: Request):
     """選んだキャラに順番にメッセージを送る。"""
     username = _get_username(request) or "arisan"
     user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    chars_map = {c["id"]: c for c in list_characters()}
+    chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     if not chars:
         return {"responses": []}
@@ -4172,12 +4264,15 @@ async def api_terminal_send(request: Request):
     body = await request.json()
     text = body.get("text", "").strip()
     chars = body.get("chars", ["puchiko", "puchiru", "puchiteya"])
+    esc_enter = body.get("esc_enter", False)
     if not text:
         return JSONResponse({"error": "empty"}, status_code=400)
-    result = subprocess.run(
-        ["tmux", "send-keys", "-t", "claude", text, "Enter"],
-        capture_output=True, text=True,
-    )
+    keys = ["tmux", "send-keys", "-t", "claude", text]
+    if esc_enter:
+        keys += ["Escape", "Enter"]
+    else:
+        keys += ["Enter"]
+    result = subprocess.run(keys, capture_output=True, text=True)
     if result.returncode != 0:
         return JSONResponse({"error": result.stderr.strip() or "tmux error"}, status_code=500)
     # ユーザー発言を各キャラのログに保存
@@ -4538,6 +4633,7 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
 
 class ChatRequest(BaseModel):
     message: str
+    client_msg_id: str | None = None
 
 
 class MailSendRequest(BaseModel):
@@ -4592,7 +4688,29 @@ def _activate_puchiru_cron() -> bool:
 @app.post("/api/{character_id}/chat")
 async def api_chat(character_id: str, req: ChatRequest, request: Request):
     username = _get_username(request) or "arisan"
-    append_chat(character_id, "user", req.message, username)
+
+    # 同じ client_msg_id の再送は二重処理せず、保存済みの結果を返す
+    # （スマホでバックグラウンドに回って通信が切れた後の自動再接続用）
+    key = (username, character_id, req.client_msg_id) if req.client_msg_id else None
+    skip_user_append = False
+    if key:
+        _chat_jobs_gc()
+        ent = _chat_jobs.get(key)
+        if ent:
+            if ent.get("state") == "done":
+                resp = {"reply": ent["reply"]}
+                if ent.get("event"):
+                    resp["event"] = ent["event"]
+                return resp
+            if ent.get("state") == "processing":
+                return {"status": "processing"}
+            if ent.get("state") == "error":
+                # 前回はユーザー発言の記録までは済んでいるので、書き込みはスキップして再実行
+                skip_user_append = True
+        _chat_jobs[key] = {"state": "processing", "ts": time.time()}
+
+    if not skip_user_append:
+        append_chat(character_id, "user", req.message, username)
 
     # 風早さんがぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
@@ -4621,9 +4739,16 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     if _target_char:
         chat_message += f"\n（必ず `speak` で声に出してから、`conversation_relay(to_character=\"{_target_char}\", message=\"...\", turns_remaining=2)` を呼んで{_target_char}に渡して）"
 
-    reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
+    try:
+        reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
+    except Exception:
+        if key:
+            _chat_jobs[key] = {"state": "error", "ts": time.time()}
+        raise
     append_chat(character_id, character_id, reply, username)
     _record_last_session(character_id, username)
+    if key:
+        _chat_jobs[key] = {"state": "done", "reply": reply, "event": "born" if born else None, "ts": time.time()}
     resp = {"reply": reply}
     if born:
         resp["event"] = "born"
@@ -5660,6 +5785,11 @@ HTML = """<!DOCTYPE html>
       return div;
     }
 
+    function genMsgId() {
+      return (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2));
+    }
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
     async function send() {
       const input = document.getElementById("input");
       const btn = document.getElementById("send");
@@ -5668,61 +5798,116 @@ HTML = """<!DOCTYPE html>
       input.value = "";
       btn.disabled = true;
       addMsg(text, "user");
+      // 送信ごとにIDを付ける。切断→再送してもサーバー側で二重処理されない
+      const msgId = genMsgId();
 
       if (currentCharId === "select") {
         const charIds = [...selectedCharIds];
         if (charIds.length === 0) { btn.disabled = false; return; }
         const thinkNames = charIds.map(id => (characters.find(c=>c.id===id)||{}).name||id).join("と");
         const thinking = addMsg(`${thinkNames}に聞いてる…`, "thinking");
-        try {
-          const res = await fetch("/api/select/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, char_ids:charIds}) });
-          const data = await res.json();
-          thinking.remove();
-          for (const r of data.responses) {
-            addMsg(r.reply, "group", r.color, r.name);
-          }
-        } catch(e) { thinking.textContent = "エラーが発生しました"; }
-        finally { btn.disabled = false; input.focus(); }
+        await streamWithRetry("/api/select/chat/stream", {message:text, char_ids:charIds, client_msg_id:msgId}, thinking);
+        btn.disabled = false; input.focus();
       } else if (currentCharId === "group") {
         const thinking = addMsg("みんなに聞いてる…", "thinking");
-        try {
-          const res = await fetch("/api/group/chat", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
-          const data = await res.json();
-          thinking.remove();
-          for (const r of data.responses) {
-            addMsg(r.reply, "group", r.color, r.name);
-          }
-        } catch(e) { thinking.textContent = "エラーが発生しました"; }
-        finally { btn.disabled = false; input.focus(); }
+        await streamWithRetry("/api/group/chat/stream", {message:text, client_msg_id:msgId}, thinking);
+        btn.disabled = false; input.focus();
       } else {
         const thinking = addMsg("考え中…", "thinking");
-        try {
-          const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text}) });
-          const data = await res.json();
-          thinking.remove();
-          addMsg(data.reply, "char");
-          if (data.event === "born") {
-            const notice = document.createElement("div");
-            notice.style.cssText = "text-align:center;padding:16px;margin:12px 0;background:linear-gradient(135deg,#e0f7fa,#b2ebf2);border-radius:12px;font-size:0.95rem;color:#00796b;";
-            notice.textContent = "ぷちるが生まれました。心臓が動き始めます。";
-            document.getElementById("chat").appendChild(notice);
-            document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+        let attempts = 0;
+        while (true) {
+          try {
+            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId}) });
+            if (!res.ok) throw new Error("http " + res.status);
+            const data = await res.json();
+            if (data.status === "processing") {
+              // サーバー側でまだ処理中→少し待ってまた取りに行く
+              thinking.textContent = "考え中…";
+              await sleep(3000);
+              continue;
+            }
+            thinking.remove();
+            addMsg(data.reply, "char");
+            if (data.event === "born") {
+              const notice = document.createElement("div");
+              notice.style.cssText = "text-align:center;padding:16px;margin:12px 0;background:linear-gradient(135deg,#e0f7fa,#b2ebf2);border-radius:12px;font-size:0.95rem;color:#00796b;";
+              notice.textContent = "ぷちるが生まれました。心臓が動き始めます。";
+              document.getElementById("chat").appendChild(notice);
+              document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+            }
+            update();
+            break;
+          } catch(e) {
+            attempts++;
+            if (attempts > 60) { thinking.textContent = "接続できませんでした。履歴🕘を開くと返事が届いているか確認できます"; break; }
+            thinking.textContent = "接続が切れました…自動でつなぎ直しています";
+            await sleep(3000);
           }
-          update();
-        } catch(e) { thinking.textContent = "エラーが発生しました"; }
-        finally { btn.disabled = false; input.focus(); }
+        }
+        btn.disabled = false; input.focus();
       }
+    }
+
+    async function streamWithRetry(url, payload, thinking) {
+      // 切断されたら同じclient_msg_idでつなぎ直す。表示済みの行数(got)は重複しないよう飛ばす
+      let got = 0, attempts = 0;
+      while (true) {
+        try {
+          got = await streamGroupReplies(url, payload, thinking, got);
+          break;
+        } catch(e) {
+          attempts++;
+          if (attempts > 60) { thinking.textContent = "接続できませんでした。返事は履歴🕘に残っています"; break; }
+          thinking.textContent = "接続が切れました…自動でつなぎ直しています";
+          await sleep(3000);
+        }
+      }
+    }
+
+    async function streamGroupReplies(url, payload, thinking, skip) {
+      // NDJSONを1行ずつ読み、返ってきたこから順に表示する。
+      // skip行目までは再接続時にサーバーが再生する「表示済み」の分なので飛ばす
+      const res = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+      if (!res.ok || !res.body) throw new Error("stream failed");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      const chatEl = document.getElementById("chat");
+      let buf = "";
+      let received = 0;
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream:true});
+        let idx;
+        while ((idx = buf.indexOf("\\n")) >= 0) {
+          const line = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 1);
+          if (!line) continue;
+          const r = JSON.parse(line);
+          received++;
+          if (received <= (skip || 0)) continue;
+          addMsg(r.reply, "group", r.color, r.name);
+          thinking.textContent = "つぎのこが考えてる…";
+          chatEl.appendChild(thinking);
+          chatEl.scrollTop = chatEl.scrollHeight;
+        }
+      }
+      thinking.remove();
+      if (received === 0) throw new Error("no replies");
+      return received;
     }
 
     function renderSelectToggles() {
       const el = document.getElementById("selectToggles");
+      const GROUP_CHAR_IDS = ["puchiteya", "puchiko", "puchiru"];
+      const groupChars = characters.filter(c => GROUP_CHAR_IDS.includes(c.id));
       // 初回: 全キャラを選択状態にする
       if (selectedCharIds.size === 0) {
-        characters.forEach(c => selectedCharIds.add(c.id));
+        groupChars.forEach(c => selectedCharIds.add(c.id));
       }
       el.style.display = "block";
       const orderedIds = [...selectedCharIds];
-      const pills = characters.map(c => {
+      const pills = groupChars.map(c => {
         const on = selectedCharIds.has(c.id);
         const bg = on ? (c.color || "#cab8d9") : "#555";
         const num = on ? orderedIds.indexOf(c.id) + 1 : "";
@@ -6679,7 +6864,7 @@ TERMINAL_HTML = """<!DOCTYPE html>
         await fetch('/api/terminal/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: messageToSend, chars: [...selected] }),
+          body: JSON.stringify({ text: messageToSend, chars: [...selected], esc_enter: true }),
         });
       } catch (e) {
         removeTyping();
@@ -8400,6 +8585,252 @@ def _cost_fix_map() -> dict:
 
 
 _LOG_ROOT = DATA_DIR / ".autonomous-logs"
+_CC_SESSION_DIR = Path.home() / "petit_claude" / "backup" / "cc_sessions_mirror"
+_CC_LIVE_DIR = Path.home() / ".claude" / "projects" / "-home-cube-petit-work-embodied-claude"
+_CC_PROJECT_ID = "embodied-claude"
+_cc_classify_cache: dict[str, dict] = {}
+_DIARY_SIGNAL = "この日を自分の口調で"
+_CHAR_IDS = ["puchiteya", "puchiko", "puchiru"]
+
+
+def _load_dashboard_session_map() -> dict[str, str]:
+    """各キャラの .dashboard-session-id から {sessionId: char_id} マップを作る。"""
+    m: dict[str, str] = {}
+    for ch_id in _CHAR_IDS:
+        sid_file = Path.home() / "petit_claude" / "characters" / ch_id / "state" / ".dashboard-session-id"
+        try:
+            sid = sid_file.read_text(encoding="utf-8").strip()
+            if sid:
+                m[sid] = ch_id
+        except Exception:
+            pass
+    return m
+
+
+_dashboard_session_map: dict[str, str] = _load_dashboard_session_map()
+
+
+def _detect_char_from_text(text: str) -> str | None:
+    """テキスト中からキャラIDを推定する。優先度順に検索。"""
+    # 1. 「puchiko）として」— 自分として動いている証拠
+    for ch_id in _CHAR_IDS:
+        if f"{ch_id}）として" in text or f"{ch_id}) として" in text:
+            return ch_id
+    # 2. 「あなたはpuchiko」— 直接指定
+    for ch_id in _CHAR_IDS:
+        if f"あなたは{ch_id}" in text:
+            return ch_id
+    # 3. write_mailbox.py <sender_id> — 最初の引数が送信者キャラ
+    import re
+    m = re.search(r"write_mailbox\.py\s+(puchiteya|puchiko|puchiru)", text)
+    if m:
+        return m.group(1)
+    # 4. キャラパス
+    for ch_id in _CHAR_IDS:
+        if f"characters/{ch_id}/" in text:
+            return ch_id
+    return None
+
+
+def _classify_cc_session_quick(path: Path) -> dict:
+    name = path.name
+    if name in _cc_classify_cache:
+        return _cc_classify_cache[name]
+
+    session_type = "terminal"
+    char = "claude"
+    file_session_id: str = ""
+
+    try:
+        with path.open(encoding="utf-8", errors="replace") as f:
+            head = f.read(8192)
+
+        # sessionId を先頭行から取得
+        try:
+            first_ev = json.loads(head.splitlines()[0])
+            file_session_id = first_ev.get("sessionId", "")
+        except Exception:
+            pass
+
+        # --- 種別判定（優先度順）---
+        if _DIARY_SIGNAL in head:
+            session_type = "diary"
+        elif "自律行動タイム" in head or "Heartbeat" in head:
+            session_type = "autonomous"
+        elif "/chat" in head and "command-name" in head:
+            session_type = "chat"
+        elif "sdk-cli" in head or "ありさんが「" in head:
+            session_type = "dashboard"
+
+        # --- キャラ判定 ---
+        # 1. sessionID マップで即特定
+        if file_session_id in _dashboard_session_map:
+            char = _dashboard_session_map[file_session_id]
+        else:
+            # 2. 先頭8KBからパス/として検索
+            detected = _detect_char_from_text(head)
+            if detected:
+                char = detected
+            elif session_type == "dashboard":
+                # 3. ダッシュボード未特定 → ファイル全体の思考ブロックを走査
+                try:
+                    full = path.read_text(encoding="utf-8", errors="replace")
+                    detected = _detect_char_from_text(full)
+                    if detected:
+                        char = detected
+                    # 日記シグナルが後半にある場合も拾う
+                    if session_type != "diary" and _DIARY_SIGNAL in full:
+                        session_type = "diary"
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    result = {"char": char, "type": session_type}
+    _cc_classify_cache[name] = result
+    return result
+
+
+@app.get("/api/cc-sessions")
+async def api_cc_sessions():
+    if not _CC_SESSION_DIR.is_dir():
+        return []
+    files = [f for f in _CC_SESSION_DIR.glob("*.jsonl") if f.stat().st_size > 0]
+    return [{"id": _CC_PROJECT_ID, "display": "embodied-claude (mirror)", "count": len(files)}]
+
+
+def _utc_to_jst(ts: str) -> str:
+    if not ts:
+        return ts
+    try:
+        from datetime import timezone, timedelta
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        jst = dt.astimezone(timezone(timedelta(hours=9)))
+        return jst.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return ts[:16]
+
+
+def _get_all_cc_files() -> list[Path]:
+    """ミラー＋ライブをマージ（ライブ優先、重複除去）して新しい順に返す。"""
+    seen: dict[str, Path] = {}
+    for d in [_CC_LIVE_DIR, _CC_SESSION_DIR]:
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.jsonl"):
+            if f.stat().st_size > 0 and f.name not in seen:
+                seen[f.name] = f
+    return sorted(seen.values(), key=lambda f: f.stat().st_mtime, reverse=True)
+
+
+@app.get("/api/cc-sessions/{project_id}")
+async def api_cc_sessions_list(project_id: str, offset: int = 0, limit: int = 500):
+    if "/" in project_id or ".." in project_id:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    all_files = _get_all_cc_files()
+    total = len(all_files)
+    result = []
+    for f in all_files[offset:offset + limit]:
+        ts = None
+        try:
+            first = f.open(encoding="utf-8", errors="replace").readline()
+            obj = json.loads(first)
+            ts = _utc_to_jst(obj.get("timestamp", ""))
+        except Exception:
+            pass
+        clf = _classify_cc_session_quick(f)
+        result.append({"name": f.name, "ts": ts, "size": f.stat().st_size,
+                        "char": clf["char"], "type": clf["type"]})
+    return {"total": total, "files": result}
+
+
+def _parse_cc_session(path: Path) -> list:
+    events = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+
+    out: list = []
+    tool_names: dict[str, str] = {}
+    init_emitted = False
+
+    for ev in events:
+        t = ev.get("type", "")
+        if ev.get("isMeta"):
+            continue
+
+        if t == "mode" and not init_emitted:
+            sid = ev.get("sessionId", "")
+            out.append({"kind": "init", "model": None, "session_id": sid})
+            init_emitted = True
+
+        elif t == "assistant":
+            msg = ev.get("message", {})
+            model = msg.get("model")
+            if model and out and out[0].get("kind") == "init":
+                out[0]["model"] = model
+            for block in msg.get("content", []):
+                btype = block.get("type", "")
+                if btype == "thinking":
+                    out.append({"kind": "thinking", "text": block.get("thinking", "")})
+                elif btype == "text":
+                    text = block.get("text", "").strip()
+                    if text:
+                        out.append({"kind": "text", "text": text})
+                elif btype == "tool_use":
+                    tid = block.get("id", "")
+                    name = block.get("name", "?")
+                    tool_names[tid] = name
+                    out.append({"kind": "tool_call", "id": tid, "name": name, "input": block.get("input", {})})
+
+        elif t == "user":
+            msg = ev.get("message", {})
+            content = msg.get("content", [])
+            if isinstance(content, str):
+                text = content.strip()
+                if text and not text.startswith("<") and len(text) > 5:
+                    out.append({"kind": "user_text", "text": text})
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "tool_result":
+                        tid = block.get("tool_use_id", "")
+                        name = tool_names.get(tid, "?")
+                        cv = block.get("content", "")
+                        if isinstance(cv, list):
+                            text = "\n".join(
+                                b.get("text", "") for b in cv
+                                if isinstance(b, dict) and b.get("type") == "text"
+                            )
+                        else:
+                            text = str(cv)
+                        out.append({"kind": "tool_result", "id": tid, "name": name, "text": text, "is_error": block.get("is_error", False)})
+                    elif block.get("type") == "text":
+                        text = block.get("text", "").strip()
+                        if text and not text.startswith("<") and len(text) > 5:
+                            out.append({"kind": "user_text", "text": text})
+    return out
+
+
+@app.get("/api/cc-sessions/{project_id}/{filename}")
+async def api_cc_sessions_get(project_id: str, filename: str):
+    if "/" in project_id or ".." in project_id:
+        return JSONResponse({"error": "invalid"}, status_code=400)
+    if not filename.endswith(".jsonl") or "/" in filename or ".." in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)
+    path = _CC_LIVE_DIR / filename
+    if not path.exists():
+        path = _CC_SESSION_DIR / filename
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return _parse_cc_session(path)
 
 
 @app.get("/stream-logs", response_class=HTMLResponse)
@@ -8650,6 +9081,59 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
     .block-result.error .stat { color: #e07070; }
 
     .spinner { color: #4a5a7a; font-size: 0.85rem; padding: 20px; text-align: center; }
+
+    /* user_text */
+    .block-user { background: #1a2a1a; border: 1px solid #1a3a28; color: #80c090; }
+    .block-user .label { color: #408050; }
+
+    /* mode tab */
+    .mode-tab {
+      display: flex; gap: 0; border: 1px solid #2a3a5a; border-radius: 6px; overflow: hidden;
+    }
+    .mode-tab button {
+      background: #131324; border: none; color: #4a6a9a; padding: 4px 10px;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.15s;
+    }
+    .mode-tab button.active { background: #2a3a6a; color: #cab8d9; }
+    .mode-tab button:hover:not(.active) { background: #1a2a4a; color: #8090b0; }
+
+    .project-select {
+      background: #1a2a4a; border: 1px solid #2a3a5a; color: #d0d0e8;
+      border-radius: 6px; padding: 4px 8px; font-size: 0.8rem; max-width: 240px;
+    }
+
+    /* filter chips */
+    .filter-bar {
+      background: #131324; padding: 4px 14px;
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      border-bottom: 1px solid #0f3460; flex-shrink: 0;
+    }
+    .filter-bar.hidden { display: none; }
+    .filter-label { font-size: 0.68rem; color: #4a6a9a; white-space: nowrap; }
+    .chip {
+      font-size: 0.68rem; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+      border: 1px solid #2a3a5a; color: #6080a0; background: transparent;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .chip:hover { background: rgba(255,255,255,0.05); color: #c0c0e0; }
+    .chip.active { color: #fff; border-color: currentColor; background: rgba(255,255,255,0.1); }
+    .chip[data-char="puchiteya"] { color: #fff262; }
+    .chip[data-char="puchiko"]   { color: #cab8d9; }
+    .chip[data-char="puchiru"]   { color: #00afcc; }
+    .chip[data-char="claude"]    { color: #80d0a0; }
+    .chip[data-char="multi"]     { color: #e8a060; }
+    .chip[data-type="autonomous"] { color: #ff9080; }
+    .chip[data-type="dashboard"]  { color: #c0a0ff; }
+    .chip[data-type="chat"]       { color: #80c8ff; }
+    .chip[data-type="diary"]      { color: #ffb860; }
+    .chip[data-type="terminal"]   { color: #a0a0c0; }
+    .filter-sep { width: 1px; height: 14px; background: #2a3a5a; margin: 0 2px; }
+
+    /* sidebar label */
+    .file-item .item-label {
+      font-size: 0.6rem; opacity: 0.7; margin-left: 4px;
+      display: inline-block;
+    }
   </style>
 </head>
 <body>
@@ -8660,11 +9144,34 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
   </div>
   <div class="ctrlbar">
     <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">☰ ログ一覧</button>
+    <div class="mode-tab">
+      <button id="modeAutoBtn" class="active" onclick="setMode('auto')">自律ログ</button>
+      <button id="modeCCBtn" onclick="setMode('cc')">CCセッション</button>
+    </div>
     <div class="char-btns" id="charBtns"></div>
+    <select class="project-select" id="projectSelect" style="display:none" onchange="selectProject(this.value)">
+      <option value="">プロジェクトを選択…</option>
+    </select>
     <button class="toggle-btn active" id="thinkingBtn" onclick="toggleThinking()">思考</button>
     <button class="toggle-btn active" id="toolResultBtn" onclick="toggleToolResult()">ツール結果</button>
     <span class="sep"></span>
     <span id="fileCount" style="font-size:0.72rem;color:#4a5a7a;"></span>
+  </div>
+  <div class="filter-bar hidden" id="filterBar">
+    <span class="filter-label">キャラ:</span>
+    <button class="chip active" data-char="puchiteya" onclick="toggleCharFilter('puchiteya')">ぷちてゃ</button>
+    <button class="chip active" data-char="puchiko" onclick="toggleCharFilter('puchiko')">ぷちこ</button>
+    <button class="chip active" data-char="puchiru" onclick="toggleCharFilter('puchiru')">ぷちる</button>
+    <button class="chip active" data-char="claude" onclick="toggleCharFilter('claude')">Claude</button>
+    <button class="chip active" data-char="unknown" onclick="toggleCharFilter('unknown')">不明</button>
+    <div class="filter-sep"></div>
+    <span class="filter-label">種別:</span>
+    <button class="chip active" data-type="all" onclick="setTypeFilter('all')">すべて</button>
+    <button class="chip" data-type="autonomous" onclick="setTypeFilter('autonomous')">自律行動</button>
+    <button class="chip" data-type="dashboard" onclick="setTypeFilter('dashboard')">ダッシュボード</button>
+    <button class="chip" data-type="chat" onclick="setTypeFilter('chat')">チャット</button>
+    <button class="chip" data-type="diary" onclick="setTypeFilter('diary')">日記</button>
+    <button class="chip" data-type="terminal" onclick="setTypeFilter('terminal')">ターミナル</button>
   </div>
   <div class="main">
     <div class="sidebar" id="sidebar">
@@ -8687,6 +9194,11 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
     let showThinking = true;
     let showToolResult = true;
     let sidebarOpen = true;
+    let currentMode = "auto";  // "auto" | "cc"
+    let currentProject = null;
+    let selectedChars = new Set(["puchiteya", "puchiko", "puchiru", "claude", "unknown"]);
+    let filterType = "all";
+    let allCCFiles = [];  // 全ファイルリスト（フィルタ用）
 
     // スマホでは最初からサイドバーを閉じる
     if (window.innerWidth < 600) { sidebarOpen = false; document.getElementById("sidebar").classList.add("collapsed"); document.getElementById("sidebarToggle").style.opacity = "0.5"; }
@@ -8701,6 +9213,147 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
       btn.onclick = () => selectChar(c.id);
       charBtns.appendChild(btn);
     });
+
+    const CC_PROJECT_ID = "-home-cube-petit-work-embodied-claude";
+
+    async function setMode(mode) {
+      currentMode = mode;
+      currentFile = null;
+      document.getElementById("modeAutoBtn").classList.toggle("active", mode === "auto");
+      document.getElementById("modeCCBtn").classList.toggle("active", mode === "cc");
+      document.getElementById("charBtns").style.display = mode === "auto" ? "" : "none";
+      document.getElementById("projectSelect").style.display = "none";
+      document.getElementById("filterBar").classList.toggle("hidden", mode !== "cc");
+      document.getElementById("sidebar").innerHTML = '<div class="empty">読み込み中…</div>';
+      document.getElementById("logview").innerHTML = '<div class="empty">ファイルを選んでください</div>';
+      document.getElementById("fileCount").textContent = "";
+      if (mode === "cc") {
+        await loadCCSessionList();
+      }
+    }
+
+    let ccOffset = 0;
+    let ccTotal = 0;
+    const CC_PAGE = 500;
+
+    const CHAR_LABEL = {puchiteya:"ぷちてゃ", puchiko:"ぷちこ", puchiru:"ぷちる", claude:"Claude", unknown:"不明"};
+    const TYPE_LABEL = {autonomous:"自律", dashboard:"DashBoard", chat:"チャット", diary:"日記", terminal:"terminal"};
+    const CHAR_COLOR = {puchiteya:"#fff262", puchiko:"#cab8d9", puchiru:"#00afcc", claude:"#80d0a0", unknown:"#808080"};
+
+    function getDisplayChar(f) {
+      return (f.char === "claude" && f.type === "dashboard") ? "unknown" : f.char;
+    }
+
+    function toggleCharFilter(val) {
+      if (selectedChars.has(val)) {
+        selectedChars.delete(val);
+      } else {
+        selectedChars.add(val);
+      }
+      document.querySelectorAll(".chip[data-char]").forEach(c => {
+        c.classList.toggle("active", selectedChars.has(c.dataset.char));
+      });
+      renderCCSidebar();
+    }
+
+    function setTypeFilter(val) {
+      filterType = val;
+      document.querySelectorAll(".chip[data-type]").forEach(c => c.classList.toggle("active", c.dataset.type === val));
+      renderCCSidebar();
+    }
+
+    function renderCCSidebar() {
+      const sidebar = document.getElementById("sidebar");
+      const filtered = allCCFiles.filter(f =>
+        selectedChars.has(getDisplayChar(f)) &&
+        (filterType === "all" || f.type === filterType)
+      );
+      const showing = Math.min(ccOffset + CC_PAGE, allCCFiles.length);
+      document.getElementById("fileCount").textContent =
+        `${filtered.length}件表示 / 読込${showing}/${ccTotal}件`;
+      sidebar.innerHTML = "";
+      if (!filtered.length) { sidebar.innerHTML = '<div class="empty">該当なし</div>'; return; }
+      filtered.forEach(f => appendCCFileItem(f, sidebar));
+      if (ccOffset + CC_PAGE < ccTotal) appendLoadMoreBtn();
+    }
+
+    async function loadCCSessionList() {
+      currentProject = CC_PROJECT_ID;
+      ccOffset = 0;
+      allCCFiles = [];
+      const sidebar = document.getElementById("sidebar");
+      sidebar.innerHTML = '<div class="empty">読み込み中…</div>';
+      try {
+        const res = await fetch(`/api/cc-sessions/${CC_PROJECT_ID}?offset=0&limit=${CC_PAGE}`);
+        const data = await res.json();
+        ccTotal = data.total;
+        allCCFiles = data.files;
+        renderCCSidebar();
+        const first = document.querySelector("#sidebar .file-item");
+        if (first) first.click();
+      } catch(e) {
+        sidebar.innerHTML = `<div class="empty">エラー: ${e.message}</div>`;
+      }
+    }
+
+    function appendCCFileItem(f, sidebar) {
+      const el = document.createElement("div");
+      el.className = "file-item";
+      el.dataset.char = f.char;
+      el.dataset.type = f.type;
+      const ts = f.ts || f.name.slice(0, 8);
+      const dchar = getDisplayChar(f);
+      const charLbl = CHAR_LABEL[dchar] || dchar;
+      const typeLbl = TYPE_LABEL[f.type] || f.type;
+      const color = CHAR_COLOR[dchar] || "#888";
+      el.innerHTML = `<span style="color:${color};font-size:0.65rem;font-weight:700;">${esc(charLbl)}</span> <span style="color:#6080a0;font-size:0.65rem;">${esc(typeLbl)}</span> <span style="color:#8090b0;">${esc(ts)}</span>`;
+      el.title = f.name;
+      el.onclick = () => selectCCFile(f.name, el);
+      sidebar.appendChild(el);
+    }
+
+    function appendLoadMoreBtn() {
+      const sidebar = document.getElementById("sidebar");
+      const remaining = ccTotal - ccOffset - CC_PAGE;
+      const btn = document.createElement("div");
+      btn.id = "loadMoreBtn";
+      btn.style.cssText = "padding:8px 12px;font-size:0.72rem;color:#4a7aaa;cursor:pointer;text-align:center;border-top:1px solid #1a2a4a;";
+      btn.textContent = `さらに読み込む (残り${remaining}件)`;
+      btn.onclick = loadMoreCC;
+      sidebar.appendChild(btn);
+    }
+
+    async function loadMoreCC() {
+      ccOffset += CC_PAGE;
+      const btn = document.getElementById("loadMoreBtn");
+      if (btn) { btn.textContent = "読み込み中…"; btn.onclick = null; }
+      try {
+        const res = await fetch(`/api/cc-sessions/${CC_PROJECT_ID}?offset=${ccOffset}&limit=${CC_PAGE}`);
+        const data = await res.json();
+        allCCFiles = allCCFiles.concat(data.files);
+        renderCCSidebar();
+      } catch(e) {
+        if (btn) btn.textContent = `エラー: ${e.message}`;
+      }
+    }
+
+    async function selectProject(projectId) {}
+
+    async function selectCCFile(filename, el) {
+      currentFile = filename;
+      document.querySelectorAll(".file-item").forEach(e => e.classList.remove("selected"));
+      el.classList.add("selected");
+      const logview = document.getElementById("logview");
+      logview.innerHTML = '<div class="spinner">読み込み中…</div>';
+      try {
+        const res = await fetch(`/api/cc-sessions/${currentProject}/${filename}`);
+        if (!res.ok) { logview.innerHTML = '<div class="empty">読み込みエラー</div>'; return; }
+        const events = await res.json();
+        renderLog(events);
+      } catch(e) {
+        logview.innerHTML = `<div class="empty">エラー: ${e.message}</div>`;
+      }
+    }
 
     async function selectChar(id) {
       currentChar = id;
@@ -8781,10 +9434,9 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
           if (!showThinking) return;
           const el = document.createElement("div");
           el.className = "block block-thinking";
-          const preview = trunc(ev.text, 2000);
           el.innerHTML = `
             <div class="label">THINKING <span class="toggle-link" onclick="toggleBlock(this)">▲ 折りたたむ</span></div>
-            <div class="body">${esc(preview)}</div>`;
+            <div class="body">${esc(ev.text)}</div>`;
           logview.appendChild(el);
 
         } else if (ev.kind === "text") {
@@ -8800,18 +9452,23 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
           try { inputStr = JSON.stringify(ev.input, null, 2); } catch(_) { inputStr = String(ev.input); }
           el.innerHTML = `
             <div class="label">→ TOOL CALL <span class="tool-name">${esc(ev.name)}</span></div>
-            <div class="body tool-input">${esc(trunc(inputStr, 1200))}</div>`;
+            <div class="body tool-input">${esc(inputStr)}</div>`;
           logview.appendChild(el);
 
         } else if (ev.kind === "tool_result") {
           if (!showToolResult) return;
           const el = document.createElement("div");
           el.className = "block block-tool-result" + (ev.is_error ? " error" : "");
-          const preview = trunc(ev.text, 1500);
           const label = ev.is_error ? `← ${esc(ev.name)} ERROR` : `← ${esc(ev.name)}`;
           el.innerHTML = `
             <div class="label">${label} <span class="toggle-link" onclick="toggleBlock(this)">▲ 折りたたむ</span></div>
-            <div class="body">${esc(preview)}</div>`;
+            <div class="body">${esc(ev.text)}</div>`;
+          logview.appendChild(el);
+
+        } else if (ev.kind === "user_text") {
+          const el = document.createElement("div");
+          el.className = "block block-user";
+          el.innerHTML = `<div class="label">USER</div><div class="body">${esc(ev.text)}</div>`;
           logview.appendChild(el);
 
         } else if (ev.kind === "result") {
@@ -8823,7 +9480,7 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
             ? `\\n権限拒否: ${ev.permission_denials.map(d=>esc(d)).join(", ")}`
             : "";
           const finalHtml = ev.result
-            ? `<div class="final-text">${esc(trunc(ev.result, 500))}</div>`
+            ? `<div class="final-text">${esc(ev.result)}</div>`
             : "";
           el.innerHTML = `
             <div class="label">RESULT — ${esc(ev.subtype)}</div>
@@ -8852,13 +9509,15 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
     function toggleThinking() {
       showThinking = !showThinking;
       document.getElementById("thinkingBtn").classList.toggle("active", showThinking);
-      if (currentChar && currentFile) loadLog(currentChar, currentFile);
+      if (currentMode === "cc") { if (currentProject && currentFile) selectCCFile(currentFile, document.querySelector(".file-item.selected")); }
+      else if (currentChar && currentFile) loadLog(currentChar, currentFile);
     }
 
     function toggleToolResult() {
       showToolResult = !showToolResult;
       document.getElementById("toolResultBtn").classList.toggle("active", showToolResult);
-      if (currentChar && currentFile) loadLog(currentChar, currentFile);
+      if (currentMode === "cc") { if (currentProject && currentFile) selectCCFile(currentFile, document.querySelector(".file-item.selected")); }
+      else if (currentChar && currentFile) loadLog(currentChar, currentFile);
     }
   </script>
 </body>
