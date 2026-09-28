@@ -1,0 +1,36 @@
+[project]
+name = "slack-approve"
+version = "0.1.0"
+description = "tmux上のClaude Codeの許可プロンプトをSlackのボタンで承認できるようにするボット"
+requires-python = ">=3.10"
+dependencies = [
+    "slack-bolt>=1.20.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+]
+
+[project.scripts]
+slack-approve = "approve_bot:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+include = ["approve_bot.py"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
