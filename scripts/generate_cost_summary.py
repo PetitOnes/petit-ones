@@ -4,10 +4,8 @@
 cron で定期実行して、キャラクターが Bash cat で読めるようにする。
 """
 
-import json
-import subprocess
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
@@ -18,38 +16,14 @@ RESET_DAY = 26
 
 
 def load_entries():
+    """token_log.jsonl を読む。cost は cost_correct で「1回ぶん」に直したもの
+    (2026-09-19 以降、--resume の total_cost_usd が累計で返るため。2026-09-28 修正)。"""
     if not TOKEN_LOG.exists():
         return []
-    entries = []
-    with TOKEN_LOG.open() as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ev = json.loads(line)
-                ts_raw = ev.get("timestamp", "")
-                if not ts_raw:
-                    continue
-                dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                dt_jst = dt.astimezone(JST)
-                date_str = dt_jst.strftime("%Y-%m-%d")
-                cost = ev.get("cost_usd") or 0
-                if cost == 0:
-                    ci = ev.get("input", 0) or 0
-                    co = ev.get("output", 0) or 0
-                    cc = ev.get("cache_creation", 0) or 0
-                    cr = ev.get("cache_read", 0) or 0
-                    cost = (ci * 3 + co * 15 + cc * 3.75 + cr * 0.30) / 1e6
-                entries.append({
-                    "date": date_str,
-                    "character": ev.get("character", "unknown"),
-                    "source": ev.get("source", "unknown"),
-                    "cost": cost,
-                })
-            except Exception:
-                pass
-    return entries
+    sys.path.insert(0, str(Path(__file__).parent))
+    from cost_correct import load_corrected
+    return [{"date": r["date"], "character": r["character"], "source": r["source"], "cost": r["cost"]}
+            for r in load_corrected(TOKEN_LOG)]
 
 
 def calc_cycle(now):

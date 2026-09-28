@@ -8380,6 +8380,25 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 
 # ===================== stream-logs =====================
 
+_COST_FIX_CACHE = {"mtime": None, "map": {}}
+
+
+def _cost_fix_map() -> dict:
+    """token_log.jsonl の (timestamp, character, source) → 1回ぶんに直した cost。ファイルが変わったら読み直す。"""
+    try:
+        log = DATA_DIR / "token_logs" / "token_log.jsonl"
+        mtime = log.stat().st_mtime
+        if _COST_FIX_CACHE["mtime"] != mtime:
+            import sys as _sys
+            _sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+            from cost_correct import load_corrected
+            _COST_FIX_CACHE["map"] = {(r["timestamp"], r["character"], r["source"]): r["cost"] for r in load_corrected(log)}
+            _COST_FIX_CACHE["mtime"] = mtime
+    except Exception:
+        pass
+    return _COST_FIX_CACHE["map"]
+
+
 _LOG_ROOT = DATA_DIR / ".autonomous-logs"
 
 
@@ -8904,6 +8923,8 @@ async def api_costs():
                     cc = ev.get("cache_creation", ev.get("cache_creation_input_tokens", 0)) or 0
                     cr = ev.get("cache_read", ev.get("cache_read_input_tokens", 0)) or 0
                     cost = (ci * 3 + co * 15 + cc * 3.75 + cr * 0.30) / 1e6
+                # 2026-09-19 以降、--resume の total_cost_usd は累計で返る → 1回ぶんに直した値を使う(scripts/cost_correct.py)
+                cost = _cost_fix_map().get((ts_raw, ev.get("character", "unknown"), ev.get("source", "unknown")), cost)
                 entries.append({
                     "date": date_str,
                     "month": date_str[:7],
