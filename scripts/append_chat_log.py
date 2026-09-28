@@ -11,7 +11,7 @@
 import json
 import sys
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 parser = argparse.ArgumentParser(add_help=False)
@@ -30,13 +30,26 @@ else:
     role = data["role"]
     text = data["text"]
 
+now = datetime.now(timezone.utc)
+now_jst = now.astimezone(timezone(timedelta(hours=9)))
+timestamp = now.isoformat()
+
+# --- chat_histories（JSON形式、既存） ---
 p = Path(f"/home/cube-petit/petit_claude/characters/{char_id}/chat_histories/chat_history.json")
 p.parent.mkdir(parents=True, exist_ok=True)
-
 try:
     log = json.loads(p.read_text(encoding="utf-8")) if p.exists() else []
 except Exception:
     log = []
+log.append({"role": role, "text": text, "timestamp": timestamp})
+p.write_text(json.dumps(log[-2000:], ensure_ascii=False, indent=2), encoding="utf-8")
 
-log.append({"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
-p.write_text(json.dumps(log[-200:], ensure_ascii=False, indent=2), encoding="utf-8")
+# --- .autonomous-logs（テキスト形式、日次ファイル） ---
+log_dir = Path(f"/home/cube-petit/petit_claude/.autonomous-logs/{char_id}")
+log_dir.mkdir(parents=True, exist_ok=True)
+log_file = log_dir / f"chat_{now_jst.strftime('%Y%m%d')}.log"
+label_map = {"user": "ありさん", "_internal": "🔍internal"}
+label = label_map.get(role, role)
+line = f"[{now_jst.strftime('%Y-%m-%d %H:%M:%S')} JST] [{label}] {text}\n"
+with open(log_file, "a", encoding="utf-8") as f:
+    f.write(line)
