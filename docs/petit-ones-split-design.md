@@ -132,6 +132,10 @@
 | 10/6 | P2 desire: 部品は本体と同じ計算(新旧を並べて実行し、ぷちるの 8 つの欲求の差 0.0)。テスト 42 件通過。**ぷちるだけ**切り替え(crontab 1 行 + MCP 設定)。crontab の控えは `~/petit_claude/config/crontab.bak_20261006_before_desire_split` |
 | 10/6 | P2 desire: **3 人とも切り替え**(crontab 3 行・MCP 設定・launcher) |
 | 10/6 | P3 memory: 部品を本番に追いつかせた(m5-petit-memory #2: 記憶整理の修正 2 件、移行スクリプト、`uv.lock` を本番の版 torch 2.10.0 に固定)。テスト 194 件通過。ぷちるの DB の写しで、新旧の「思い出す」結果(id と距離)が一致。**3 人とも切り替え**(MCP 設定・launcher・毎晩 4:05 の記憶整理)。戻すときは `config/*.bak_before_memory_split_20261006` |
+| 10/6 | switchbot: 新しい部品 `PetitOnes/m5-petit-switchbot` を作成(履歴なし・Apache-2.0・main 保護)。道具の一覧が新旧で同じことを確認し、3 人とも切り替え |
+| 10/6 | データのひな型の名前を、部品リポの既定に合わせて `petit_data` に(`next/template/petit_data`、`setup.sh` の既定も `~/petit_data`)。うちは今までどおり `PETIT_DATA_DIR=~/petit_claude` |
+| 10/6 | m5-mcp: **見送り**。部品(develop ブランチ)は別物に近い(道具の説明が英語、環境変数名が違う、ローバーとプリンターが無い)。方針を決めてから(→ Issue #1) |
+| 10/6 | 残りは Issue で管理(PetitOnes/petit-ones#10 がまとめ) |
 
 ### わかったこと
 
@@ -141,3 +145,4 @@
 - desire の `COMPANION_NAME` は `~/petit_claude/.env` にも入っているので、部品側に `.env` を置かなくてよい。必要なのは cron 行と MCP 設定への `PETIT_DATA_DIR` だけ
 - desire の残り(3 人切り替えのあとにやる): `scripts/create_character.py`・`backup_petit.sh`・`restore_petit.sh` が旧パス(`desire-system/`)を直書きしている
 - この PC の git の全体設定は 10/6 に RRYZ09 の noreply へ変更した(控え `~/.gitconfig.bak_20261006`)
+- 部品リポの既定ブランチは揃っていない(mcp・app・speech・setup は `develop`、ほかは `main`)。`petit.repos` は既定ブランチに合わせた。いずれ `main` に揃えたい
