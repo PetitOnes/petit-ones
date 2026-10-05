@@ -72,8 +72,8 @@
 |---|---|
 | リポジトリ | `PetitOnes/m5-petit-app`(public、既定ブランチ **develop**、`main` は古い) |
 | 作業クローン | `/home/cube-petit/work/petit-ones/src/m5-petit-app`(develop、origin と同じ。push は `github-rryz09:` 経由で設定済み) |
-| 本番(読むだけ) | `/home/cube-petit/work/petit-ones/dashboard/main.py`。**フェーズ D まで変更しない** |
-| 動いている本番 | このPCの `:8765`(cron と手動起動)。**止めない・再起動しない**(フェーズ D まで) |
+| 本番(読むだけ) | `/home/cube-petit/work/petit-ones/dashboard/main.py`。**フェーズ E まで変更しない** |
+| 動いている本番 | このPCの `:8765`(cron と手動起動)。**止めない・再起動しない**(フェーズ E まで) |
 | 身体の部品 | `/home/cube-petit/work/petit-ones/src/m5-petit-mcp/src/m5_petit_mcp/server.py`(呼ぶ口の正) |
 
 ## 5. フェーズ A: 追加(extension)の仕組みを土台に入れる
