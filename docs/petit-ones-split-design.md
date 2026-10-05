@@ -136,6 +136,7 @@
 | 10/6 | データのひな型の名前を、部品リポの既定に合わせて `petit_data` に(`next/template/petit_data`、`setup.sh` の既定も `~/petit_data`)。うちは今までどおり `PETIT_DATA_DIR=~/petit_claude` |
 | 10/6 | m5-mcp: **見送り**。部品(develop ブランチ)は別物に近い(道具の説明が英語、環境変数名が違う、ローバーとプリンターが無い)。方針を決めてから(→ Issue #1) |
 | 10/6 | 残りは Issue で管理(PetitOnes/petit-ones#10 がまとめ) |
+| 10/6 | P4 m5-mcp: 方針決定(本体のコードを部品の正に、説明文は日本語、家の値は環境変数)。m5-petit-mcp #2 で移植。道具 52 個の説明文・引数が新旧一致、実機でセンサー読み取り確認。**3 人とも切り替え**。戻すときは `config/*.bak_before_m5mcp_split_20261006` |
 
 ### わかったこと
 
