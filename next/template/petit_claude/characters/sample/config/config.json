@@ -1,0 +1,7 @@
+{
+  "character_id": "alice",
+  "display_name": "Alice",
+  "m5_host": "192.168.1.50",
+  "timezone": "Asia/Tokyo",
+  "voice_api_host": ""
+}

@@ -1,0 +1,31 @@
+# ぷちたちを動かす部品の一覧。  vcs import src < petit.repos
+# version は main(開発中)。配るときはタグに固定する。
+repositories:
+  m5-petit-notes:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-notes.git
+    version: main
+  m5-petit-relations:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-relations.git
+    version: main
+  m5-petit-desire:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-desire.git
+    version: main
+  m5-petit-memory:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-memory.git
+    version: main
+  m5-petit-mcp:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-mcp.git
+    version: main
+  m5-petit-app:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-app.git
+    version: main
+  m5-petit-scripts:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-scripts.git
+    version: main

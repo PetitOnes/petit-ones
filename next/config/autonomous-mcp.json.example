@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "notes": {
+      "command": "uv",
+      "args": ["run", "--directory", "/home/USER_NAME/work/petit-ones/src/m5-petit-notes", "notes-mcp"],
+      "env": {"CHARACTER_ID": "CHARACTER_ID_HERE", "PETIT_DATA_DIR": "/home/USER_NAME/petit_claude"}
+    },
+    "relations": {
+      "command": "uv",
+      "args": ["run", "--directory", "/home/USER_NAME/work/petit-ones/src/m5-petit-relations", "relations-mcp"],
+      "env": {"CHARACTER_ID": "CHARACTER_ID_HERE", "PETIT_DATA_DIR": "/home/USER_NAME/petit_claude"}
+    }
+  }
+}

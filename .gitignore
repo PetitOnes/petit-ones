@@ -104,3 +104,6 @@ scripts/poetry/
 
 # バックアップは追跡しない
 *.bak
+
+# vcs import の行き先(部品リポ)
+/src/

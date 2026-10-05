@@ -1,0 +1,12 @@
+{
+  "max_turns": 20,
+  "autonomous_skip": 0,
+  "allow_camera": true,
+  "allow_sound": true,
+  "allow_microphone": false,
+  "active_hours": [
+    [7, 8],
+    [12, 13],
+    [18, 24]
+  ]
+}
