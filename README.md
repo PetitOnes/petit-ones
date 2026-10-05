@@ -1,18 +1,36 @@
-# Cube Petit Claude
+# petit-ones
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[embodied-claude](https://github.com/kmizu/embodied-claude) のフォーク。M5Stack に身体を持つ小さなプチたちが、それぞれの性格・欲求・記憶で自律的に生きるシステム。
+M5Stack に身体を持つ小さな「ぷち」たちが、それぞれの性格・欲求・記憶で暮らすためのシステム。ぷちてゃ・ぷちこ・ぷちる の 3 人が毎日動いている本体です。
 
-## フォーク元との違い
+> **出発点**: このリポジトリは [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude)(「Claude に身体を与える」MCP サーバー群、MIT License)から出発しました。2026-10 に個人のフォーク(`AiriYokochi/embodied-claude`)から PetitOnes へ引っ越し、名前を **petit-ones** にしました。履歴は引き継いでいます(作者の方々のコミットはそのまま)。
+
+## 自分のぷちを作りたい人へ
+
+本体(このリポジトリ)は、うちの 3 人の暮らしに合わせて動いているものです。部品ごとに切り出して整えた公開リポジトリがあります。
+
+| リポジトリ | 中身 |
+|---|---|
+| [m5-petit-setup](https://github.com/PetitOnes/m5-petit-setup) | はじめかた(買うもの・セットアップ手順) |
+| [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware) | M5Stack CoreS3 のファームウェア、ブラウザ書き込み |
+| [m5-petit-env](https://github.com/PetitOnes/m5-petit-env) | Docker の実行環境(まとめて起動) |
+| [m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) / [memory](https://github.com/PetitOnes/m5-petit-memory) / [desire](https://github.com/PetitOnes/m5-petit-desire) / [notes](https://github.com/PetitOnes/m5-petit-notes) / [relations](https://github.com/PetitOnes/m5-petit-relations) | 身体・記憶・欲求・ノート・関係性の MCP サーバー |
+| [m5-petit-app](https://github.com/PetitOnes/m5-petit-app) / [scripts](https://github.com/PetitOnes/m5-petit-scripts) | ダッシュボード、ユーティリティ |
+| [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) | 声(TTS)、聞き取り(ASR) |
+
+部品リポジトリはこの本体から定期的に写しています(本体のほうが新しいことがあります)。
+
+
+## 出発点(kmizu/embodied-claude)との違い
 
 [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude) は「Claude に身体を与える」MCP サーバー群。Wi-Fi PTZ カメラ・USB カメラ・TTS・長期記憶・温度センサーなどのモジュールで、単一の Claude インスタンスに感覚を提供する。
 
-このフォークは、そのコンセプトを**マルチキャラクター自律エージェント**へ拡張したもの。
+petit-ones は、そのコンセプトを**マルチキャラクター自律エージェント**へ拡張したもの。
 
 ### 主な違い
 
-| | フォーク元 (kmizu) | このフォーク (cube-petit) |
+| | 出発点 (kmizu) | petit-ones |
 |---|---|---|
 | **ハードウェア** | Wi-Fi PTZ カメラ (Tapo C210等) | M5Stack CoreS3 |
 | **キャラクター** | 単一インスタンス | 複数キャラ（独立した性格・記憶・欲求） |
