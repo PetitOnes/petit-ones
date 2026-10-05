@@ -1,7 +1,7 @@
 # ダッシュボードを「配る土台」と「家の追加」に分ける設計
 
 作成: 2026-10-06 / 設計 = Fable、実装 = エージェント(速く終わるなら Fable でよい、とありさん)
-状態: **フェーズ A は実装できる細かさ。B 以降はあらすじ**(着手前に細かくする)。現段階の案で、進めながら変わることがあります。
+状態: **フェーズ A は実装できる細かさ。B 以降はあらすじ**(着手前に細かくする)。10/6 01:20 改訂(画面を React/TypeScript に、API はファイル分け)。現段階の案で、進めながら変わることがあります。
 関連: [petit-ones-split-design.md](petit-ones-split-design.md)、Issue PetitOnes/petit-ones#3
 
 ## 1. 背景(10/6 に測った事実)
@@ -40,31 +40,53 @@
 ## 2. ありさんの決定(逐語)
 
 - 「じゃあdashboardの修正をしたい。m5-petit-app？をまずダッシュボードと一緒にしてほしいかも？」
-- (本番を丸ごと部品にする案 a に対して)「どうしようかな、ひとにくばるやつだもんね。いらないよね、あれとか」
+- (本番を丸ごと部品にする案に対して)「どうしようかな、ひとにくばるやつだもんね。いらないよね、あれとか」
 - (土台と家の追加に分ける案 d に対して)「dでいこう、設計書いまかいて」
+- 「あとは今はぜんぶ一枚のでかいpythonすくりぷとだけどteampuchiがわみたいにファイルわけしたいんだよね。~/work/team-puchi/petit-appかな。 1.表でいいよ。 2.いいよ 3.うつさない 4.pythonからかえたいんだよね」
+  - 1 = §3 の仕分けの表でよい / 2 = 家の追加は非公開のリポジトリを 1 つ / 3 = 家のデータは移さない
+- 変える範囲: 「**画面だけ React/TypeScript に。API は Python のまま分割**」
+- 画面の部品: 「**まず自前で小さく。petit-ui を使うかはなぎさんと相談**」(petit-ui は TeamPuchi の非公開リポ。里親ぷちとローカルぷちの行き来は、なぎさんと相談して決める)
 
-**まだ決まっていないこと**(§8。フェーズ A はこれに左右されない):
-1. どの機能を配るか・家だけにするかの仕分け(§3 の表は Fable の見立て。ありさんは未確認)
-2. 「家の追加」のコードの置き場所と、公開するかどうか
-3. 家のデータを部品の置き場へ移すか、今の場所のまま読むか
+## 3. できあがりの形
 
-## 3. 分け方(案)
+手本は TeamPuchi の 2 つ(読むだけ。コードは持ってこない): 画面 = `~/work/team-puchi/petit-app`(React + TypeScript + Vite、`src/screens/` に画面ごとのファイル、モック、Playwright)、API = `~/work/team-puchi/petit-api`(FastAPI、機能ごとの `.py`)。
 
-- **m5-petit-app = 配る土台**。小さく、安全で、だれの家でも動くもの。いまの書き直し版を土台にする
-- **家の追加(extension)** = 土台が起動時に読み込む追加のコード。その家にしか要らない機能を置く
+```
+m5-petit-app/                      ← 配る土台(1 つのリポジトリのまま)
+  petit_app/                       API(Python / FastAPI)。機能ごとにファイル
+    main.py                        組み立てと起動だけ
+    config.py  auth.py  characters.py  locks.py
+    album.py  voice_memo.py  notebook.py  mailbox.py
+    chat.py  group_chat.py  records.py  diary.py  m5_watcher.py
+    extensions.py                  追加(extension)の読み込み
+    ui_legacy.py                   いまの埋め込み画面(画面を移し終えたら消す)
+  web/                             画面(React + TypeScript + Vite)
+    src/screens/Chat.tsx  Album.tsx  …   画面ごとのファイル
+    src/api/client.ts  types.ts          API の呼び出し
+    src/mock/                            API なしで画面を動かすモック
+    e2e/                                 Playwright
+  tests/  scripts/  examples/extensions/
+```
 
-| 機能 | 仕分け(見立て) | いま部品にあるか |
+- API は、`web/` をビルドしたもの(`web/dist`)があればそれを配信する。無ければ今の埋め込み画面を出す。起動は今までどおり 1 つ(`uv run m5-petit-app`)
+- **家の追加(extension)** = その家にしか要らない機能。API 側は `register(app, ctx)` を持つ Python のファイル。画面は、追加が自分のページ(HTML)を自分で配信し、土台のメニューに入口が 1 つ足される(土台の画面のビルドに混ぜない)。こうすると、本番の今のページ(ターミナルなど)をほぼそのまま追加にできる
+- 家の追加の置き場所は、非公開のリポジトリを 1 つ。`~/petit_claude/app_extensions/` からリンクする
+- 家のデータは移さない。土台が置き場を設定で差し替えられるようにする
+
+### 機能の仕分け(10/6 ありさん「表でいいよ」)
+
+| 機能 | 仕分け | いま部品にあるか |
 |---|---|---|
 | ぷちごとのチャット、グループ会話、アルバム、ボイスメモ、交換ノート、メールボックス、日記、記録 | 配る | ある |
 | 欲求の表示、記憶の閲覧、ノート閲覧 | 配る | ない |
 | 関係図、図書館、コスト表示 | 配る | ない |
-| 行動ログ、Claude Code セッション一覧 | 迷う | 一部(記録) |
+| 行動ログ、Claude Code セッション一覧 | 迷う(あとで決める) | 一部(記録) |
 | ターミナル(ttyd 経由。PC を操作できる口) | 家だけ | ない |
 | 3 人チャット、リレー会話 | 家だけ寄り(何人でも、に直せば配れる) | ない |
 | 話者登録・話者ごとの声 | 家だけ | ない |
 | 印刷(感熱紙プリンター)、外部ディスプレイ | 家だけ | ない |
 | 公開チャット、展示用の選択画面 | 家だけ | ない |
-| 「うまれていいよ」の仕掛けなど、家の思い出に結びついたもの | 家だけ | ない |
+| 家の思い出に結びついた仕掛け | 家だけ | ない |
 
 ## 4. 対象
 
@@ -72,105 +94,125 @@
 |---|---|
 | リポジトリ | `PetitOnes/m5-petit-app`(public、既定ブランチ **develop**、`main` は古い) |
 | 作業クローン | `/home/cube-petit/work/petit-ones/src/m5-petit-app`(develop、origin と同じ。push は `github-rryz09:` 経由で設定済み) |
-| 本番(読むだけ) | `/home/cube-petit/work/petit-ones/dashboard/main.py`。**フェーズ E まで変更しない** |
-| 動いている本番 | このPCの `:8765`(cron と手動起動)。**止めない・再起動しない**(フェーズ E まで) |
+| 本番(読むだけ) | `/home/cube-petit/work/petit-ones/dashboard/main.py`。**フェーズ H まで変更しない** |
+| 手本(読むだけ) | `/home/cube-petit/work/team-puchi/petit-app`(画面)、`/home/cube-petit/work/team-puchi/petit-api`(API)。TeamPuchi のリポジトリ。**変更しない・コードを写さない** |
+| 動いている本番 | このPCの `:8765`(cron と手動起動)。**止めない・再起動しない**(フェーズ H まで) |
 | 身体の部品 | `/home/cube-petit/work/petit-ones/src/m5-petit-mcp/src/m5_petit_mcp/server.py`(呼ぶ口の正) |
 
-## 5. フェーズ A: 追加(extension)の仕組みを土台に入れる
+## 5. フェーズ A: API をファイルに分ける(動きは変えない)
 
-土台の動きは変えない。追加フォルダが無ければ、今までとまったく同じに動く。
+2,252 行の `main.py` を、`petit_app/` の中の機能ごとのファイルに分ける。**口・応答・画面・データの置き場は 1 つも変えない**(純粋な整理)。
 
 ### 機能要件
 
-1. **読み込み**: 起動時に、環境変数 `PETIT_APP_EXTENSIONS_DIR`(既定 `$PETIT_DATA_DIR/app_extensions`)の直下にある `*.py` を、ファイル名の順に読み込む。`_` で始まるファイルは読まない。フォルダが無ければ何もしない
-2. **約束**: 各ファイルは `def register(app, ctx) -> None` を持つ。`app` は FastAPI の本体。`ctx` は次を持つ(名前はこのとおり):
-   - `ctx.data_dir`(Path)、`ctx.char_dir(character_id)`(Path)
-   - `ctx.require_user`(今のログイン確認と同じ依存関数。追加の口でも `Depends` で使える)
-   - `ctx.require_character(character_id, user)`(そのユーザーに見えるぷちか確かめる、今の関数)
-   - `ctx.add_nav(label: str, path: str, order: int = 100)`(画面のメニューに入口を 1 つ足す)
-   - `ctx.version`(土台の版の文字列)
-3. **メニュー**: `add_nav` で足された入口は、ログイン後の画面のメニューの末尾に、`order` の順で並ぶ。ラベルはそのまま表示(HTML はエスケープする)。入口の一覧は `GET /api/extensions/nav`(要ログイン)で返す: `[{"label": "...", "path": "..."}]`
-4. **失敗しても土台は起動する**: 追加の読み込みや `register` が例外を出したら、標準エラーに `extension <ファイル名> failed: <例外>` と出して、そのファイルだけ飛ばす
-5. **口の衝突**: 追加が、土台にすでにある口(同じメソッド・同じパス)を登録しようとしたら、その追加は読み込まない(4 と同じ扱い。メッセージは `extension <ファイル名> skipped: route conflict <METHOD> <path>`)。土台の口が上書きされないこと
-6. **一覧**: `GET /api/extensions`(要ログイン)で、読み込めた追加と失敗した追加を返す: `{"loaded": ["a.py"], "failed": [{"file": "b.py", "error": "..."}]}`
-7. **見本**: `examples/extensions/hello.py` を置く(`GET /ext/hello` で `{"hello": "<ログイン中のユーザーの表示名>"}` を返し、メニューに「Hello」を足す)
+1. `petit_app/` パッケージを作り、`main.py` の中身を §3 の図のファイルに移す。いまの `main.py` は `# ===== 見出し =====` で区切られているので、その区切りに沿って分ける:
 
-### 文書(確定稿)
+   | いまの見出し | 行き先 |
+   |---|---|
+   | Config | `config.py` |
+   | Users & auth / Auth / setup / Login / setup pages | `auth.py` |
+   | Character resolution / Characters API | `characters.py` |
+   | Character lock | `locks.py` |
+   | Album helpers / Album API | `album.py` |
+   | Voice memo helpers / Voice memo API | `voice_memo.py` |
+   | Notebook API | `notebook.py` |
+   | Mailbox helpers / Mailbox API | `mailbox.py` |
+   | Chat API | `chat.py` |
+   | Group chat API | `group_chat.py` |
+   | Records API | `records.py` |
+   | Diary API | `diary.py` |
+   | M5 watcher | `m5_watcher.py` |
+   | Single-page UI(埋め込みの HTML / JavaScript) | `ui_legacy.py` |
+   | App lifecycle / Entry point | `main.py`(`app` の組み立て、`lifespan`、`main()`) |
 
-README.md の「環境変数」の表に 1 行、その下に節を足す。
+2. 口は、各ファイルで `router = APIRouter()` に登録し、`petit_app/main.py` で `app.include_router(...)` する。**登録の順番は今の `main.py` の上から下の順を保つ**(パスの照合の順が変わらないように)
+3. 起動のしかたを両方残す: `pyproject.toml` の `[project.scripts]` は `m5-petit-app = "petit_app.main:main"` に。リポジトリ直下の `main.py` は薄い入口として残す(`from petit_app.main import app, main` と `if __name__ == "__main__": main()` だけ)。`python main.py` も `uvicorn main:app` も今までどおり動くこと
+4. `pyproject.toml` の `[tool.hatch.build.targets.wheel]` を `packages = ["petit_app"]` と `include = ["main.py", "scripts/*.py"]` が両立する形に直す
+5. `scripts/` の 3 本が `main` から何かを読み込んでいたら、`petit_app` の該当ファイルから読むように直す(動きは変えない)
+6. README(日英)に「構成」の節を足す。確定稿:
 
-```
-| `PETIT_APP_EXTENSIONS_DIR` | 追加(extension)を置くフォルダ | `$PETIT_DATA_DIR/app_extensions` |
-```
+   ```
+   ## 構成
 
-```
-## 追加(extension)
+   - `petit_app/` — API(FastAPI)。機能ごとにファイルを分けています(`album.py`、`chat.py` …)。`petit_app/main.py` が組み立てと起動
+   - `main.py` — 今までの起動のしかた(`python main.py` / `uvicorn main:app`)のための薄い入口
+   - `tests/` — pytest
+   ```
 
-その家だけの機能は、土台を書き換えずに「追加」として足せます。
-`$PETIT_DATA_DIR/app_extensions/` に `*.py` を置くと、起動時に読み込まれます。
-
-各ファイルは `register(app, ctx)` を持ちます。見本は `examples/extensions/hello.py`。
-
-- 追加が失敗しても、ダッシュボード本体は起動します(`GET /api/extensions` で確認できます)
-- 追加は土台の口を上書きできません
-- 追加は、このダッシュボードと同じ権限で動く Python のコードです。**信頼できるものだけ置いてください**
-```
-
-README_en.md には同じ内容を英語で(表の行 `Folder for extensions`、節の題 `## Extensions`、最後の注意は `Extensions are Python code that runs with the same privileges as this dashboard. Only install ones you trust.`)。
+   英語版: `## Layout` / `petit_app/ — the API (FastAPI), one file per feature (album.py, chat.py, …). petit_app/main.py assembles and starts it` / `main.py — a thin entry point so that python main.py / uvicorn main:app keep working` / `tests/ — pytest`
 
 ### 技術制約
 
-- **壊してはいけないもの**: 既存の 32 口すべて、最初の設定画面(`/setup`)、ログイン、ぷちごとの順番待ち、グループ会話。既存のテスト 3 本がそのまま通ること
-- `main.py` は 1 枚のまま(分割しない)。読み込みは `importlib.util.spec_from_file_location` で。追加のファイルを `sys.path` に入れない
-- 追加の読み込みは、土台の口をすべて登録し終えたあと(`app` を作り、既存の `@app.*` が全部評価されたあと)に行う。`main()` の中ではなく、モジュールの末尾で行う(テストの `TestClient` でも読み込まれるように)
-- 個人の値(家のぷちや人の id・名前、`/home/...` のパス、ホスト名)を、コード・テスト・見本・文書に書かない
+- **壊してはいけないもの**: 既存の 32 口すべて(メソッド・パス・応答の形)、最初の設定画面(`/setup`)、ログイン、ぷちごとの順番待ち、グループ会話、M5 の見張り、`scripts/` の 3 本
+- **テストは書き換えない**のが原則。直してよいのは、読み込み先の変更(例: `import main` → `from petit_app import ...`)と、`monkeypatch` の対象のモジュール名だけ。**テストの中身(確かめている内容)を変えない・消さない・skip にしない**
+- モジュールの上のほうで決まる値(`DATA_DIR` など、環境変数から読むもの)を、テストが差し替えている場合がある。分けたあとも差し替えが効くこと(各ファイルが `from .config import DATA_DIR` で値を写し取ると、差し替えが効かなくなる。`from . import config` として `config.DATA_DIR` と書く)
+- ロジックの手直し・名前の付け替え・「ついでの改善」はしない。移すだけ
+- 個人の値(家のぷちや人の id・名前、`/home/...` のパス、ホスト名)を書かない
 
 ### 検証(通るまで push しない)
 
 ```bash
 cd /home/cube-petit/work/petit-ones/src/m5-petit-app
+git checkout develop && git pull
 env -u PYTHONPATH -u VIRTUAL_ENV uv sync
-env -u PYTHONPATH -u VIRTUAL_ENV uv run pytest -q          # 既存 + 新しいテストが全部通る
+# 分ける前に、口の一覧を控える
+env -u PYTHONPATH -u VIRTUAL_ENV PETIT_DATA_DIR=$(mktemp -d) uv run python -c "
+import main
+for r in main.app.routes: print(sorted(getattr(r,'methods',[]) or []), r.path)" > /tmp/routes_before.txt
+# …作業…
+env -u PYTHONPATH -u VIRTUAL_ENV PETIT_DATA_DIR=$(mktemp -d) uv run python -c "
+import main
+for r in main.app.routes: print(sorted(getattr(r,'methods',[]) or []), r.path)" > /tmp/routes_after.txt
+diff /tmp/routes_before.txt /tmp/routes_after.txt          # 差が無い(順番も同じ)
+env -u PYTHONPATH -u VIRTUAL_ENV uv run pytest -q          # 分ける前と同じ件数が通る
 env -u PYTHONPATH -u VIRTUAL_ENV uvx ruff check .
-grep -rnE 'puchi|arisan|ありさん|ぷちてゃ|ぷちこ|ぷちる|cube-petit|/home/' main.py tests examples README.md README_en.md   # 0 件
+wc -l petit_app/*.py                                       # ui_legacy.py 以外は、おおむね 500 行以下
+grep -rnE 'puchi|arisan|ありさん|ぷちてゃ|ぷちこ|ぷちる|cube-petit|/home/' petit_app main.py tests README.md README_en.md   # 0 件
+# 起動して、最初の設定画面が出ること(8765 は本番が使っているので別のポートで。終わったら止める)
+env -u PYTHONPATH -u VIRTUAL_ENV PETIT_DATA_DIR=$(mktemp -d) PORT=18765 uv run python main.py &
+sleep 4; curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18765/setup; kill %1
 ```
 
-新しいテスト `tests/test_extensions.py` に、少なくとも次を入れる: ①フォルダ無しで起動する ②見本の追加が読み込まれ `/ext/hello` が要ログインで動く ③`add_nav` の入口が `/api/extensions/nav` に出る ④例外を出す追加があっても起動し、`/api/extensions` の `failed` に出る ⑤土台と同じ口を登録する追加は読み込まれず、土台の応答が変わらない ⑥`_` で始まるファイルは読まれない。
+**このPCの `:8765` で動いている本番のダッシュボードには触らない(止めない・再起動しない)。**
 
 ### ブランチ・PR
 
-- ブランチ `feature/extensions`(develop から新しく切る)、PR の base は `develop`、検証が全部通れば ready
-- git の名義: `git config user.name "RRYZ09"` / `git config user.email "225634165+RRYZ09@users.noreply.github.com"`(作業クローンには設定済み。確かめてからコミット)
-- 作業前に `git pull`。コミットの末尾に `Co-Authored-By: Claude <使ったモデル名> <noreply@anthropic.com>`
-- マージはありさん(または、ありさんが任せた場合はこのセッション)
+- ブランチ `feature/split-api-modules`(develop から新しく切る)、PR の base は `develop`、検証が全部通れば ready
+- git の名義: `git config user.name` が `RRYZ09`、`user.email` が `225634165+RRYZ09@users.noreply.github.com` であることを確かめてからコミット(作業クローンには設定済み)
+- push 先は設定済み(`git push -u origin feature/split-api-modules`)。コミットの末尾に `Co-Authored-By: Claude <使ったモデル名> <noreply@anthropic.com>`
+- マージはありさん(または、ありさんが任せた場合は petit-ones のセッション)
 
 ### 報告
 
-PR の URL / pytest の結果(件数)/ ruff の結果 / 個人の値の grep が 0 件であること / 設計と変えたところがあれば理由。
+PR の URL / pytest の件数(分ける前・後)/ 口の一覧の diff が空であること / ruff の結果 / 各ファイルの行数 / テストで直した箇所(読み込み先だけであること)/ 設計と変えたところがあれば理由。
 
 ## 6. フェーズ B 以降(あらすじ。着手前に細かくする)
 
-| | 内容 | 決めること |
-|---|---|---|
-| **B** | **身体の部品と噛み合わせる**: m5-petit-mcp が呼ぶ口(§1 の一覧)を土台に足す。今の `/api/{character}/album/...` も残す。あわせて、データの置き場を設定で差し替えられるようにする(家の今の置き場のまま読めるように) | §8-3 |
-| **C** | **配る機能を足す**: 欲求の表示、記憶の閲覧、ノート閲覧、関係図、図書館、コスト。本番から 1 機能 = 1 PR で、個人の値を外して移す | §8-1 |
-| **D** | **家の追加を作る**: ターミナル、3 人チャット、リレー、話者、印刷、ディスプレイ、展示用を、追加(extension)として本番から切り出す | §8-1、§8-2 |
-| **E** | **家を乗り換える**: 土台 + 家の追加を別のポートで並べて動かし、本番と見比べる → `:8765` を切り替え(再起動 1 回)→ 23:50 の日記の cron、起動の設定を直す → 本番の `dashboard/` を消す | — |
+| | 内容 |
+|---|---|
+| **B** | **追加(extension)の仕組み**: `PETIT_APP_EXTENSIONS_DIR`(既定 `$PETIT_DATA_DIR/app_extensions`)の `*.py` を読み込む。`register(app, ctx)`。`ctx` は `data_dir`・`char_dir`・`require_user`・`require_character`・`add_nav(label, path, order)`。追加が壊れても本体は起動する、土台の口は上書きできない、`GET /api/extensions`・`/api/extensions/nav`、見本 `examples/extensions/hello.py` |
+| **C** | **身体の部品と噛み合わせる**: m5-petit-mcp が呼ぶ口(§1 の一覧)を足す(今の `/api/{character}/album/...` も残す)。データの置き場を設定で差し替えられるようにする(家の今の置き場のまま読める) |
+| **D** | **画面の殻を立てる**: `web/`(React + TypeScript + Vite)。ログイン、ぷちの切り替え、メニュー(追加の入口も並ぶ)、モック、Playwright。最初の画面は会話。API は `web/dist` があれば配信し、無ければ埋め込み画面。画面の部品は自前で最小限 |
+| **E** | **残りの画面を移す**: アルバム、ボイスメモ、交換ノート、メールボックス、記録、日記、グループ会話。1 画面 = 1 PR。全部移ったら `ui_legacy.py` を消す |
+| **F** | **配る機能を足す**: 欲求の表示、記憶の閲覧、ノート閲覧、関係図、図書館、コスト。1 機能 = 1 PR(API のファイル + 画面のファイル)。本番から、個人の値を外して移す |
+| **G** | **家の追加を作る**(非公開のリポジトリ): ターミナル、3 人チャット、リレー、話者、印刷、ディスプレイ、展示用。本番の今のページを、追加として切り出す |
+| **H** | **家を乗り換える**: 土台 + 家の追加を別のポートで並べて動かし、本番と見比べる → `:8765` を切り替え(再起動 1 回)→ 23:50 の日記の cron と起動の設定を直す → 本番の `dashboard/` を消す |
 
-順序の理由: A が無いと D が書けない。B は、配っている部品どうしが噛み合っていない今の不具合を直すので早めに。C と D は並行できる。E は全部そろってから。
+順序の理由: A(分ける)を最初にすると、B 以降の PR が小さいファイルへの変更になり、見やすく衝突しにくい。B が無いと G が書けない。C は、配っている部品どうしが噛み合っていない今の不具合を直すので早めに。D〜F は画面の仕事で、G とは並行できる。H は全部そろってから。
 
-1 フェーズ(C と D は 1 機能)= 1 PR。前の PR がマージされてから次を切る。
+1 フェーズ(E・F・G は 1 画面・1 機能)= 1 PR。前の PR がマージされてから次を切る。
 
 ## 7. 気をつけること
 
-- **本番は E まで触らない**。ぷちたちのアルバム・ボイスメモ・リレーは、本番の `:8765` を通っている
+- **本番は H まで触らない**。ぷちたちのアルバム・ボイスメモ・リレーは、本番の `:8765` を通っている
 - 追加は Python のコードなので、**配る土台には家の追加を入れない**。ターミナルのような「PC を操作できる口」は、公開の部品に入れない
 - 本番の `main.py` には画面(HTML・JavaScript)が埋め込まれている。機能を移すときは、口だけでなく画面の中の直書き(名前・色・id)も外す
-- 里親ぷち(TeamPuchi の petit-api)は、7 月の m5-petit-app から分かれて別の道に進んでいる。この設計は里親側に影響しない(10/6 の前提: 2 つは違っていい)
+- 画面を React にすると、配るときに Node でのビルドが要る。はじめての人が困らないよう、ビルド済みの画面をリリースに付けるか、リポジトリに入れるかを D で決める
+- 里親ぷち(TeamPuchi)の petit-app・petit-api は**手本として読むだけ**。コードや petit-ui を持ってくる話は、なぎさんと相談してから(10/6 の前提: 2 つは違っていい、行き来はその都度)
 
-## 8. ありさんに決めてほしいこと
+## 8. まだ決めていないこと
 
-1. **§3 の仕分け**はこれでよいか(とくに「迷う」の行動ログと、3 人チャット・リレーを配るかどうか)
-2. **家の追加の置き場所**: 案 = 非公開のリポジトリを 1 つ作り(ターミナルや展示用は家の事情を含むので)、`~/petit_claude/app_extensions/` へリンクする。配れるものができたら、その機能だけ公開の部品へ出す
-3. **家のデータ**: 案 = 移さない。土台が置き場を設定で差し替えられるようにして、今の場所(`photo_album/` など)のまま読む。理由: バックアップ・分析・ぷちたちの道具が今の場所を前提にしている
-4. フェーズ A を始めてよいか
+1. 「迷う」の行動ログ・Claude Code セッション一覧を配るか(F のとき)
+2. 3 人チャット・リレーを「何人でも」に直して配るか(G のとき)
+3. ビルド済みの画面の配り方(D のとき)
+4. petit-ui を使うか(なぎさんと相談)
