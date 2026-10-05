@@ -1,2 +1,2 @@
 #!/bin/bash
-exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/work/embodied-claude/memory-mcp memory-mcp "$@"
+exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/work/petit-ones/src/m5-petit-memory memory-mcp "$@"

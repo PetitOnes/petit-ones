@@ -4,7 +4,7 @@
 # に対して動いており、ぷちたちの本物のDBは一度も整理されていなかった。その修正。
 
 set -u
-MEMORY_MCP_DIR="/home/cube-petit/work/embodied-claude/memory-mcp"
+MEMORY_MCP_DIR="/home/cube-petit/work/petit-ones/src/m5-petit-memory"
 UV="/home/cube-petit/.local/bin/uv"
 
 for CHAR in puchiteya puchiko puchiru; do

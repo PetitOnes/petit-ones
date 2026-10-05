@@ -1,2 +1,2 @@
 #!/bin/bash
-exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/work/embodied-claude/desire-system python server.py "$@"
+exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/work/petit-ones/src/m5-petit-desire python server.py "$@"
