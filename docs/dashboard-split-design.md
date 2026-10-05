@@ -191,6 +191,13 @@ PR の URL / pytest の件数(分ける前・後)/ 口の一覧の diff が空�
 
 **フェーズ B も 10/6 に済み**: PetitOnes/m5-petit-app#8(`petit_app/extensions.py`、見本、テスト 6 本。pytest 55 件)。画面のメニューに入口が並ぶところは、ブラウザでは未確認(API の応答まで)。
 
+**フェーズ C も 10/6 に済み**: PetitOnes/m5-petit-app#9 と PetitOnes/m5-petit-mcp#3。
+- 家全体のアルバム・ボイスメモの口(`/api/album/...`、`/api/voice_memo/...`)を土台に追加。置き場は人ごとのフォルダで、既定が `$PETIT_DATA_DIR/photo_album`・`voice_memo`(**家の今の置き場と同じ**なので、家のデータはそのまま読める。`PETIT_ALBUM_DIR` / `PETIT_VOICE_MEMO_DIR` で変更可)
+- ログインなしで呼ぶための合言葉: ダッシュボードが起動時に `$PETIT_DATA_DIR/.internal_token` を作り、MCP が同じフォルダから読んでヘッダーで送る。開くのは上の口だけ。IP での素通しはしない(本番は IP で通しているが、配るものでは使わない)
+- 2 つの部品を実際につないで確認(MCP の list_album / lock_album_photo / list_voice_memos が通る、合言葉なしは 401)。pytest 64 件。もとの口 39 は変更なし
+- **C に入れなかったもの**(家を乗り換える H の前に決める): 交換ノート(`chat_history/exchange_notebook.json` と `notebook/notebook.json`)、ログインの台帳(`config/auth.json` と `users.json`)、行動ログの置き場の違い。キャラクターごとのアルバムの口(`/api/{character}/album/...`)は残してあるが、画面を作り直す D・E で家全体の口に寄せる
+- リレー会話(`/api/relay/start`)は家だけの機能なので土台には無い。土台だけで使うと、MCP の `conversation_relay` は失敗する(G で家の追加に入る)
+
 ## 6. フェーズ B 以降(あらすじ。着手前に細かくする)
 
 | | 内容 |
