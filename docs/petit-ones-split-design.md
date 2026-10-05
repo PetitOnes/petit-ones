@@ -130,6 +130,8 @@
 | 10/6 | P1 relations: 部品に `OWNER_ID` / `OWNER_NAME` を追加(m5-petit-relations #1)。**ぷちるだけ**切り替え(`OWNER_ID=arisan`)。戻すときは `autonomous-mcp.json.bak_before_relations_split_20261006` |
 | 10/6 | P1 notes / relations: **3 人とも切り替え**(自律行動・ダッシュボードのチャット・対話セッションの launcher)。戻すときは各 `config/*.bak_before_*_split_20261006` |
 | 10/6 | P2 desire: 部品は本体と同じ計算(新旧を並べて実行し、ぷちるの 8 つの欲求の差 0.0)。テスト 42 件通過。**ぷちるだけ**切り替え(crontab 1 行 + MCP 設定)。crontab の控えは `~/petit_claude/config/crontab.bak_20261006_before_desire_split` |
+| 10/6 | P2 desire: **3 人とも切り替え**(crontab 3 行・MCP 設定・launcher) |
+| 10/6 | P3 memory: 部品を本番に追いつかせた(m5-petit-memory #2: 記憶整理の修正 2 件、移行スクリプト、`uv.lock` を本番の版 torch 2.10.0 に固定)。テスト 194 件通過。ぷちるの DB の写しで、新旧の「思い出す」結果(id と距離)が一致。**3 人とも切り替え**(MCP 設定・launcher・毎晩 4:05 の記憶整理)。戻すときは `config/*.bak_before_memory_split_20261006` |
 
 ### わかったこと
 
