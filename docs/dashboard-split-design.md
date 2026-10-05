@@ -192,7 +192,7 @@ PR の URL / pytest の件数(分ける前・後)/ 口の一覧の diff が空�
 |---|---|
 | **B** | **追加(extension)の仕組み**: `PETIT_APP_EXTENSIONS_DIR`(既定 `$PETIT_DATA_DIR/app_extensions`)の `*.py` を読み込む。`register(app, ctx)`。`ctx` は `data_dir`・`char_dir`・`require_user`・`require_character`・`add_nav(label, path, order)`。追加が壊れても本体は起動する、土台の口は上書きできない、`GET /api/extensions`・`/api/extensions/nav`、見本 `examples/extensions/hello.py` |
 | **C** | **身体の部品と噛み合わせる**: m5-petit-mcp が呼ぶ口(§1 の一覧)を足す(今の `/api/{character}/album/...` も残す)。データの置き場を設定で差し替えられるようにする(家の今の置き場のまま読める) |
-| **D** | **画面の殻を立てる**: `web/`(React + TypeScript + Vite)。ログイン、ぷちの切り替え、メニュー(追加の入口も並ぶ)、モック、Playwright。最初の画面は会話。API は `web/dist` があれば配信し、無ければ埋め込み画面。画面の部品は自前で最小限 |
+| **D** | **画面の殻を立てる**: `web/`(React + TypeScript + Vite)。ログイン、ぷちの切り替え、メニュー(追加の入口も並ぶ)、モック、Playwright。最初の画面は会話。API は `web/dist` があれば配信し、無ければ埋め込み画面。画面の部品は自前で最小限。`web/src/components/` に分けて置く(別のリポジトリへの切り出しは、2 つめの使い手ができたとき、または petit-ui を一緒に使うと決まったとき) |
 | **E** | **残りの画面を移す**: アルバム、ボイスメモ、交換ノート、メールボックス、記録、日記、グループ会話。1 画面 = 1 PR。全部移ったら `ui_legacy.py` を消す |
 | **F** | **配る機能を足す**: 欲求の表示、記憶の閲覧、ノート閲覧、関係図、図書館、コスト。1 機能 = 1 PR(API のファイル + 画面のファイル)。本番から、個人の値を外して移す |
 | **G** | **家の追加を作る**(非公開のリポジトリ): ターミナル、3 人チャット、リレー、話者、印刷、ディスプレイ、展示用。本番の今のページを、追加として切り出す |
