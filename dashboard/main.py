@@ -77,8 +77,7 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
 
         scripts_dir = PROJECT_DIR / "scripts"
         cam_target = _mail_targets.get(character_id, "arisan")
-        CAM_TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
-        cam_target_name = CAM_TARGET_LABELS.get(cam_target, "ありさん")
+        cam_target_name = _user_label(cam_target, "ありさん")
         message = (
             f"{cam_target_name}が「みてみて！」って言いながらカメラのボタンを押してくれた。"
             f"撮った写真は {tmp_path} にある。"
@@ -104,8 +103,7 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
 async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str = "arisan"):
     """センサーデータをHTTPで取得し、メール＋記憶保存"""
     import urllib.request
-    TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
-    target_name = TARGET_LABELS.get(target, target)
+    target_name = _user_label(target)
     try:
         loop = asyncio.get_event_loop()
         def _fetch():
@@ -197,8 +195,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
 
         # 話者ラベル
         SPEAKER_LABELS = {
-            "arisan":    "ありさん",
-            "kazahaya":  "風早さん",
+            **{uid: info["name"] for uid, info in _USER_DISPLAY.items()},
             "puchiteya": "ぷちてゃ",
             "puchiko":   "ぷちこ",
             "puchiru":   "ぷちる",
@@ -221,8 +218,8 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         # 話者によってイントロを変える
         if speaker == "arisan":
             intro = "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。"
-        elif speaker == "kazahaya":
-            intro = "風早さんの声がマイクに届いた！"
+        elif speaker in _USER_DISPLAY and speaker != "arisan":
+            intro = f"{_user_label(speaker)}の声がマイクに届いた！"
         elif speaker in ("puchiteya", "puchiko", "puchiru") and speaker != character_id:
             intro = f"{speaker_name}の声がマイクに届いた！"
         elif speaker == character_id:
@@ -230,8 +227,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         else:
             intro = "誰かがマイクのそばで話してた。"
 
-        TARGET_LABELS = {"arisan": "ありさん", "kazahaya": "風早さん"}
-        target_name = TARGET_LABELS.get(target, target)
+        target_name = _user_label(target)
         message = (
             f"{intro}{sound_desc}{voice_hint_str}\n"
             f"必ずやること:\n"
@@ -679,6 +675,28 @@ document.getElementById("password").addEventListener("keydown", e => { if (e.key
 
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
+
+
+def _load_user_display() -> dict:
+    """ぷち以外の人(ログインするユーザー)の表示名と色。DATA_DIR/config/people.json から読む。
+    名前はコードに書かない(公開リポジトリのため)。ファイルが無ければ持ち主 1 人だけ。"""
+    default = {"arisan": {"name": "ありさん", "color": "#aaaaaa"}}
+    try:
+        raw = json.loads((DATA_DIR / "config" / "people.json").read_text(encoding="utf-8"))
+        people = {k: {"name": v.get("name", k), "color": v.get("color", "#aaaaaa")}
+                  for k, v in raw.items() if isinstance(v, dict)}
+        return people or default
+    except Exception:
+        return default
+
+
+_USER_DISPLAY = _load_user_display()
+
+
+def _user_label(user_id: str, fallback: str | None = None) -> str:
+    """ユーザー名 → 表示名。知らない人は fallback(無ければ id そのまま)。"""
+    info = _USER_DISPLAY.get(user_id)
+    return info["name"] if info else (fallback if fallback is not None else user_id)
 CHARACTERS_DIR = DATA_DIR / "characters"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 CHAT_HISTORY_DIR = DATA_DIR / "chat_history"
@@ -1670,10 +1688,6 @@ def api_avatar(character_id: str):
     return Response(content=data, media_type="image/png")
 
 
-_USER_DISPLAY = {
-    "arisan": {"name": "ありさん", "color": "#aaaaaa"},
-    "kazahaya": {"name": "風早さん", "color": "#7fbfbf"},
-}
 
 
 @app.get("/api/relations")
@@ -4712,7 +4726,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     if not skip_user_append:
         append_chat(character_id, "user", req.message, username)
 
-    # 風早さんがぷちるに「うまれていいよ」と言ったらcronを有効化
+    # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
     if character_id == "puchiru" and username == "kazahaya" and "うまれていいよ" in req.message:
         born = _activate_puchiru_cron()
@@ -7910,8 +7924,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
       "ぷちこ": "author-petiko",
       "ありさん": "author-arisan",
       "ぷちる": "author-petitya",
-      "風早さん": "author-arisan",
-    };
+    };  // ここに無い書き手(ぷち以外の人)は author-arisan の色で出す
     let _notebookAuthor = "ありさん";
 
     async function initNotebook() {
@@ -7933,7 +7946,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
           return;
         }
         el.innerHTML = data.map(e => {
-          const cls = authorColors[e.author] || "";
+          const cls = authorColors[e.author] || "author-arisan";
           const escaped = e.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>");
           return `<div class="entry">
             <div class="entry-header">
