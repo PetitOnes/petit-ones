@@ -128,9 +128,14 @@
 | 10/6 | P0: `next/`(petit.repos・setup.sh・config のひな型・データのひな型)を作成。`src/` に部品 7 本を vcs import |
 | 10/6 | P1 notes: 部品リポは本体と同じ中身だった(違いは既定値だけ)。テスト 16 件通過。**ぷちるだけ**新しい場所(`src/m5-petit-notes`)に切り替え、1 日様子見。戻すときは `autonomous-mcp.json.bak_before_notes_split_20261006` |
 | 10/6 | P1 relations: 部品に `OWNER_ID` / `OWNER_NAME` を追加(m5-petit-relations #1)。**ぷちるだけ**切り替え(`OWNER_ID=arisan`)。戻すときは `autonomous-mcp.json.bak_before_relations_split_20261006` |
+| 10/6 | P1 notes / relations: **3 人とも切り替え**(自律行動・ダッシュボードのチャット・対話セッションの launcher)。戻すときは各 `config/*.bak_before_*_split_20261006` |
+| 10/6 | P2 desire: 部品は本体と同じ計算(新旧を並べて実行し、ぷちるの 8 つの欲求の差 0.0)。テスト 42 件通過。**ぷちるだけ**切り替え(crontab 1 行 + MCP 設定)。crontab の控えは `~/petit_claude/config/crontab.bak_20261006_before_desire_split` |
 
 ### わかったこと
 
 - 部品の既定値は `~/petit_data` なので、MCP 設定の `env` に `PETIT_DATA_DIR` を足す必要がある(notes は `CHARACTER_ID` だけだった)
 - relations の部品は、道具の説明文が「`'arisan'`(ありさん)」から「`'owner'`(人間のオーナー)」に変わっている。そのまま切り替えると、ぷちたちが `owner` という別のキーに書きはじめて、関係性のデータが 2 つに割れるおそれがある → 部品側に「オーナーの id と呼び名を環境変数で渡す」口を足してから切り替える
 - このPCの git の全体設定は会社メールの名義。`src/` に並べた部品リポには 1 本ずつ RRYZ09 の noreply を設定した(新しく clone したら毎回必要 → `setup.sh` か家の手順に入れる)
+- desire の `COMPANION_NAME` は `~/petit_claude/.env` にも入っているので、部品側に `.env` を置かなくてよい。必要なのは cron 行と MCP 設定への `PETIT_DATA_DIR` だけ
+- desire の残り(3 人切り替えのあとにやる): `scripts/create_character.py`・`backup_petit.sh`・`restore_petit.sh` が旧パス(`desire-system/`)を直書きしている
+- この PC の git の全体設定は 10/6 に RRYZ09 の noreply へ変更した(控え `~/.gitconfig.bak_20261006`)
