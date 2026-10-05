@@ -33,3 +33,12 @@ repositories:
     type: git
     url: https://github.com/PetitOnes/m5-petit-switchbot.git
     version: main
+  # 声(TTS)と聞き取り(ASR)。GPU なしでも動く。別の PC に置く場合は、その PC でこの 2 つだけ取ればよい
+  m5-petit-speech:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-speech.git
+    version: develop
+  m5-petit-voice-recognition:
+    type: git
+    url: https://github.com/PetitOnes/m5-petit-voice-recognition.git
+    version: main
