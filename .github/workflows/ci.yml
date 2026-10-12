@@ -75,3 +75,25 @@ jobs:
         run: |
           set -e
           for f in $(git ls-files '*.json'); do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; done
+
+  naming:
+    name: branch / PR title
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: branch 名(Conventional Branch)
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if ! echo "$BRANCH" | grep -Eq '^(feat|feature|fix|bugfix|hotfix|release|chore|docs|refactor|test|ci|ai|claude|codex|copilot|cursor)/[a-z0-9]+([.-][a-z0-9]+)*$'; then
+            echo "::error::branch 名 '$BRANCH' が規則に合いません。<type>/<小文字-ハイフン> の形に(CONTRIBUTING.md)"
+            exit 1
+          fi
+      - name: PR の題(Conventional Commits)
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          if ! echo "$TITLE" | grep -Eq '^(feat|fix|docs|chore|refactor|test|ci|perf|build|style|revert)(\([a-z0-9._/-]+\))?!?: .+'; then
+            echo "::error::PR の題 '$TITLE' が規則に合いません。'feat(scope): 何をしたか' の形に(CONTRIBUTING.md)"
+            exit 1
+          fi

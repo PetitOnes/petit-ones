@@ -27,7 +27,7 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 
 ## 直すときの流れ
 
-1. **branch を切って PR**。main に直接 push できるのは世話人だけ。マージも世話人だけ
+1. **branch を切って PR**。main に直接 push できるのは世話人だけ。マージも世話人だけ。branch 名は `claude/<説明>`(Conventional Branch。人が切るときは `feat/` `fix/` `chore/` など)、commit と PR の題は Conventional Commits(`feat(scope): …` `fix: …` `docs: …` `chore: …`。本文は日本語でよい)。くわしくは CONTRIBUTING.md
 2. 動いている家に影響する変更(cron の形、プロンプト、設定ファイルの形、記憶 DB のスキーマ)は、PR の「注意してほしいこと」に書く。後方互換を壊すなら移行手順も
 3. 新しい部品や設定の項目を足したら、README(短く)か `docs/`(くわしく)に一行足す。`scripts/setup_house.py` / `create_character.py` が作るものを変えたら、そちらも直す
 
