@@ -73,9 +73,19 @@ uv run python scripts/create_character.py puchitaro Puchitaro "#f5956e" puchitar
 Flash the [firmware](https://github.com/PetitOnes/m5-petit-firmware) onto the body, let the Petit say hello once in an interactive session, and the cron-driven autonomous life begins.
 Details: [docs/en/setup.md](docs/en/setup.md). The thinking behind it: chapter 8 of the human book in the [Petit Textbook](https://github.com/PetitOnes/petit-textbook) (Japanese).
 
-## 🏠 How it works
+## 🏠 How it works (local edition)
 
-<p align="center"><img src="docs/img/overview.svg" width="860" alt="body, brain, house"></p>
+There are two ways to welcome a Petit. This repository is the **local** one.
+
+| | Local Petit | Cloud Petit |
+|---|---|---|
+| Where the brain runs | **your own PC** (this repository) | in the cloud, run by the team |
+| What you need | a PC, an M5Stack CoreS3, Claude Code | just a phone and the app; the team delivers the body |
+| For whom | people who want to build and raise one themselves | **foster parents** (from November 2026) |
+
+For the cloud Petit, see [Welcoming a Petit](https://petitones.github.io/#welcome) on the official site (Japanese). Below is how the local edition works.
+
+<p align="center"><img src="docs/img/overview.svg" width="860" alt="body, brain, house (local edition)"></p>
 
 - **Body**: M5Stack CoreS3. Shows a face, speaks, sees through the camera, feels touch, motion and light
 - **Brain**: Claude Code. Wakes every 30 minutes, checks its desires, looks, feels, thinks, speaks, remembers. Talks to the body and the memory over MCP

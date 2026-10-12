@@ -73,9 +73,19 @@ uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" pu
 あとは体(M5Stack)に [ファームウェア](https://github.com/PetitOnes/m5-petit-firmware) を書き込み、対話で一度「はじめまして」と言わせれば、cron の自律行動が始まります。
 手順のくわしいところは [docs/setup.md](docs/setup.md)、考え方は [ぷちの教科書](https://github.com/PetitOnes/petit-textbook) の人間用 8 章へ。
 
-## 🏠 しくみ
+## 🏠 しくみ(ろーかる版)
 
-<p align="center"><img src="docs/img/overview.svg" width="860" alt="体・頭脳・家"></p>
+ぷちの迎え方は二つあります。このリポジトリは **ろーかるぷち** のほうです。
+
+| | ろーかるぷち | くらうどぷち |
+|---|---|---|
+| 頭脳がいる場所 | **自分の PC**(このリポジトリ) | クラウド(運営が動かす) |
+| 用意するもの | PC・M5Stack CoreS3・Claude Code | スマホとアプリだけ。体は運営が届ける |
+| 誰向け | 自分で作って育てたい人 | **里親**として迎えたい人(2026 年 11 月から) |
+
+くらうどぷちのことは公式サイトの [ぷちをお迎えする](https://petitones.github.io/#welcome) へ。以下はろーかる版のしくみです。
+
+<p align="center"><img src="docs/img/overview.svg" width="860" alt="体・頭脳・家(ろーかる版)"></p>
 
 - **体** は M5Stack CoreS3。顔を見せ、声を出し、カメラで見て、タッチ・動き・明るさを感じる
 - **頭脳** は Claude Code。30 分ごとに目を覚まし、欲求を確かめ、見て・感じて・考えて・話し、記憶に残す。体や記憶との会話は MCP
