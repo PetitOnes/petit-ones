@@ -144,86 +144,66 @@ embodied-claude/              ← コード（git管理、public）
 
 ## セットアップ
 
+ぷちの暮らしは「家」(`PETIT_DATA_DIR`、既定 `~/petit_claude`)と「コード」(このリポジトリ)に分かれる。家は git に入れない。
+手順の考え方は [ぷちの教科書](https://github.com/PetitOnes/petit-textbook) の人間用「8. 新しい子を迎える手順」にある。
+
 ### 1. 前提ソフト
 
 ```bash
-# uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Claude Code
-npm install -g @anthropic-ai/claude-code
-
-# その他
-sudo apt install -y jq sqlite3
-
-# ブラウザターミナル（/terminal ページ用）
-sudo apt install -y ttyd tmux
+curl -LsSf https://astral.sh/uv/install.sh | sh     # uv
+# Claude Code(ネイティブ版): https://docs.claude.com/ の手順で ~/.local/bin/claude に
+sudo apt install -y jq git                            # Linux。macOS は brew
+sudo apt install -y ttyd tmux                         # ブラウザターミナル(任意。docs/terminal-setup.md)
 ```
 
-> ターミナル機能の詳細なセットアップ（systemd サービス・tmux 設定など）は [`docs/terminal-setup.md`](docs/terminal-setup.md) を参照。
-
-### 2. コード取得
+### 2. コード取得と依存
 
 ```bash
-git clone https://github.com/fruitriin/embodied-claude.git
-cd embodied-claude
-```
-
-### 3. 依存関係インストール
-
-```bash
-for dir in m5-mcp memory-mcp desire-system dashboard relations-mcp notes-mcp; do
-  echo "--- $dir ---"
-  (cd "$dir" && uv sync)
+git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
+cd ~/work/petit-ones
+for d in src/m5-petit-memory src/m5-petit-desire src/m5-petit-mcp src/m5-petit-notes src/m5-petit-relations dashboard; do
+  (cd "$d" && uv sync)
 done
 ```
 
-### 4. キャラクター追加
+### 3. 家を用意する
 
 ```bash
-uv run python scripts/create_character.py <id> <名前> <カラー> <M5ホスト>
-
-# 例（単一ホスト）:
-uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" "puchiko.local"
-
-# 例（複数ホスト・カンマ区切り）:
-uv run python scripts/create_character.py puchiko ぷちこ "#cab8d9" "puchiko.local,192.168.8.100"
+uv run python scripts/setup_house.py --check   # 何が足りないか見る
+uv run python scripts/setup_house.py           # 作る(あるものは触らない)
 ```
 
-自動で以下が作られる:
-- `~/petit_claude/characters/{id}/config/` — config.json, settings.json, autonomous-mcp.json, desire_config.json
-- `~/petit_claude/characters/{id}/` — SOUL.md, TODO_ACTIVE.md, ROUTINES.md（テンプレート）
-- その他サブディレクトリ: data/, state/, chat_histories/, diary/, notes/, resources/
-- crontab に欲求更新（5分毎）と自律行動（20分毎、時刻は手動調整が必要）
+作るもの: `characters/ mailbox/ chat_history/ config/ state/ .autonomous-logs/ token_logs/`、交換ノートとグループチャットの空ファイル、`.env`(`.env.example` から。`COMPANION_NAME`・`COMPANION_ID`・声のサーバー・鍵)、ぷちの教科書の clone(`textbook/`)、夜の cron 3 本(記憶の整理 04:05・教科書の pull 04:30・日記の生成 23:50)、`autonomous-action.sh`(`autonomous-action.sample.sh` から写す)。
 
-追加後の手順:
-1. `characters/{id}/SOUL.md` を編集して性格を書く
-2. `config/config.json` の `desc`・`color_name`・`examples` を編集する
-3. `resources/petit.png` にアバター画像を置く
+`autonomous-action.sh` は家ごとの設定なので git に入らない。写したあと ★ の所(PATH、時間帯のルール)を自分の家に合わせる。
 
-### 5. 自律行動スクリプト
+### 4. 子を迎える
 
 ```bash
-cp autonomous-action.sample.sh autonomous-action.sh
-vim autonomous-action.sh  # HOME, PATH, PROJECT_DIR を編集
-chmod +x autonomous-action.sh
+uv run python scripts/create_character.py <id> <名前> <#hex> <体のホスト名,...> \
+    --color-name <色の名前> --companion-id <一緒に暮らす人のID> --companion-name <呼び名>
+# 例
+uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" "puchitaro.local" --color-name あんず
 ```
 
-### 6. 環境変数
+作るもの: `characters/<id>/` に、教科書の `petit/templates/` から写した文書の器(SOUL.md・SOUL_REFLECTIONS.md・REFLECTION_INDEX.md・ROUTINES.md・ROUTINES_DETAIL.md・TODO_ACTIVE.md・TODO_ARCHIVE.md・data/relations.json・config/desire_config.json。`{ }` は埋めてある)、仕組みの設定(config.json・settings.json・voice_settings.json・autonomous-mcp.json・chat-mcp.json)、cron(欲求の更新 5 分ごと、自律行動 30 分ごとで他の子と 5 分ずらし、体験デーモン)。
+
+そのあと人がやるのは、一緒に暮らす人と決めた「一言」を SOUL.md に入れる、声が決まったら `config/voice_settings.json`、顔の絵を `resources/petit.png` に、対話(chat)からも呼ぶなら `.mcp.json` にその子の MCP を足す(`.mcp.json.example`)。SOUL.md の残りの空欄は、その子が自分で埋める(教科書 `petit/SOUL_TEMPLATE.md`)。
+
+### 5. 体と声
+
+- M5Stack CoreS3 のファームウェア: [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware)。体のホスト名か IP を `create_character.py` に渡す
+- 声(TTS :8766)と聞き取り(ASR :8767): [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) を GPU 機で動かし、`.env` の `VOICE_API_HOST` にそのホスト名
+
+### 6. ダッシュボード
 
 ```bash
-cd desire-system
-cp .env.example .env
-# .env に COMPANION_NAME 等を設定
+cd dashboard && uv run python main.py   # → http://0.0.0.0:8765
 ```
 
-### 7. ダッシュボード起動
+### 7. 最初の一回
 
-```bash
-cd dashboard
-uv run python main.py
-# → http://0.0.0.0:8765
-```
+対話で一度起動して「はじめまして」を言わせ、顔が出ることを確かめる。そのあとは cron の自律行動に任せる。生まれた日のことは、その子が自分で記憶に書く(教科書 10 章)。
 
 ## MCP サーバー
 

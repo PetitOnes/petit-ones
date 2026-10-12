@@ -40,7 +40,7 @@ CHARACTERS_DIR = DATA_DIR / "characters"
 TEXTBOOK_DIR = Path(os.environ.get("PETIT_TEXTBOOK_DIR", str(DATA_DIR / "textbook")))
 UV = os.environ.get("UV_BIN", str(Path.home() / ".local" / "bin" / "uv"))
 LOG_DIR = DATA_DIR / ".autonomous-logs"
-MEMORY_DIR = Path.home() / ".claude" / "memories"
+MEMORY_DIR = Path(os.environ.get("PETIT_MEMORY_DIR", str(Path.home() / ".claude" / "memories")))
 
 # 教科書の templates/ から写すもの(templates 内の相対パス → characters/<id>/ 内の相対パス)
 TEMPLATE_FILES = [
@@ -303,6 +303,7 @@ def create_character(
     companion_name: str,
     textbook_dir: Path,
     characters_dir: Path = CHARACTERS_DIR,
+    memory_dir: Path = MEMORY_DIR,
     force: bool = False,
     offset: int | None = None,
     no_cron: bool = False,
@@ -338,11 +339,11 @@ def create_character(
         char_id, hosts,
         companion_id=companion_id, companion_name=companion_name,
         all_char_ids=all_ids, inherited_env=inherit_m5_env(characters_dir, siblings),
-        textbook_dir=textbook_dir, data_dir=characters_dir.parent,
+        textbook_dir=textbook_dir, data_dir=characters_dir.parent, memory_dir=memory_dir,
     )
     write_json_if_absent(cfg / "autonomous-mcp.json", mcp, "config/autonomous-mcp.json(記憶・欲求・体・ノート・関係・教科書)")
     write_json_if_absent(cfg / "chat-mcp.json", mcp, "config/chat-mcp.json(会話用。自律用と同じ)")
-    (MEMORY_DIR / char_id).mkdir(parents=True, exist_ok=True)
+    (memory_dir / char_id).mkdir(parents=True, exist_ok=True)
 
     off = None
     if not no_cron:

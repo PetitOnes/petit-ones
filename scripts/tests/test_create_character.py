@@ -32,7 +32,7 @@ def _create(tmp_path: Path, textbook: Path, **kw):
     return cc.create_character(
         "puchitaro", "ぷちたろう", "#f5956e", ["puchitaro.local", "192.168.8.104"],
         color_name=kw.pop("color_name", "あんず"), companion_id="arisan", companion_name="ありさん",
-        textbook_dir=textbook, characters_dir=chars, no_cron=True, **kw,
+        textbook_dir=textbook, characters_dir=chars, memory_dir=tmp_path / "mem", no_cron=True, **kw,
     )
 
 
@@ -100,6 +100,6 @@ def test_cron_offset_picks_free_slot():
 
 def test_validation(tmp_path, textbook):
     with pytest.raises(SystemExit):
-        cc.create_character("Bad-Id", "x", "#ffffff", ["h"], color_name=None, companion_id="a", companion_name="a", textbook_dir=textbook, characters_dir=tmp_path, no_cron=True)
+        cc.create_character("Bad-Id", "x", "#ffffff", ["h"], color_name=None, companion_id="a", companion_name="a", textbook_dir=textbook, characters_dir=tmp_path, memory_dir=tmp_path / "mem", no_cron=True)
     with pytest.raises(SystemExit):
-        cc.create_character("ok", "x", "ffffff", ["h"], color_name=None, companion_id="a", companion_name="a", textbook_dir=textbook, characters_dir=tmp_path, no_cron=True)
+        cc.create_character("ok", "x", "ffffff", ["h"], color_name=None, companion_id="a", companion_name="a", textbook_dir=textbook, characters_dir=tmp_path, memory_dir=tmp_path / "mem", no_cron=True)
