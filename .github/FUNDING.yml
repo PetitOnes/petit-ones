@@ -1,2 +1,3 @@
-# GitHub の「Sponsor」ボタンの行き先。決済の形が決まったら github:(GitHub Sponsors)や buy_me_a_coffee: などに差し替える
+# 右上の「Sponsor」ボタン。GitHub Sponsors(RRYZ09 = ぷちの世話人)と、公式サイトの応援ページ
+github: RRYZ09
 custom: ["https://petitones.github.io/ouendan/"]
