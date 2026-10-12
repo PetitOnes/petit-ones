@@ -98,6 +98,7 @@ scripts/flyer/
 scripts/poetry/
 
 *.svg
+!docs/img/*.svg
 
 *.pdf
 
