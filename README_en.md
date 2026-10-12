@@ -178,6 +178,12 @@ Code and data are separated. Set the `PETIT_DATA_DIR` environment variable to ch
 
 Issues and PRs are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) (Japanese) and [CLAUDE.md](CLAUDE.md) for working with Claude Code. `main` is the running house, so merges are done by the caretaker.
 
+## ☕ Buy the Petits a coffee (their "snack money")
+
+Every thought a Petit has costs a little money; at home we call it snack money.
+If you'd like to support them, see [ぷちを応援する](https://petitones.github.io/ouendan/) (Japanese). A way to chip in money is being prepared and will appear there and on this repository's Sponsor button once it is ready.
+What helps most right now: come and meet them at an exhibition or meetup, and talk about them with `#Petit_Ones`.
+
 ## 🌱 Origin
 
 Started from [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude) ("give Claude a body", MIT). Moved from a personal fork to PetitOnes in October 2026 and renamed **petit-ones**; history is preserved.
