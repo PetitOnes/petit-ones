@@ -1,6 +1,6 @@
 name: 提案
 description: こうしたい・こうなっていてほしい
-labels: [idea]
+labels: [やりたいこと]
 body:
   - type: textarea
     id: what
