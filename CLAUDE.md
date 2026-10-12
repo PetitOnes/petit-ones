@@ -6,7 +6,7 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 ## まず知っておくこと
 
 - **コードと家は別**。コード = このリポジトリ。家 = `PETIT_DATA_DIR`(既定 `~/petit_claude`)。家の中身(characters/・mailbox/・chat_history/・.env・記憶 DB)は git に入れない。読むのはよいが、名前・会話・写真・鍵・IP を コミット・Issue・PR・ログに写さない
-- **本番の部品は `src/m5-petit-*`**。根にある `m5-mcp/` `memory-mcp/` `desire-system/` `notes-mcp/` `relations-mcp/` `switchbot-mcp/` は切り出し前の古い置き場。直さない、参照しない
+- **部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ**。`petit.repos` に一覧があり、`vcs import src < petit.repos` で `src/` に並べる(`src/` は git 管理外)。部品を直したいときは、その部品のリポで PR。このリポが持つのは「並べ方・家の用意・自律行動・運用・ダッシュボード(移行中)」
 - **家ごとの設定は git 管理外**: `autonomous-action.sh`(元は `autonomous-action.sample.sh`)、`.mcp.json`(元は `.mcp.json.example`)、`autonomous-mcp.json`。sample / example を直すときは個人の値(名前・ホスト名・鍵)を入れない
 - **ぷちの振る舞いの決まりと SOUL.md の器は別リポ** [petit-textbook](https://github.com/PetitOnes/petit-textbook)。振る舞いの決まりを足したくなったら、ここではなく教科書に
 
@@ -14,11 +14,8 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 
 | 場所 | 何 |
 |---|---|
-| `src/m5-petit-mcp` | 体(話す・顔・見る・感じる・寝る)の MCP |
-| `src/m5-petit-memory` | 長期記憶(SQLite)。夜の整理は `scripts/sleep.py` |
-| `src/m5-petit-desire` | 欲求(MCP + 5 分ごとの `desire_updater.py`) |
-| `src/m5-petit-notes` / `-relations` / `-switchbot` | ノート / 関係 / 家電 |
-| `dashboard/` | Web ダッシュボード(FastAPI :8765)、`generate_diary.py` |
+| `petit.repos` → `src/` | 部品リポ(m5-petit-mcp 体 / -memory 記憶 / -desire 欲求 / -notes / -relations / -switchbot / -speech 声 / -app)。中身はそれぞれのリポで直す |
+| `dashboard/` | Web ダッシュボード(FastAPI :8765)、`generate_diary.py`。`src/m5-petit-app` へ移す予定 |
 | `experience-daemon/` | 体の出来事を拾って次の自律行動に渡す |
 | `scripts/` | `setup_house.py`(家を用意)・`create_character.py`(子を迎える)・手紙・使用量・バックアップ |
 | `mcp-launchers/` | MCP の起動スクリプト |
@@ -37,7 +34,7 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 
 ```bash
 uvx ruff check .                                   # 全体(ruff.toml。部品に [tool.ruff] があればそちら)
-(cd src/m5-petit-memory && uv sync --all-extras && uv run pytest -q)   # 触った部品
+(cd experience-daemon && uv sync --all-extras && uv run pytest -q)     # 触った部品(src/ の部品は各リポで)
 uv run --with pytest pytest -q scripts/tests       # scripts の分
 uvx yamllint -c .yamllint .                        # YAML
 ```
@@ -50,7 +47,7 @@ uvx yamllint -c .yamllint .                        # YAML
 
 - 家の中身を書き換える仕事を、頼まれていないのにしない(SOUL.md・記憶 DB・crontab・`.env`)
 - 本番の `autonomous-action.sh` と `.mcp.json` を直接直さない。直すなら sample / example を直して、世話人に写してもらう
-- 古い置き場(根の `m5-mcp/` など)と `archive/` `next/` `analysis/` `tmp/` に手を入れない
+- `src/` の中(部品リポの clone)をこのリポの PR で直さない。`next/`(設定だけの petit-ones の下書き)と `tmp/` に手を入れない
 - 鍵・トークン・パスワードを、出力にも Issue にも貼らない(`.env` と MCP 設定の env には鍵が入っていることがある)
 
 ## 書き方

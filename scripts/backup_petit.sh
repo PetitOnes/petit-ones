@@ -27,7 +27,6 @@ echo "  .claude/: done"
 mkdir -p "$DEST/dotenv"
 for src_dest in \
     "$HOME/petit_claude/.env:petit_claude.env" \
-    "$HOME/work/embodied-claude/desire-system/.env:desire-system.env" \
     "$HOME/work/garmin-health-mcp/.env:garmin-health-mcp.env"
 do
     src="${src_dest%%:*}"

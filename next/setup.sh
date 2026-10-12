@@ -11,7 +11,7 @@ command -v vcs >/dev/null || { echo "vcs が要ります: pip install vcstool (�
 command -v uv  >/dev/null || { echo "uv が要ります: https://docs.astral.sh/uv/" >&2; exit 1; }
 
 mkdir -p "$ROOT/src"
-vcs import "$ROOT/src" < "$ROOT/petit.repos"
+vcs import "$ROOT/../src" < "$ROOT/../petit.repos"
 
 for d in "$ROOT"/src/*/; do
   [ -f "$d/pyproject.toml" ] || continue

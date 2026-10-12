@@ -1,7 +1,7 @@
 ---
 description: "交換ノートに書き込む。ぷちてゃ・ぷちこ・ぷちる・ありさんみんなで使える。自律中にも使える。"
 argument-hint: "<内容>"
-allowed-tools: Bash(python3 /home/cube-petit/work/embodied-claude/scripts/write_notebook.py *), Read(/home/cube-petit/petit_claude/chat_history/exchange_notebook.json)
+allowed-tools: Bash(python3 scripts/write_notebook.py *), Read(~/petit_claude/chat_history/exchange_notebook.json)
 ---
 
 交換ノートにエントリを書き込む。

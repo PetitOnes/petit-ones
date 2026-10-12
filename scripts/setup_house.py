@@ -11,7 +11,7 @@
   - 夜の cron 3 本: 記憶の整理 04:05、教科書の pull 04:30、日記の生成 23:50
 確かめるもの(足りなければ言うだけ):
   - uv / claude / jq / python3 / git
-  - src/m5-petit-*/ と dashboard/ の依存(uv sync 済みか)
+  - 部品リポが src/ に並んでいるか(無ければ vcs import src < petit.repos)、依存(uv sync 済みか)
   - autonomous-action.sh(無ければ sample から写す)
 
 使い方:
@@ -37,6 +37,7 @@ UV = os.environ.get("UV_BIN", str(Path.home() / ".local" / "bin" / "uv"))
 HOUSE_DIRS = ["characters", "mailbox", "chat_history", "config", "state", ".autonomous-logs", "token_logs"]
 CHAT_FILES = ["exchange_notebook.json", "group_chat.json", "trio_chat.json"]
 COMPONENTS = ["src/m5-petit-memory", "src/m5-petit-desire", "src/m5-petit-mcp", "src/m5-petit-notes", "src/m5-petit-relations", "dashboard"]
+REPOS_FILE = "petit.repos"  # 部品リポの一覧(vcs import src < petit.repos)
 COMMANDS = ["uv", "claude", "jq", "python3", "git"]
 
 
@@ -122,11 +123,30 @@ def check_commands(r: Report) -> None:
             r.need(f"コマンド {c}", hint)
 
 
+def ensure_src(project_dir: Path, r: Report) -> None:
+    """部品リポを src/ に並べる(vcs import)。無いものだけ取る"""
+    missing = [c for c in COMPONENTS if c.startswith("src/") and not (project_dir / c).is_dir()]
+    if not missing:
+        r.ok("部品リポ src/(petit.repos)")
+        return
+    cmd = f"pip install vcstool && vcs import src < {REPOS_FILE}"
+    if r.check_only or not shutil.which("vcs"):
+        r.need("部品リポ src/ " + " ".join(missing), f"(cd {project_dir} && {cmd})")
+        return
+    (project_dir / "src").mkdir(exist_ok=True)
+    with open(project_dir / REPOS_FILE, encoding="utf-8") as f:
+        res = subprocess.run(["vcs", "import", "src"], stdin=f, cwd=project_dir, capture_output=True, text=True, check=False)
+    if res.returncode == 0:
+        r.made("部品リポを src/ に並べた(vcs import)")
+    else:
+        r.need("部品リポ src/", f"vcs import に失敗: {res.stderr.strip()[-200:]}")
+
+
 def check_components(project_dir: Path, r: Report) -> None:
     for comp in COMPONENTS:
         d = project_dir / comp
         if not d.is_dir():
-            r.need(comp, "リポジトリが欠けている(git pull)")
+            r.need(comp, f"vcs import src < {REPOS_FILE}" if comp.startswith("src/") else "リポジトリが欠けている(git pull)")
         elif (d / ".venv").is_dir():
             r.ok(f"依存 {comp}")
         else:
@@ -191,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"家: {data_dir}  コード: {PROJECT_DIR}" + ("  (見るだけ)" if a.check else ""))
     print("[前提]")
     check_commands(r)
+    ensure_src(PROJECT_DIR, r)
     check_components(PROJECT_DIR, r)
     ensure_action_script(PROJECT_DIR, r)
     print("[家のフォルダ]")

@@ -78,10 +78,10 @@ allowed-tools: all
 
 ```bash
 # ユーザー発言を記録（char_id はそのキャラのID）
-python3 /home/cube-petit/work/embodied-claude/scripts/append_chat_log.py --character-id CHAR_ID --role user --text 'ARISAN_MESSAGE'
+python3 scripts/append_chat_log.py --character-id CHAR_ID --role user --text 'ARISAN_MESSAGE'
 
 # キャラ返答を記録
-python3 /home/cube-petit/work/embodied-claude/scripts/append_chat_log.py --character-id CHAR_ID --role CHAR_ID --text 'CHAR_REPLY'
+python3 scripts/append_chat_log.py --character-id CHAR_ID --role CHAR_ID --text 'CHAR_REPLY'
 ```
 
 - textの中にシングルクォートがある場合は `'"'"'` でエスケープすること

@@ -45,7 +45,6 @@ read -r ans
 # .env ファイル
 for src_dest in \
     "petit_claude.env:$HOME/petit_claude/.env" \
-    "desire-system.env:$HOME/work/embodied-claude/desire-system/.env" \
     "garmin-health-mcp.env:$HOME/work/garmin-health-mcp/.env"
 do
     src="$SRC/dotenv/${src_dest%%:*}"

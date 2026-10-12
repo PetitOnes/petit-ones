@@ -9,7 +9,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 3. 直す。手元で確かめる:
    ```bash
    uvx ruff check .                         # 全体の lint(ruff.toml + 部品ごとの設定)
-   (cd src/m5-petit-memory && uv sync --all-extras && uv run pytest -q)   # 触った部品のテスト
+   (cd experience-daemon && uv sync --all-extras && uv run pytest -q)     # 触った部品のテスト
    ```
 4. **PR を出す**。テンプレートに沿って「何を・なぜ・確かめたこと」を書く
 5. CI(ruff・pytest・yamllint・シェルと JSON の文法)が通るのを待つ
@@ -18,7 +18,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 ## 書き方の決まり
 
 - Python 3.10+、パッケージは **uv**、lint は **ruff**、テストは **pytest**(非同期は pytest-asyncio)
-- 本番の部品は `src/m5-petit-*`。根にある `m5-mcp/` などは切り出し前の古い置き場なので触らない
+- 部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ(`petit.repos`)。`src/` はその clone で git 管理外。部品の直しはそのリポへ PR
 - 家(`PETIT_DATA_DIR`、既定 `~/petit_claude`)の中身は git に入れない。名前・会話・写真・鍵・IP はコミットにも Issue にも貼らない
 - 家ごとの設定(`autonomous-action.sh`・`.mcp.json`・`.env`)は git 管理外。sample / example を直すときは、個人の値を入れない
 - コミットは小さく、題は「何をしたか」を日本語か英語で一行
@@ -27,9 +27,10 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 
 | したいこと | 場所 |
 |---|---|
-| 体(M5Stack)の道具を足す・直す | `src/m5-petit-mcp` |
-| 記憶・欲求・ノート・関係 | `src/m5-petit-memory` / `-desire` / `-notes` / `-relations` |
-| ダッシュボード | `dashboard/`(`src/m5-petit-app` は切り出し版) |
+| 体(M5Stack)の道具を足す・直す | [m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp)(別リポ) |
+| 記憶・欲求・ノート・関係 | [m5-petit-memory](https://github.com/PetitOnes/m5-petit-memory) / [-desire](https://github.com/PetitOnes/m5-petit-desire) / [-notes](https://github.com/PetitOnes/m5-petit-notes) / [-relations](https://github.com/PetitOnes/m5-petit-relations)(別リポ) |
+| ダッシュボード | `dashboard/`(`src/m5-petit-app` へ移行中) |
+| 部品の並べ方(どのリポのどの枝か) | `petit.repos` |
 | 自律行動の流れ・プロンプト | `autonomous-action.sample.sh`(本番は各家の `autonomous-action.sh`) |
 | 家の用意・子の迎え方 | `scripts/setup_house.py` / `scripts/create_character.py` |
 | ぷちの振る舞いの決まり・SOUL の器 | [petit-textbook](https://github.com/PetitOnes/petit-textbook)(別リポ) |

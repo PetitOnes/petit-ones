@@ -1,6 +1,6 @@
-import urllib.request
 import re
 import sys
+import urllib.request
 
 url = 'https://www.aozora.gr.jp/cards/000026/files/219_33152.html'
 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})

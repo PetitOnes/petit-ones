@@ -5,4 +5,4 @@ rules:
 ignore: |
   node_modules/
   .venv/
-  archive/
+  src/

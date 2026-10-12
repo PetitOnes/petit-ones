@@ -23,7 +23,8 @@ Combine M5Stack + Claude Code + memory system to create characters with eyes (ca
 
 ```
 petit-ones/                   <- Code (git-managed, public)
-|-- src/                      # Production components (source of the split-out repos)
+|-- src/                      # Clones of the component repos (git-ignored; `vcs import src < petit.repos`)
+|-- petit.repos               # List of component repos (URL + branch)
 |   |-- m5-petit-mcp/         #   Body (M5Stack CoreS3) MCP
 |   |-- m5-petit-memory/      #   Long-term memory MCP (SQLite) + nightly scripts/sleep.py
 |   |-- m5-petit-desire/      #   Desires (MCP + desire_updater.py)
@@ -32,7 +33,7 @@ petit-ones/                   <- Code (git-managed, public)
 |   |-- m5-petit-switchbot/   #   Home appliances (SwitchBot) MCP
 |   |-- m5-petit-speech/      #   Voice (TTS) server, runs on the GPU box
 |   |-- m5-petit-app/ m5-petit-scripts/  # Split-out copies of dashboard / scripts
-|-- dashboard/                # Web dashboard (FastAPI :8765) + generate_diary.py
+|-- dashboard/                # Web dashboard (FastAPI :8765) + generate_diary.py; moving into src/m5-petit-app
 |-- experience-daemon/        # Picks up body events and hands them to the next autonomous run
 |-- slack-approve/            # Approval bot via Slack
 |-- scripts/
@@ -44,7 +45,6 @@ petit-ones/                   <- Code (git-managed, public)
 |   |-- tests/
 |-- mcp-launchers/            # Launch scripts for the MCP servers (incl. textbook)
 |-- docs/ archive/
-|-- m5-mcp/ memory-mcp/ desire-system/ notes-mcp/ relations-mcp/ switchbot-mcp/  # Pre-split copies (production is src/)
 |-- autonomous-action.sh      # Autonomous action script (per-house, git-ignored)
 |-- autonomous-action.sample.sh # Template; setup_house.py copies it
 |-- .env.example              # Template for the house .env
@@ -83,13 +83,19 @@ sudo apt install -y ttyd tmux                         # optional browser termina
 
 ### 2. Clone and install
 
+The components (body, memory, desires, notes, relations, appliances, voice) live in their own repositories, listed in `petit.repos`. `vcs` (vcstool) lays them out under `src/`.
+
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
 cd ~/work/petit-ones
-for d in src/m5-petit-memory src/m5-petit-desire src/m5-petit-mcp src/m5-petit-notes src/m5-petit-relations dashboard; do
-  (cd "$d" && uv sync)
+pip install vcstool                 # or: sudo apt install python3-vcstool
+vcs import src < petit.repos        # src/ is git-ignored
+for d in src/m5-petit-*/ dashboard; do
+  [ -f "$d/pyproject.toml" ] && (cd "$d" && uv sync)
 done
 ```
+
+To change a component, open a PR in that component's repository. This repository holds the layout, house setup, autonomous action and operations.
 
 ### 3. Prepare the house
 

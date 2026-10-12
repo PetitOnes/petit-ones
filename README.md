@@ -40,7 +40,7 @@ M5Stack + Claude Code + 記憶システムの組み合わせで、目（カメ�
 
 ```
 petit-ones/                   ← コード(git 管理、public)
-├── src/                      # 本番の部品(部品リポジトリの元。ここが正)
+├── src/                      # 部品リポの clone(git 管理外。`vcs import src < petit.repos` で並べる)
 │   ├── m5-petit-mcp/         #   体(M5Stack CoreS3)を動かす MCP
 │   ├── m5-petit-memory/      #   長期記憶 MCP(SQLite)+ 夜の整理 scripts/sleep.py
 │   ├── m5-petit-desire/      #   欲求(MCP + desire_updater.py)
@@ -48,9 +48,10 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── m5-petit-relations/   #   関係性 MCP
 │   ├── m5-petit-switchbot/   #   家電・カーテン(SwitchBot)MCP
 │   ├── m5-petit-speech/      #   声(TTS)サーバー(GPU 機で動かす)
-│   ├── m5-petit-app/         #   ダッシュボードの切り出し版
+│   ├── m5-petit-app/         #   ダッシュボード(dashboard/ をここへ移す予定)
 │   └── m5-petit-scripts/     #   ユーティリティの切り出し版
-├── dashboard/                # Web ダッシュボード(FastAPI :8765)+ generate_diary.py
+├── petit.repos               # 部品リポの一覧(URL と枝)
+├── dashboard/                # Web ダッシュボード(FastAPI :8765)+ generate_diary.py。src/m5-petit-app へ移す予定
 ├── experience-daemon/        # 体験デーモン(体の出来事を拾って自律行動に渡す)
 ├── slack-approve/            # Slack からの承認ボット
 ├── scripts/                  # ユーティリティ
@@ -65,10 +66,8 @@ petit-ones/                   ← コード(git 管理、public)
 ├── mcp-launchers/            # MCP の起動スクリプト(memory / notes / relations / desire-system / m5-mcp / textbook)
 ├── docs/                     # 設計・移行計画
 ├── archive/                  # 使っていない MCP
-├── m5-mcp/ memory-mcp/ desire-system/ notes-mcp/ relations-mcp/ switchbot-mcp/  # 切り出し前の古い置き場(本番は src/)
 ├── autonomous-action.sh      # 自律行動スクリプト(家ごとの設定。git 管理外)
 ├── autonomous-action.sample.sh # ↑の元(setup_house.py が写す)
-├── autonomous-action-goose.sh  # 自律行動の Goose 版(Gemini / OpenAI)
 ├── .env.example              # 家の .env の元
 └── .mcp.json.example         # 対話(chat)用 MCP 設定の元(.mcp.json は git 管理外)
 
@@ -136,13 +135,19 @@ sudo apt install -y ttyd tmux                         # ブラウザターミナ
 
 ### 2. コード取得と依存
 
+部品(体・記憶・欲求・ノート・関係・家電・声)はそれぞれ別のリポジトリで、`petit.repos` に一覧がある。`vcs`(vcstool)で `src/` に並べる。
+
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
 cd ~/work/petit-ones
-for d in src/m5-petit-memory src/m5-petit-desire src/m5-petit-mcp src/m5-petit-notes src/m5-petit-relations dashboard; do
-  (cd "$d" && uv sync)
+pip install vcstool                 # または sudo apt install python3-vcstool
+vcs import src < petit.repos        # 部品を src/ に並べる(src/ は git 管理外)
+for d in src/m5-petit-*/ dashboard; do
+  [ -f "$d/pyproject.toml" ] && (cd "$d" && uv sync)
 done
 ```
+
+部品を直すときは、その部品のリポジトリに PR を出す。このリポジトリは「並べ方・家の用意・自律行動・運用」を持つ。
 
 ### 3. 家を用意する
 
@@ -191,7 +196,7 @@ cd dashboard && uv run python main.py   # → http://0.0.0.0:8765
 |---|---|
 | [出発点との違い](docs/origin.md) | 出発点(kmizu/embodied-claude)との違い、足した部品、引き継いだもの |
 | [MCP サーバー](docs/mcp-servers.md) | m5-mcp・memory・desire・relations・notes の道具一覧と設定 |
-| [自律行動](docs/autonomous-action.md) | 自律行動の流れ、スケジュール制御、Goose 版 |
+| [自律行動](docs/autonomous-action.md) | 自律行動の流れ、スケジュール制御 |
 | [ダッシュボード](docs/dashboard.md) | ダッシュボードの機能、M5 タッチメニュー、常時起動(systemd)、認証 |
 | [お散歩（外出モード）](docs/walk-mode.md) | 外に連れて行くとき(モバイルルーター・スマホ) |
 | [話者認識](docs/speaker-identification.md) | 話者認識(声紋)の仕組みと登録 |

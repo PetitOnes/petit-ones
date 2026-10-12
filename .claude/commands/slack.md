@@ -1,7 +1,7 @@
 ---
 description: "Slackの#099_embnodied-claudeにメッセージを送る（petitclaudeボットとして）。作業完了通知や、ありさんへの連絡に使う。自律中にも使える。"
 argument-hint: "<メッセージ>"
-allowed-tools: Bash(python3 /home/cube-petit/work/embodied-claude/scripts/slack_notify.py *)
+allowed-tools: Bash(python3 scripts/slack_notify.py *)
 ---
 
 Slackにメッセージを投稿する。
@@ -9,7 +9,7 @@ Slackにメッセージを投稿する。
 ## 使い方
 
 ```bash
-python3 /home/cube-petit/work/embodied-claude/scripts/slack_notify.py "メッセージ"
+python3 scripts/slack_notify.py "メッセージ"
 ```
 
 ## ルール

@@ -27,12 +27,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # 部品(src/m5-petit-*)はそれぞれのリポの CI で確かめる。ここはこのリポにあるものだけ
         dir:
-          - src/m5-petit-memory
-          - src/m5-petit-desire
-          - src/m5-petit-notes
-          - src/m5-petit-relations
-          - src/m5-petit-app
           - experience-daemon
           - slack-approve
     defaults:

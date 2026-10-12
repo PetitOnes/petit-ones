@@ -3,5 +3,5 @@
 # stdinにJSON（.messageに内容）が来る
 MSG=$(python3 -c "import json,sys; print(json.load(sys.stdin).get('message',''))" 2>/dev/null)
 [ -z "$MSG" ] && exit 0
-python3 /home/cube-petit/work/embodied-claude/scripts/slack_notify.py "🔔 ありさん呼んでます（mainセッション）: $MSG" >/dev/null 2>&1 || true
+python3 "$CLAUDE_PROJECT_DIR"/scripts/slack_notify.py "🔔 ありさん呼んでます（mainセッション）: $MSG" >/dev/null 2>&1 || true
 exit 0
