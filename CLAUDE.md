@@ -7,7 +7,7 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 
 - **コードと家は別**。コード = このリポジトリ。家 = `PETIT_DATA_DIR`(既定 `~/petit_claude`)。家の中身(characters/・mailbox/・chat_history/・.env・記憶 DB)は git に入れない。読むのはよいが、名前・会話・写真・鍵・IP を コミット・Issue・PR・ログに写さない
 - **部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ**。`petit.repos` に一覧があり、`vcs import src < petit.repos` で `src/` に並べる(`src/` は git 管理外)。部品を直したいときは、その部品のリポで PR。このリポが持つのは「並べ方・家の用意・自律行動・運用・ダッシュボード(移行中)」
-- **家ごとの設定は git 管理外**: `autonomous-action.sh`(元は `autonomous-action.sample.sh`)、`.mcp.json`(元は `.mcp.json.example`)、`autonomous-mcp.json`。sample / example を直すときは個人の値(名前・ホスト名・鍵)を入れない
+- **家ごとの値は git に入れない**。`autonomous-action.sh` は家に依らない(git 管理)。家ごとの値は `PETIT_DATA_DIR/.env`(COMPANION_NAME など)と、任意の `PETIT_DATA_DIR/config/house.sh`。`.mcp.json`(元は `.mcp.json.example`)と各家の `autonomous-mcp.json` は git 管理外。個人の値(名前・ホスト名・鍵)をコードに入れない
 - **ぷちの振る舞いの決まりと SOUL.md の器は別リポ** [petit-textbook](https://github.com/PetitOnes/petit-textbook)。振る舞いの決まりを足したくなったら、ここではなく教科書に
 
 ## 構成(短く)
@@ -19,7 +19,8 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 | `experience-daemon/` | 体の出来事を拾って次の自律行動に渡す |
 | `scripts/` | `setup_house.py`(家を用意)・`create_character.py`(子を迎える)・手紙・使用量・バックアップ |
 | `mcp-launchers/` | MCP の起動スクリプト |
-| `autonomous-action.sample.sh` | 自律行動の本体(cron 30 分ごと、子ごとに 5 分ずらす) |
+| `autonomous-action.sh` | 自律行動の本体(cron 30 分ごと、子ごとに 5 分ずらす)。家ごとの値は .env / config/house.sh |
+| `petit.repos` | 部品リポの一覧(コミットに固定) |
 | `docs/` | くわしい説明(MCP の道具一覧、自律行動の流れ、運用、API 代) |
 
 家の中(`characters/<id>/`)の形は README の「ディレクトリ構造」と、教科書の `petit/templates/README.md`。
@@ -46,7 +47,7 @@ uvx yamllint -c .yamllint .                        # YAML
 ## やらないこと
 
 - 家の中身を書き換える仕事を、頼まれていないのにしない(SOUL.md・記憶 DB・crontab・`.env`)
-- 本番の `autonomous-action.sh` と `.mcp.json` を直接直さない。直すなら sample / example を直して、世話人に写してもらう
+- 本番の家(`~/work/petit-ones` など)の作業ツリーを直接直さない。直すのは作業用の clone で branch → PR。本番はマージ後に `git pull` するだけ
 - `src/` の中(部品リポの clone)をこのリポの PR で直さない。`next/`(設定だけの petit-ones の下書き)と `tmp/` に手を入れない
 - 鍵・トークン・パスワードを、出力にも Issue にも貼らない(`.env` と MCP 設定の env には鍵が入っていることがある)
 

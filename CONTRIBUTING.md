@@ -20,7 +20,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 - Python 3.10+、パッケージは **uv**、lint は **ruff**、テストは **pytest**(非同期は pytest-asyncio)
 - 部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ(`petit.repos`)。`src/` はその clone で git 管理外。部品の直しはそのリポへ PR
 - 家(`PETIT_DATA_DIR`、既定 `~/petit_claude`)の中身は git に入れない。名前・会話・写真・鍵・IP はコミットにも Issue にも貼らない
-- 家ごとの設定(`autonomous-action.sh`・`.mcp.json`・`.env`)は git 管理外。sample / example を直すときは、個人の値を入れない
+- 家ごとの値(`.env`・`config/house.sh`・`.mcp.json`・`autonomous-mcp.json`)は git に入れない。コードに個人の値(名前・ホスト名・鍵)を書かない
 - コミットは小さく、題は「何をしたか」を日本語か英語で一行
 
 ## どこを直せばいいか
@@ -31,7 +31,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 | 記憶・欲求・ノート・関係 | [m5-petit-memory](https://github.com/PetitOnes/m5-petit-memory) / [-desire](https://github.com/PetitOnes/m5-petit-desire) / [-notes](https://github.com/PetitOnes/m5-petit-notes) / [-relations](https://github.com/PetitOnes/m5-petit-relations)(別リポ) |
 | ダッシュボード | `dashboard/`(`src/m5-petit-app` へ移行中) |
 | 部品の並べ方(どのリポのどの枝か) | `petit.repos` |
-| 自律行動の流れ・プロンプト | `autonomous-action.sample.sh`(本番は各家の `autonomous-action.sh`) |
+| 自律行動の流れ・プロンプト | `autonomous-action.sh` |
 | 家の用意・子の迎え方 | `scripts/setup_house.py` / `scripts/create_character.py` |
 | ぷちの振る舞いの決まり・SOUL の器 | [petit-textbook](https://github.com/PetitOnes/petit-textbook)(別リポ) |
 

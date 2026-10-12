@@ -65,7 +65,6 @@ Thumbs.db
 
 # Autonomous action (contains credentials and user-specific settings)
 autonomous-mcp.json
-autonomous-action.sh
 
 # Autonomous action logs and session
 .autonomous-logs/

@@ -44,3 +44,27 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 # --- 任意 ---
 0 4 * * * bash ~/petit_claude/backup/save.sh   # バックアップ(scripts/backup_petit.sh)
 ```
+
+## 家とコードを分けて、同期する
+
+ぷちが動いている PC には、このリポジトリの checkout が **2 つ** ある。
+
+| checkout | 役 | やること |
+|---|---|---|
+| 本番(例 `~/work/petit-ones`。cron とダッシュボードが見る所) | 動いている家 | **`git pull` だけ**。手で直さない。`git status` はいつも空 |
+| 作業用(例 `~/work/petit-ones-dev`) | 直す所 | branch を切って直す → PR → マージ |
+
+同期は一方向。**作業用 → GitHub main → 本番(pull)**。
+
+- 家ごとの値はコードに書かない。`PETIT_DATA_DIR/.env`(`COMPANION_NAME`・`COMPANION_ID`・声のサーバー・鍵)と、任意の `PETIT_DATA_DIR/config/house.sh`(`USER_ROOM`、`CLAUDE_MODEL`、時間帯のルールの上書き)に置く。だから `autonomous-action.sh` は git のまま本番で動く
+- 部品は `petit.repos` でコミットに固定してある。部品を上げるときは、部品のリポで PR → マージ → `petit.repos` の `version` を新しいコミットに書き換える PR → マージ → 本番で `vcs import src < petit.repos`(固定したコミットに動く)→ その部品で `uv sync`
+- 本番で急いで直したことは、その日のうちに作業用で同じ変更を PR にする。本番の作業ツリーに差分を残さない
+- 戻すとき: 本番で `git checkout <前のタグかコミット>`。部品は `petit.repos` を戻して `vcs import`
+
+### 本番を止めない更新の順番
+
+1. 作業用で PR を作り、CI が緑になるのを待つ
+2. マージ
+3. 本番で `git pull --ff-only`。`autonomous-action.sh` は次の cron から新しいものが動く(途中の回は止まらない)
+4. 部品を上げた場合は `vcs import src < petit.repos` と `uv sync`。ダッシュボードを上げた場合は再起動(`/restart-dashboard`)
+5. 次の自律行動のログ(`PETIT_DATA_DIR/.autonomous-logs/<id>/`)を一回分見る

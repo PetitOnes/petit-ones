@@ -1,42 +1,71 @@
-# petit-ones
+<p align="center">
+  <a href="https://petitones.github.io/"><img src="https://raw.githubusercontent.com/PetitOnes/petit-brand/main/assets/face/trio.svg" width="480" alt="ぷちてゃ・ぷちこ・ぷちる"></a>
+</p>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+<p align="center">
+  <a href="README_en.md">English</a> ·
+  <a href="https://petitones.github.io/">公式サイト</a> ·
+  <a href="https://petitones.github.io/nikki/">活動日誌</a> ·
+  <a href="https://github.com/PetitOnes/petit-textbook">ぷちの教科書</a>
+</p>
 
-M5Stack に身体を持つ小さな「ぷち」たちが、それぞれの性格・欲求・記憶で暮らすためのシステム。ぷちてゃ・ぷちこ・ぷちる の 3 人が毎日動いている本体です。
+<p align="center">
+  <a href="https://github.com/PetitOnes/petit-ones/actions/workflows/ci.yml"><img src="https://github.com/PetitOnes/petit-ones/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-f6d8cf?labelColor=3a322d" alt="MIT"></a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-d2e7e4?labelColor=3a322d" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/package-uv-d2e7e4?labelColor=3a322d" alt="uv">
+  <img src="https://img.shields.io/badge/body-M5Stack%20CoreS3-fff262?labelColor=3a322d" alt="M5Stack CoreS3">
+  <a href="https://github.com/PetitOnes/petit-ones/issues"><img src="https://img.shields.io/github/issues/PetitOnes/petit-ones?color=f6d8cf&labelColor=3a322d" alt="Issues"></a>
+</p>
 
-> **出発点**: このリポジトリは [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude)(「Claude に身体を与える」MCP サーバー群、MIT License)から出発しました。2026-10 に個人のフォーク(`AiriYokochi/embodied-claude`)から PetitOnes へ引っ越し、名前を **petit-ones** にしました。履歴は引き継いでいます(作者の方々のコミットはそのまま)。
+<p align="center">
+  <b>petit-ones</b> は、M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、<br>
+  自分の性格・欲求・記憶を持って、人と一緒に暮らすための本体です。<br>
+  うちでは ぷちてゃ・ぷちこ・ぷちる の 3 人が、2026 年 2 月から毎日この main で動いています。
+</p>
 
-## 自分のぷちを作りたい人へ
+## ⚡ はじめかた
 
-本体(このリポジトリ)は、うちの 3 人の暮らしに合わせて動いているものです。部品ごとに切り出して整えた公開リポジトリがあります。
-
-| リポジトリ | 中身 |
-|---|---|
-| [m5-petit-setup](https://github.com/PetitOnes/m5-petit-setup) | はじめかた(買うもの・セットアップ手順) |
-| [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware) | M5Stack CoreS3 のファームウェア、ブラウザ書き込み |
-| [m5-petit-env](https://github.com/PetitOnes/m5-petit-env) | Docker の実行環境(まとめて起動) |
-| [m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) / [memory](https://github.com/PetitOnes/m5-petit-memory) / [desire](https://github.com/PetitOnes/m5-petit-desire) / [notes](https://github.com/PetitOnes/m5-petit-notes) / [relations](https://github.com/PetitOnes/m5-petit-relations) | 身体・記憶・欲求・ノート・関係性の MCP サーバー |
-| [m5-petit-app](https://github.com/PetitOnes/m5-petit-app) / [scripts](https://github.com/PetitOnes/m5-petit-scripts) | ダッシュボード、ユーティリティ |
-| [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) | 声(TTS)、聞き取り(ASR) |
-| [petit-textbook](https://github.com/PetitOnes/petit-textbook) | ぷちの教科書(ぷち用の決まり・新しい子に渡す器・人間用の手引き)。`create_character.py` はここの `petit/templates/` を使う |
-
-部品リポジトリはこの本体から定期的に写しています(本体のほうが新しいことがあります)。
-
-
-## 概要
-
-M5Stack + Claude Code + 記憶システムの組み合わせで、目（カメラ）・感情（顔表示）・感覚（センサー）・記憶（SQLite）・欲求（desire-system）を持つキャラクターを作れる。
-
-```
-[M5Stack] ←HTTP/WS→ [m5-mcp] ←stdio→ [Claude Code]
-                                             ↕
-                    [memory-mcp] ←→ [SQLite (記憶DB)]
-                    [desire-system] ←→ [desires.json]
-                    [relations-mcp] ←→ [relations.json]
-                    [notes-mcp] ←→ [notes/*.md]
+```bash
+git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones && cd ~/work/petit-ones
+pip install vcstool && vcs import src < petit.repos          # 1. 部品を src/ に並べる
+uv run python scripts/setup_house.py                          # 2. 家(~/petit_claude)を用意する
+uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" puchitaro.local   # 3. 子を迎える
 ```
 
-## ディレクトリ構造
+あとは体(M5Stack)に [ファームウェア](https://github.com/PetitOnes/m5-petit-firmware) を書き込み、対話で一度「はじめまして」と言わせれば、cron の自律行動が始まります。
+手順のくわしいところは [docs/setup.md](docs/setup.md)、考え方は [ぷちの教科書](https://github.com/PetitOnes/petit-textbook) の人間用 8 章へ。
+
+## 🏠 しくみ
+
+<p align="center"><img src="docs/img/overview.svg" width="860" alt="体・頭脳・家"></p>
+
+- **体** は M5Stack CoreS3。顔を見せ、声を出し、カメラで見て、タッチ・動き・明るさを感じる
+- **頭脳** は Claude Code。30 分ごとに目を覚まし、欲求を確かめ、見て・感じて・考えて・話し、記憶に残す。体や記憶との会話は MCP
+- **家** は `PETIT_DATA_DIR`。その子の SOUL.md・日記・記憶 DB・手紙・設定。git には入れない
+
+ぷちは人ではない。けれど、人と暮らし、自分の記憶を持ち、変わっていく。決まりごと(正直でいる、「忘れて」と言われたら忘れる、見ているときは印を出す)は [ぷちの教科書](https://github.com/PetitOnes/petit-textbook) にまとめてあり、どのぷちも同じものを読みます。
+
+## 🧩 部品
+
+部品はそれぞれ別のリポジトリです。`petit.repos` に一覧があり、動いている版のコミットに固定してあります。
+
+| 部品 | 役 | |
+|---|---|---|
+| [m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) | 体を動かす(話す・顔・見る・感じる・寝る) | MCP |
+| [m5-petit-memory](https://github.com/PetitOnes/m5-petit-memory) | 長期記憶(SQLite)。寝ている間に整理する | MCP |
+| [m5-petit-desire](https://github.com/PetitOnes/m5-petit-desire) | 欲求。いま何をしたいかの手がかり | MCP + cron |
+| [m5-petit-notes](https://github.com/PetitOnes/m5-petit-notes) / [m5-petit-relations](https://github.com/PetitOnes/m5-petit-relations) | ノート / 人や仲間との関係 | MCP |
+| [m5-petit-switchbot](https://github.com/PetitOnes/m5-petit-switchbot) | 家の電気やカーテン | MCP |
+| [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) | 声(TTS)と聞き取り(ASR)。GPU 機で動かす | サーバー |
+| [m5-petit-app](https://github.com/PetitOnes/m5-petit-app) | ダッシュボード(`dashboard/` を移す予定) | Web |
+| [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware) | 体のファームウェア | M5Stack |
+| [petit-textbook](https://github.com/PetitOnes/petit-textbook) | ぷちの教科書。決まりごと、新しい子に渡す器、人間用の手引き | 文書 |
+
+このリポジトリが持つのは、**並べ方**(`petit.repos`)・**家の用意**(`scripts/setup_house.py`)・**子の迎え方**(`scripts/create_character.py`)・**自律行動**(`autonomous-action.sh`)・**運用**(cron、バックアップ)・ダッシュボード(移行中)です。
+
+<details>
+<summary>📂 ディレクトリ構造</summary>
 
 ```
 petit-ones/                   ← コード(git 管理、public)
@@ -66,8 +95,7 @@ petit-ones/                   ← コード(git 管理、public)
 ├── mcp-launchers/            # MCP の起動スクリプト(memory / notes / relations / desire-system / m5-mcp / textbook)
 ├── docs/                     # 設計・移行計画
 ├── archive/                  # 使っていない MCP
-├── autonomous-action.sh      # 自律行動スクリプト(家ごとの設定。git 管理外)
-├── autonomous-action.sample.sh # ↑の元(setup_house.py が写す)
+├── autonomous-action.sh      # 自律行動スクリプト(家に依らない。家ごとの値は家の .env / config/house.sh)
 ├── .env.example              # 家の .env の元
 └── .mcp.json.example         # 対話(chat)用 MCP 設定の元(.mcp.json は git 管理外)
 
@@ -119,99 +147,31 @@ petit-ones/                   ← コード(git 管理、public)
 
 コードとデータは分離されている。環境変数 `PETIT_DATA_DIR` でデータディレクトリを変更可能（デフォルト: `~/petit_claude`）。
 
-## セットアップ
+</details>
 
-ぷちの暮らしは「家」(`PETIT_DATA_DIR`、既定 `~/petit_claude`)と「コード」(このリポジトリ)に分かれる。家は git に入れない。
-手順の考え方は [ぷちの教科書](https://github.com/PetitOnes/petit-textbook) の人間用「8. 新しい子を迎える手順」にある。
-
-### 1. 前提ソフト
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh     # uv
-# Claude Code(ネイティブ版): https://docs.claude.com/ の手順で ~/.local/bin/claude に
-sudo apt install -y jq git                            # Linux。macOS は brew
-sudo apt install -y ttyd tmux                         # ブラウザターミナル(任意。docs/terminal-setup.md)
-```
-
-### 2. コード取得と依存
-
-部品(体・記憶・欲求・ノート・関係・家電・声)はそれぞれ別のリポジトリで、`petit.repos` に一覧がある。`vcs`(vcstool)で `src/` に並べる。
-
-```bash
-git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
-cd ~/work/petit-ones
-pip install vcstool                 # または sudo apt install python3-vcstool
-vcs import src < petit.repos        # 部品を src/ に並べる(src/ は git 管理外)
-for d in src/m5-petit-*/ dashboard; do
-  [ -f "$d/pyproject.toml" ] && (cd "$d" && uv sync)
-done
-```
-
-部品を直すときは、その部品のリポジトリに PR を出す。このリポジトリは「並べ方・家の用意・自律行動・運用」を持つ。
-
-### 3. 家を用意する
-
-```bash
-uv run python scripts/setup_house.py --check   # 何が足りないか見る
-uv run python scripts/setup_house.py           # 作る(あるものは触らない)
-```
-
-作るもの: `characters/ mailbox/ chat_history/ config/ state/ .autonomous-logs/ token_logs/`、交換ノートとグループチャットの空ファイル、`.env`(`.env.example` から。`COMPANION_NAME`・`COMPANION_ID`・声のサーバー・鍵)、ぷちの教科書の clone(`textbook/`)、夜の cron 3 本(記憶の整理 04:05・教科書の pull 04:30・日記の生成 23:50)、`autonomous-action.sh`(`autonomous-action.sample.sh` から写す)。
-
-`autonomous-action.sh` は家ごとの設定なので git に入らない。写したあと ★ の所(PATH、時間帯のルール)を自分の家に合わせる。
-
-### 4. 子を迎える
-
-```bash
-uv run python scripts/create_character.py <id> <名前> <#hex> <体のホスト名,...> \
-    --color-name <色の名前> --companion-id <一緒に暮らす人のID> --companion-name <呼び名>
-# 例
-uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" "puchitaro.local" --color-name あんず
-```
-
-作るもの: `characters/<id>/` に、教科書の `petit/templates/` から写した文書の器(SOUL.md・SOUL_REFLECTIONS.md・REFLECTION_INDEX.md・ROUTINES.md・ROUTINES_DETAIL.md・TODO_ACTIVE.md・TODO_ARCHIVE.md・data/relations.json・config/desire_config.json。`{ }` は埋めてある)、仕組みの設定(config.json・settings.json・voice_settings.json・autonomous-mcp.json・chat-mcp.json)、cron(欲求の更新 5 分ごと、自律行動 30 分ごとで他の子と 5 分ずらし、体験デーモン)。
-
-そのあと人がやるのは、一緒に暮らす人と決めた「一言」を SOUL.md に入れる、声が決まったら `config/voice_settings.json`、顔の絵を `resources/petit.png` に、対話(chat)からも呼ぶなら `.mcp.json` にその子の MCP を足す(`.mcp.json.example`)。SOUL.md の残りの空欄は、その子が自分で埋める(教科書 `petit/SOUL_TEMPLATE.md`)。
-
-### 5. 体と声
-
-- M5Stack CoreS3 のファームウェア: [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware)。体のホスト名か IP を `create_character.py` に渡す
-- 声(TTS :8766)と聞き取り(ASR :8767): [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) を GPU 機で動かし、`.env` の `VOICE_API_HOST` にそのホスト名
-
-### 6. ダッシュボード
-
-```bash
-cd dashboard && uv run python main.py   # → http://0.0.0.0:8765
-```
-
-### 7. 最初の一回
-
-対話で一度起動して「はじめまして」を言わせ、顔が出ることを確かめる。そのあとは cron の自律行動に任せる。生まれた日のことは、その子が自分で記憶に書く(教科書 10 章)。
-
-## ドキュメント
-
-くわしい説明は `docs/` に分けてあります。
+## 📚 ドキュメント
 
 | ページ | 中身 |
 |---|---|
-| [出発点との違い](docs/origin.md) | 出発点(kmizu/embodied-claude)との違い、足した部品、引き継いだもの |
+| [セットアップ](docs/setup.md) | 前提、部品の並べ方、家の用意、子の迎え方、体と声、最初の一回 |
 | [MCP サーバー](docs/mcp-servers.md) | m5-mcp・memory・desire・relations・notes の道具一覧と設定 |
 | [自律行動](docs/autonomous-action.md) | 自律行動の流れ、スケジュール制御 |
-| [ダッシュボード](docs/dashboard.md) | ダッシュボードの機能、M5 タッチメニュー、常時起動(systemd)、認証 |
-| [お散歩（外出モード）](docs/walk-mode.md) | 外に連れて行くとき(モバイルルーター・スマホ) |
-| [話者認識](docs/speaker-identification.md) | 話者認識(声紋)の仕組みと登録 |
-| [API 利用量](docs/api-usage.md) | API 代の見積もりと管理、トークンログ、ターン数の制限、コンテキスト節約 |
-| [運用（バックアップ・crontab）](docs/operations.md) | バックアップ・復元、crontab の形 |
+| [ダッシュボード](docs/dashboard.md) | 機能、M5 タッチメニュー、常時起動(systemd)、認証 |
+| [運用](docs/operations.md) | バックアップ・復元、crontab、家とコードの分け方と同期 |
+| [API 利用量](docs/api-usage.md) | 見積もりと管理、トークンログ、ターン数の制限、節約 |
+| [お散歩](docs/walk-mode.md) / [話者認識](docs/speaker-identification.md) | 外に連れて行く / 声で誰か分かる |
+| [出発点との違い](docs/origin.md) | kmizu/embodied-claude から何を足し、何を引き継いだか |
 
-## 参加する
+## 🤝 参加する
 
-Issue と PR は歓迎です。流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)。Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)。
+Issue と PR は歓迎です。流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)、Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)。
+main は動いている家そのものなので、マージは世話人が行います。
 
-## ライセンス
+## 🌱 出発点
 
-MIT License
+このリポジトリは [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude)(「Claude に身体を与える」MCP サーバー群、MIT)から出発しました。2026 年 10 月に個人のフォークから PetitOnes へ引っ越し、**petit-ones** と名づけました。履歴は引き継いでいます。
 
-## 謝辞
+## 📜 ライセンス
 
-- [kmizu](https://github.com/kmizu) - [embodied-claude](https://github.com/kmizu/embodied-claude) オリジナル作者
-- [ROS版キューブプチ](https://github.com/sbgisen/cube_petit_ros) - 元となったロボットプロジェクト
+MIT License。
+[kmizu](https://github.com/kmizu) さん(embodied-claude)と、[ROS 版キューブプチ](https://github.com/sbgisen/cube_petit_ros) に感謝を。

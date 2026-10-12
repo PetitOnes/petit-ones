@@ -12,7 +12,7 @@
 確かめるもの(足りなければ言うだけ):
   - uv / claude / jq / python3 / git
   - 部品リポが src/ に並んでいるか(無ければ vcs import src < petit.repos)、依存(uv sync 済みか)
-  - autonomous-action.sh(無ければ sample から写す)
+  - 家ごとの上書き config/house.sh(任意。無くてよい)
 
 使い方:
   uv run python scripts/setup_house.py            # 作る
@@ -153,18 +153,13 @@ def check_components(project_dir: Path, r: Report) -> None:
             r.need(f"依存 {comp}", f"(cd {d} && uv sync)")
 
 
-def ensure_action_script(project_dir: Path, r: Report) -> None:
-    live = project_dir / "autonomous-action.sh"
-    sample = project_dir / "autonomous-action.sample.sh"
-    if live.exists():
-        r.ok("autonomous-action.sh")
-        return
-    if r.check_only or not sample.exists():
-        r.need("autonomous-action.sh", f"cp {sample} {live} して ★ を直す")
-        return
-    shutil.copy(sample, live)
-    live.chmod(0o755)
-    r.made("autonomous-action.sh(sample から。★ の所を直す)")
+def check_house_overrides(data_dir: Path, r: Report) -> None:
+    """autonomous-action.sh は家に依らない(git 管理)。家ごとの上書きは任意の config/house.sh"""
+    p = data_dir / "config" / "house.sh"
+    if p.exists():
+        r.ok("config/house.sh(家ごとの上書き)")
+    else:
+        print("  - config/house.sh は無し(無くてよい。USER_ROOM や時間帯のルールを変えたいときに作る)")
 
 
 def cron_lines(project_dir: Path, data_dir: Path, textbook_dir: Path, uv: str = UV) -> dict[str, str]:
@@ -213,7 +208,6 @@ def main(argv: list[str] | None = None) -> int:
     check_commands(r)
     ensure_src(PROJECT_DIR, r)
     check_components(PROJECT_DIR, r)
-    ensure_action_script(PROJECT_DIR, r)
     print("[家のフォルダ]")
     if not data_dir.exists() and not a.check:
         data_dir.mkdir(parents=True)
@@ -221,6 +215,7 @@ def main(argv: list[str] | None = None) -> int:
     ensure_dirs(data_dir, r)
     ensure_chat_files(data_dir, r)
     ensure_env(data_dir, PROJECT_DIR, r)
+    check_house_overrides(data_dir, r)
     print("[教科書]")
     ensure_textbook(textbook_dir, r)
     if not a.no_cron:

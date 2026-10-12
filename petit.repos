@@ -1,43 +1,44 @@
 # ぷちたちを動かす部品の一覧。  vcs import src < petit.repos
-# version は main(開発中)。配るときはタグに固定する。
+# version はコミット(家で動いている版に固定、2026-10-12)。上げるときはここを書き換えて PR → マージ後に家で vcs import し直す。
+# 開発中の部品を追いたいときは、その部品の clone で git switch する(ここは変えない)。
 repositories:
   m5-petit-notes:
     type: git
     url: https://github.com/PetitOnes/m5-petit-notes.git
-    version: main
+    version: 4d6bd6b43c708b82c4627c99531f9c693760602f
   m5-petit-relations:
     type: git
     url: https://github.com/PetitOnes/m5-petit-relations.git
-    version: main
+    version: 986bc4796f371280811b17fdd206d15ed464278f
   m5-petit-desire:
     type: git
     url: https://github.com/PetitOnes/m5-petit-desire.git
-    version: main
+    version: 54274085f0a7c7219994a658cd862e82ac988dee
   m5-petit-memory:
     type: git
     url: https://github.com/PetitOnes/m5-petit-memory.git
-    version: main
+    version: b47b3b6604aa4c9ecc27dd26fd820dcf32c2dd77
   m5-petit-mcp:
     type: git
     url: https://github.com/PetitOnes/m5-petit-mcp.git
-    version: develop
+    version: 51f4f233a1cc8626f1291ffb6136ef87e7f669fe
   m5-petit-app:
     type: git
     url: https://github.com/PetitOnes/m5-petit-app.git
-    version: develop
+    version: f385eae0d85f58b5f84877121f880bdea6e64324
   m5-petit-scripts:
     type: git
     url: https://github.com/PetitOnes/m5-petit-scripts.git
-    version: main
+    version: cd3226b20567ec9e25e1000c1a09b0f3e60882ec
   m5-petit-switchbot:
     type: git
     url: https://github.com/PetitOnes/m5-petit-switchbot.git
-    version: main
+    version: d30190aab0ebf548e61f51c149541db185eaf715
   # 声(TTS)と聞き取り(ASR)。GPU なしでも動く。別の PC に置く場合は、その PC でこの 2 つだけ取ればよい
   m5-petit-speech:
     type: git
     url: https://github.com/PetitOnes/m5-petit-speech.git
-    version: develop
+    version: 9a445777c5e40cd169656806284604bfa2850a9d
   m5-petit-voice-recognition:
     type: git
     url: https://github.com/PetitOnes/m5-petit-voice-recognition.git

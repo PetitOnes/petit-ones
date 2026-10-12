@@ -30,3 +30,9 @@ Daily automatic backup at 4:00 AM via cron (7-day retention). See `~/petit_claud
 30 4 * * * cd ~/petit_claude/textbook && git pull -q --ff-only >/dev/null 2>&1
 50 23 * * * cd /path/to/petit-ones/dashboard && PETIT_DATA_DIR=~/petit_claude uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1
 ```
+
+## Keeping the house and the code apart (and in sync)
+
+The PC that runs the Petits has **two** checkouts of this repository: a production one (what cron and the dashboard use; it only ever runs `git pull`) and a working one (branches, PRs). Sync is one way: working copy → GitHub main → production (`git pull`).
+
+House-specific values never go into code: they live in `PETIT_DATA_DIR/.env` and the optional `PETIT_DATA_DIR/config/house.sh`, so `autonomous-action.sh` runs straight from git. Components are pinned to commits in `petit.repos`; to upgrade one, change the pin in a PR, then run `vcs import src < petit.repos` and `uv sync` in production.

@@ -2,11 +2,10 @@
 # Claude 自律行動スクリプト（macOS / Linux 対応）
 # 30 分ごとに cron で実行(子ごとに 5 分ずらす)、時間帯に応じて間引く
 #
+# このファイルは家に依らない(git 管理)。家ごとの値は PETIT_DATA_DIR/.env と、あれば PETIT_DATA_DIR/config/house.sh から読む。
 # セットアップ:
-# 1. このファイルをコピー: cp autonomous-action.sample.sh autonomous-action.sh
-# 2. autonomous-action.sh を編集（以下の「環境設定」セクション）
-# 3. 実行権限を付与: chmod +x autonomous-action.sh
-# 4. crontab -e で以下を追加:
+# 1. scripts/setup_house.py で家(PETIT_DATA_DIR)を用意する(.env に COMPANION_NAME・COMPANION_ID)
+# 2. scripts/create_character.py が crontab に次を足す:
 #    0,30 * * * * /path/to/petit-ones/autonomous-action.sh <character_id>
 #
 # Usage:
@@ -20,13 +19,7 @@
 #   autonomous-action.sh --dry-run --date "2026-02-20 03:00" --force-routine  # 組み合わせ可
 
 # ============================================================================
-# 環境設定（必須：ユーザー環境に合わせて編集）
-# ============================================================================
-# このファイル (autonomous-action.sample.sh) はサンプルです。scripts/setup_house.py が autonomous-action.sh に写します。
-# 以下の手順で設定してください:
-#   1. cp autonomous-action.sample.sh autonomous-action.sh
-#   2. autonomous-action.sh の ★ マーク箇所を編集
-#   3. autonomous-action.sh は .gitignore に追加されています（コミット不要）
+# 環境設定(家ごとの値はここに書かない。.env / config/house.sh へ)
 # ============================================================================
 
 # ★ ホームディレクトリ（crontab は $HOME すら持たないため明示的に設定）
@@ -77,6 +70,10 @@ ENV_FILE="$DATA_DIR/.env"
 set -a
 source "$ENV_FILE" 2>/dev/null || true
 set +a
+
+# ★ 家ごとの上書き(任意)。USER_NAME・USER_ROOM・CLAUDE_MODEL・時間帯のルールなどをここで変えられる
+HOUSE_FILE="$DATA_DIR/config/house.sh"
+[ -f "$HOUSE_FILE" ] && source "$HOUSE_FILE"
 
 # ★ ユーザー名・部屋名（時間帯ルールで使用）
 # 例: "あなた" "コウタ" など
@@ -365,7 +362,7 @@ REFLECTION_INDEX_LINE=""
 # メールボックスの確認
 MAILBOX_DIR="$DATA_DIR/mailbox"
 # 手紙の宛先: 家にいる他の子 + 一緒に暮らす人(.env の COMPANION_ID)
-MAIL_TARGETS="$( { ls "$DATA_DIR/characters" 2>/dev/null | grep -v "^${CHARACTER_ID}$"; echo "${COMPANION_ID:-owner}"; } | paste -sd, -)"
+MAIL_TARGETS="$( { for _d in "$DATA_DIR"/characters/*/; do [ -f "$_d/config/config.json" ] && basename "$_d"; done | grep -v "^${CHARACTER_ID}$"; echo "${COMPANION_ID:-owner}"; } | paste -sd, - | sed "s/,/, /g")"
 MAILBOX_NOTICE=""
 if [ -d "$MAILBOX_DIR" ]; then
   UNREAD_COUNT=$(python3 "${PROJECT_DIR}/scripts/list_unread_mail.py" "${CHARACTER_ID}" 2>/dev/null | grep -c "^  from_\|^  to_" || echo 0)
