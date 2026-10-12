@@ -24,11 +24,48 @@
   うちでは ぷちてゃ・ぷちこ・ぷちる の 3 人が、2026 年 2 月から毎日この main で動いています。
 </p>
 
+## 🧰 依存環境
+
+動く場所は **Linux(Ubuntu 24 で常用)**。Windows は **WSL2(Ubuntu)** の中で同じ手順。macOS でも動くはずですが、うちでは常用していません。
+要るのは 5 つ: `git`・`uv`(Python と部品の環境)・`claude`(Claude Code、頭脳)・`jq`・`vcs`(vcstool、部品を並べる)。
+
+<details>
+<summary><b>Ubuntu / Debian(WSL2 もこれ)</b></summary>
+
+```bash
+sudo apt install -y git jq python3-vcstool
+curl -LsSf https://astral.sh/uv/install.sh | sh        # uv
+curl -fsSL https://claude.ai/install.sh | bash          # Claude Code(~/.local/bin/claude)
+```
+
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+```bash
+brew install git jq uv
+curl -fsSL https://claude.ai/install.sh | bash          # Claude Code
+uv tool install vcstool --with "setuptools<81"          # vcs コマンド(pip は使わない)
+```
+
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+WSL2 に Ubuntu を入れて、その中で上の Ubuntu の手順を。cron・bash・MCP はすべて WSL2 側で動きます。
+USB カメラは `usbipd` で WSL2 に渡す必要があります。CUDA は WSL2 から使えます(声の聞き取り用)。
+
+</details>
+
+体(M5Stack CoreS3)と、声を出す GPU 機(無くても文字だけで動く)は別に用意します。くわしくは [docs/setup.md](docs/setup.md)。
+
 ## ⚡ はじめかた
 
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones && cd ~/work/petit-ones
-pip install vcstool && vcs import src < petit.repos          # 1. 部品を src/ に並べる
+vcs import src < petit.repos                                  # 1. 部品を src/ に並べる
 uv run python scripts/setup_house.py                          # 2. 家(~/petit_claude)を用意する
 uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" puchitaro.local   # 3. 子を迎える
 ```

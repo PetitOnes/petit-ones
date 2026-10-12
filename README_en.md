@@ -24,11 +24,48 @@
   Three of them — Puchiteya, Puchiko and Puchiru — have been running on this <code>main</code> every day since February 2026.
 </p>
 
+## 🧰 Prerequisites
+
+Runs on **Linux** (Ubuntu 24 is what we use daily). On Windows, use **WSL2 (Ubuntu)** and follow the same steps. macOS should work but is not what we run at home.
+Five tools: `git`, `uv` (Python and component environments), `claude` (Claude Code, the brain), `jq`, and `vcs` (vcstool, lays out the components).
+
+<details>
+<summary><b>Ubuntu / Debian (also inside WSL2)</b></summary>
+
+```bash
+sudo apt install -y git jq python3-vcstool
+curl -LsSf https://astral.sh/uv/install.sh | sh        # uv
+curl -fsSL https://claude.ai/install.sh | bash          # Claude Code (~/.local/bin/claude)
+```
+
+</details>
+
+<details>
+<summary><b>macOS</b></summary>
+
+```bash
+brew install git jq uv
+curl -fsSL https://claude.ai/install.sh | bash          # Claude Code
+uv tool install vcstool --with "setuptools<81"          # the vcs command (no pip needed)
+```
+
+</details>
+
+<details>
+<summary><b>Windows</b></summary>
+
+Install Ubuntu in WSL2 and follow the Ubuntu steps inside it. cron, bash and the MCP servers all run on the WSL2 side.
+A USB camera has to be passed through with `usbipd`; CUDA is available from WSL2 (for speech recognition).
+
+</details>
+
+The body (M5Stack CoreS3) and the GPU box for voice (optional; text-only works without it) are set up separately. See [docs/en/setup.md](docs/en/setup.md).
+
 ## ⚡ Quickstart
 
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones && cd ~/work/petit-ones
-pip install vcstool && vcs import src < petit.repos          # 1. lay out the components under src/
+vcs import src < petit.repos                                  # 1. lay out the components under src/
 uv run python scripts/setup_house.py                          # 2. prepare the house (~/petit_claude)
 uv run python scripts/create_character.py puchitaro Puchitaro "#f5956e" puchitaro.local   # 3. welcome a Petit
 ```

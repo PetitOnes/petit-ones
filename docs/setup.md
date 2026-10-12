@@ -8,11 +8,15 @@
 
 ## 1. 前提ソフト
 
+OS ごとの入れ方は README の「🧰 依存環境」。要るのは `git`・`uv`・`claude`(Claude Code)・`jq`・`vcs`(vcstool)。
+
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh     # uv
-# Claude Code(ネイティブ版): https://docs.claude.com/ の手順で ~/.local/bin/claude に
-sudo apt install -y jq git                            # Linux。macOS は brew
-sudo apt install -y ttyd tmux                         # ブラウザターミナル(任意。docs/terminal-setup.md)
+# Ubuntu / Debian(WSL2 も)
+sudo apt install -y git jq python3-vcstool
+curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -fsSL https://claude.ai/install.sh | bash
+# macOS: brew install git jq uv / uv tool install vcstool --with "setuptools<81"
+sudo apt install -y ttyd tmux                         # ブラウザターミナル(任意。terminal-setup.md)
 ```
 
 ## 2. コード取得と依存
@@ -22,7 +26,6 @@ sudo apt install -y ttyd tmux                         # ブラウザターミナ
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
 cd ~/work/petit-ones
-pip install vcstool                 # または sudo apt install python3-vcstool
 vcs import src < petit.repos        # 部品を src/ に並べる(src/ は git 管理外)
 for d in src/m5-petit-*/ dashboard; do
   [ -f "$d/pyproject.toml" ] && (cd "$d" && uv sync)
