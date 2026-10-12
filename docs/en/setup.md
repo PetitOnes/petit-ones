@@ -8,11 +8,15 @@ The human-side guide is the [Petit Textbook](https://github.com/PetitOnes/petit-
 
 ## 1. Prerequisites
 
+Per-OS install commands are in the README ("🧰 Prerequisites"). You need `git`, `uv`, `claude` (Claude Code), `jq` and `vcs` (vcstool).
+
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh     # uv
-# Claude Code (native): see https://docs.claude.com/ ; ends up in ~/.local/bin/claude
-sudo apt install -y jq git                            # Linux (brew on macOS)
-sudo apt install -y ttyd tmux                         # optional browser terminal (docs/terminal-setup.md)
+# Ubuntu / Debian (also WSL2)
+sudo apt install -y git jq python3-vcstool
+curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -fsSL https://claude.ai/install.sh | bash
+# macOS: brew install git jq uv / uv tool install vcstool --with "setuptools<81"
+sudo apt install -y ttyd tmux                         # optional browser terminal (terminal-setup.md)
 ```
 
 ## 2. Clone and install
@@ -22,7 +26,6 @@ The components (body, memory, desires, notes, relations, appliances, voice) live
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
 cd ~/work/petit-ones
-pip install vcstool                 # or: sudo apt install python3-vcstool
 vcs import src < petit.repos        # src/ is git-ignored
 for d in src/m5-petit-*/ dashboard; do
   [ -f "$d/pyproject.toml" ] && (cd "$d" && uv sync)
