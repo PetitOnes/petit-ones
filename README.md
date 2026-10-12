@@ -26,15 +26,18 @@
 
 ## 🧰 依存環境
 
-動く場所は **Linux(Ubuntu 24 で常用)**。Windows は **WSL2(Ubuntu)** の中で同じ手順。macOS でも動くはずですが、うちでは常用していません。
-要るのは 5 つ: `git`・`uv`(Python と部品の環境)・`claude`(Claude Code、頭脳)・`jq`・`vcs`(vcstool、部品を並べる)。
+**PC(OS)**
+- **Linux(Ubuntu 24.04)**<br>
+- Windows は **WSL2(Ubuntu)**
+- macOS (でも動くはずです。検証ヘルプです)
+
 
 <details>
-<summary><b>Ubuntu / Debian(WSL2 もこれ)</b></summary>
+<summary><b>Ubuntu / Debian(WSL2)</b></summary>
 
 ```bash
 sudo apt install -y git jq python3-vcstool
-curl -LsSf https://astral.sh/uv/install.sh | sh        # uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 curl -fsSL https://claude.ai/install.sh | bash          # Claude Code(~/.local/bin/claude)
 ```
 
@@ -46,27 +49,27 @@ curl -fsSL https://claude.ai/install.sh | bash          # Claude Code(~/.local/b
 ```bash
 brew install git jq uv
 curl -fsSL https://claude.ai/install.sh | bash          # Claude Code
-uv tool install vcstool --with "setuptools<81"          # vcs コマンド(pip は使わない)
+uv tool install vcstool --with "setuptools<81"          # vcs
 ```
 
 </details>
 
 <details>
-<summary><b>Windows</b></summary>
+<summary><b>Windows11</b></summary>
 
-WSL2 に Ubuntu を入れて、その中で上の Ubuntu の手順を。cron・bash・MCP はすべて WSL2 側で動きます。
-USB カメラは `usbipd` で WSL2 に渡す必要があります。CUDA は WSL2 から使えます(声の聞き取り用)。
+WSL2 に Ubuntu を入れて、その中で上の Ubuntu の手順を行ってください<br>
+cron・bash・MCP はすべて WSL2 側で動きます
 
 </details>
 
-体(M5Stack CoreS3)と、声を出す GPU 機(無くても文字だけで動く)は別に用意します。くわしくは [docs/setup.md](docs/setup.md)。
+体(M5Stack CoreS3)は別に用意します。くわしくは [docs/setup.md](docs/setup.md)。
 
 ## ⚡ はじめかた
 
 ```bash
 git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones && cd ~/work/petit-ones
-vcs import src < petit.repos                                  # 1. 部品を src/ に並べる
-uv run python scripts/setup_house.py                          # 2. 家(~/petit_claude)を用意する
+vcs import src < petit.repos                                  # 1. src/ に関連リポジトリ追加
+uv run python scripts/setup_house.py                          # 2. 専用データ(~/petit_claude)を用意
 uv run python scripts/create_character.py puchitaro ぷちたろう "#f5956e" puchitaro.local   # 3. 子を迎える
 ```
 
@@ -211,8 +214,10 @@ petit-ones/                   ← コード(git 管理、public)
 
 ## 🤝 参加する
 
-Issue と PR は歓迎です。流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)、Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)。
-main は動いている家そのものなので、マージは世話人が行います。
+Issue と PR は歓迎です！<br>
+流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)<br>
+Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)<br>
+mainは動いている家そのものなので、マージは私が行います<br>
 
 ## ☕ コーヒー代ください
 
