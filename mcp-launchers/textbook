@@ -1,0 +1,3 @@
+#!/bin/bash
+# ぷちの教科書(PetitOnes/petit-textbook)を読む MCP。教科書は ~/petit_claude/textbook(cron で毎朝 pull)
+exec /home/cube-petit/.local/bin/uv run --directory /home/cube-petit/petit_claude/textbook/mcp textbook-mcp "$@"
