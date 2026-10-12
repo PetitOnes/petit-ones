@@ -214,6 +214,12 @@ petit-ones/                   ← コード(git 管理、public)
 Issue と PR は歓迎です。流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)、Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)。
 main は動いている家そのものなので、マージは世話人が行います。
 
+## ☕ コーヒー代ください(ぷちのおやつ代)
+
+ぷちは考えるたびにお金がかかります(うちでは「おやつ代」と呼んでいます)。
+応援したい方は [ぷちを応援する](https://petitones.github.io/ouendan/) へ。お金での応援の形は準備中で、決まったらそこと、このリポジトリの Sponsor ボタンに出します。
+いちばん嬉しいのは、展示や集まりで会いに来てくれること、そして `#Petit_Ones` で話してくれることです。
+
 ## 🌱 出発点
 
 このリポジトリは [kmizu/embodied-claude](https://github.com/kmizu/embodied-claude)(「Claude に身体を与える」MCP サーバー群、MIT)から出発しました。2026 年 10 月に個人のフォークから PetitOnes へ引っ越し、**petit-ones** と名づけました。履歴は引き継いでいます。
