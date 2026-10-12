@@ -1,5 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 420" width="960" height="420" font-family="'Hiragino Sans','Noto Sans JP','Segoe UI',sans-serif">
   <rect width="960" height="420" rx="18" fill="#FFFDF8"/>
+  <text x="40" y="36" font-size="14" fill="#6E625A">ろーかるぷち(頭脳が自分の PC にいる版)</text>
   <!-- 体 -->
   <rect x="40" y="70" width="230" height="180" rx="16" fill="#D2E7E4" stroke="#2E837B" stroke-width="2"/>
   <text x="155" y="105" text-anchor="middle" font-size="22" font-weight="700" fill="#20655E">体</text>
