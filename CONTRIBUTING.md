@@ -5,7 +5,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 ## 流れ
 
 1. **Issue を立てる**(不具合・提案のテンプレートがあります)。小さな直しなら PR から始めてもかまいません
-2. **fork して branch を切る**(`fix/…`、`feat/…`、`docs/…`)
+2. **fork して branch を切る**。名前は下の「branch と commit の規則」に沿う(例 `feat/add-wake-sound`、`fix/issue-12-cron-offset`)
 3. 直す。手元で確かめる:
    ```bash
    uvx ruff check .                         # 全体の lint(ruff.toml + 部品ごとの設定)
@@ -21,7 +21,45 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 - 部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ(`petit.repos`)。`src/` はその clone で git 管理外。部品の直しはそのリポへ PR
 - 家(`PETIT_DATA_DIR`、既定 `~/petit_claude`)の中身は git に入れない。名前・会話・写真・鍵・IP はコミットにも Issue にも貼らない
 - 家ごとの値(`.env`・`config/house.sh`・`.mcp.json`・`autonomous-mcp.json`)は git に入れない。コードに個人の値(名前・ホスト名・鍵)を書かない
-- コミットは小さく、題は「何をしたか」を日本語か英語で一行
+- コミットは小さく。題の形は下の規則(Conventional Commits)
+
+## branch と commit の規則
+
+有名な決まりをそのまま使います。読む側が迷わないためです。
+
+### branch 名 — [Conventional Branch](https://conventionalbranch.org/ja/)
+
+`<type>/<説明>`。小文字の英数字とハイフンだけ(アンダースコア・空白・大文字は使わない。ハイフンを続けない、端に置かない)。Issue があれば `issue-123-` を頭に。
+
+| type | いつ |
+|---|---|
+| `feat/` | 新しい機能 |
+| `fix/` | 不具合の直し |
+| `hotfix/` | 動いている家を今すぐ直す |
+| `chore/` | 依存の更新・設定・文書など、動きを変えないもの |
+| `release/` | リリースの準備(`release/v1.2.0`) |
+| `claude/` | Claude Code が作った branch(他の AI は `ai/` `codex/` `copilot/` `cursor/`) |
+
+例: `feat/add-wake-sound`、`fix/issue-12-cron-offset`、`chore/update-readme`、`claude/house-code-split`。`main` には prefix をつけない。
+
+### commit の題と PR の題 — [Conventional Commits](https://www.conventionalcommits.org/ja/)
+
+`<type>(<範囲>): <何をしたか>`。範囲は省略可。本文は日本語でよい。
+
+| type | 意味 |
+|---|---|
+| `feat` | 機能を足した |
+| `fix` | 不具合を直した |
+| `docs` | 文書だけ |
+| `chore` | 設定・依存・掃除 |
+| `refactor` | 動きを変えない整理 |
+| `test` | テストだけ |
+| `ci` | CI の変更 |
+
+例: `feat(scripts): create_character が教科書の templates を写す`、`fix(autonomous): 手紙の宛先に zip を拾わない`、`docs: README をしくみ図つきに`。
+動きが変わる(後方互換が壊れる)ときは `!` をつける: `feat(cron)!: 自律行動を 30 分ごとに`。
+
+PR の題も同じ形にします(マージのとき、そのまま履歴の題になります)。CI が branch 名と PR の題の形を確かめます。
 
 ## どこを直せばいいか
 
