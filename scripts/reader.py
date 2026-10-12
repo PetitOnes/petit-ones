@@ -80,7 +80,7 @@ def extract_content(html: str, url: str = "") -> tuple[str, str]:
     # Get text content from the summary HTML
     summary_html = doc.summary()
     # Strip HTML tags to get plain text
-    from lxml.html import fromstring, tostring
+    from lxml.html import fromstring
 
     tree = fromstring(summary_html)
     text = tree.text_content().strip()

@@ -1,0 +1,8 @@
+extends: relaxed
+rules:
+  line-length: disable
+  truthy: disable
+ignore: |
+  node_modules/
+  .venv/
+  archive/

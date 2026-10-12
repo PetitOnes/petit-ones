@@ -15,7 +15,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 MAX_FPS = 2.0
 SCENE_THRESHOLD = 0.20
 # Keep scene-detection results once we have at least this many distinct shots.

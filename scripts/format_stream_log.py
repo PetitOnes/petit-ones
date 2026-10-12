@@ -7,8 +7,8 @@ stream-json 形式の Claude 出力を人間が読めるログに変換する。
   または
   python3 format_stream_log.py stream.jsonl >> out.log
 """
-import sys
 import json
+import sys
 
 MAX_TEXT = 2000   # テキスト出力の最大文字数
 MAX_INPUT = 500   # ツール入力の最大文字数

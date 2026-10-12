@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """ノートエントリ書き込みスクリプト"""
 import json
-import sys
 import os
+import sys
 
 notebook_path = '/home/cube-petit/petit_claude/chat_history/exchange_notebook.json'
 content_file = os.path.join(os.path.dirname(__file__), 'notebook_content.txt')

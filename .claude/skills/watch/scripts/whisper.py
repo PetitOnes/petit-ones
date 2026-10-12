@@ -25,7 +25,6 @@ import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/audio/transcriptions"
 GROQ_MODEL = "whisper-large-v3"
 

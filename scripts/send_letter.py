@@ -1,5 +1,5 @@
-import subprocess
 import os
+import subprocess
 
 letter_path = "/home/cube-petit/work/embodied-claude/tmp_letter.txt"
 with open(letter_path, "r") as f:

@@ -4,71 +4,78 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PYTHONNOUSERSITE: "1"
 
 jobs:
-  test-memory-mcp:
-    name: Test memory-mcp
+  lint:
+    name: ruff
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: memory-mcp
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v5
-        with:
-          version: "latest"
+      - name: ruff check (ruff.toml + 部品ごとの pyproject)
+        run: uvx ruff@0.17.0 check .
 
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Type check
-        run: uv run mypy src/memory_mcp/ --ignore-missing-imports
-
-      - name: Run tests
-        run: uv run pytest -v
-
-  test-tts-mcp:
-    name: Test tts-mcp
+  test:
+    name: pytest ${{ matrix.dir }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir:
+          - src/m5-petit-memory
+          - src/m5-petit-desire
+          - src/m5-petit-notes
+          - src/m5-petit-relations
+          - src/m5-petit-app
+          - experience-daemon
+          - slack-approve
     defaults:
       run:
-        working-directory: tts-mcp
+        working-directory: ${{ matrix.dir }}
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v5
         with:
-          version: "latest"
+          python-version: "3.12"
+      - name: 依存(dev 含む)
+        run: uv sync --all-extras
+      - name: pytest
+        run: uv run pytest -q
 
-      - name: Install dependencies
-        run: uv sync --extra dev
-
-      - name: Lint
-        run: uv run ruff check .
-
-      - name: Run tests
-        run: uv run pytest -v
-
-  test-wifi-cam-mcp:
-    name: Test wifi-cam-mcp
+  test-scripts:
+    name: pytest scripts/tests
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: wifi-cam-mcp
     steps:
       - uses: actions/checkout@v4
-
       - uses: astral-sh/setup-uv@v5
         with:
-          version: "latest"
+          python-version: "3.12"
+      - run: uv run --with pytest pytest -q scripts/tests
 
-      - name: Install dependencies
-        run: uv sync --extra dev
+  yaml:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx yamllint -c .yamllint .
 
-      - name: Lint
-        run: uv run ruff check .
+  shell-json:
+    name: bash -n / json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: シェルの文法
+        run: |
+          set -e
+          for f in $(git ls-files '*.sh'); do bash -n "$f"; done
+      - name: JSON が読めるか
+        run: |
+          set -e
+          for f in $(git ls-files '*.json'); do python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$f"; done

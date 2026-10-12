@@ -8,10 +8,10 @@
   # JSONをstdinから渡す（旧来）
   echo '{"character_id": "puchiko", "role": "user", "text": "..."}' | python3 append_chat_log.py
 """
+import argparse
 import json
 import sys
-import argparse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 parser = argparse.ArgumentParser(add_help=False)

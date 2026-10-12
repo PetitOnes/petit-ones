@@ -1,0 +1,14 @@
+name: 提案
+description: こうしたい・こうなっていてほしい
+labels: [idea]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 提案
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: なぜ(どんなときに困るか、誰が助かるか)

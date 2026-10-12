@@ -1,6 +1,6 @@
 import concurrent.futures
 import urllib.request
-import socket
+
 
 def check_host(ip):
     try:
@@ -8,7 +8,7 @@ def check_host(ip):
         data = r.read(200)
         if b'ambient' in data or b'proximity' in data or b'battery' in data:
             return ip, data[:120].decode('utf-8', errors='replace')
-    except:
+    except Exception:
         pass
     return None
 
@@ -17,7 +17,7 @@ def check_host_root(ip):
         r = urllib.request.urlopen(f'http://{ip}/', timeout=0.5)
         data = r.read(200)
         return ip, data[:80].decode('utf-8', errors='replace')
-    except:
+    except Exception:
         pass
     return None
 

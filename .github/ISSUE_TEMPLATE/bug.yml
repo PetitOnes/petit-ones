@@ -1,0 +1,22 @@
+name: 不具合
+description: 動かない・おかしい
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 何が起きたか
+      description: やったこと、起きたこと、期待していたこと
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 環境
+      description: OS、Python、uv のバージョン、どの部品(src/… / dashboard / scripts)か
+  - type: textarea
+    id: log
+    attributes:
+      label: ログ
+      description: 鍵・家の中身(名前や会話)は消してから貼ってください
+      render: text

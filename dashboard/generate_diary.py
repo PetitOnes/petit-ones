@@ -12,7 +12,6 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +19,6 @@ from pathlib import Path
 # main.py と同じパス解決
 sys.path.insert(0, str(Path(__file__).parent))
 from main import (
-    CHARACTERS_DIR,
     _query_memories,
     char_dir,
     generate_diary_summary,

@@ -1,13 +1,14 @@
 import concurrent.futures
 import urllib.request
 
+
 def check_host(ip):
     try:
         r = urllib.request.urlopen(f'http://{ip}/sensor', timeout=0.4)
         data = r.read(200)
         if b'ambient' in data or b'proximity' in data or b'battery' in data:
             return ip, data[:100].decode('utf-8', errors='replace')
-    except:
+    except Exception:
         pass
     return None
 

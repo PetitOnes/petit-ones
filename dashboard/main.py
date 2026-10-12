@@ -3,24 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import hmac
 import io
 import json
 import os
+import secrets
+import sqlite3
+import subprocess
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-import sqlite3
-
-import hashlib
-import hmac
-import secrets
-import subprocess
-import time
-
-import base64
-
-import anthropic
 import websockets
 
 # claude CLI(2026-09-02 からネイティブ版)は ~/.local/bin にある。cron 起動(generate_diary.py 等)の
@@ -52,17 +48,17 @@ PUBLIC_CHAT_LIMIT = 5  # 1時間あたり最大リクエスト数
 # 会話リレー状態
 _relay_state: dict = {"active": False, "cancel": False, "from_char": "", "to_char": "", "turns_remaining": 0, "characters": []}
 
-from fastapi import Cookie, FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel
-
 
 # ===================== M5 イベントウォッチャー =====================
 
 async def _m5_camera_analyze_and_mail(character_id: str, host: str):
     """スナップショットをHTTPで取得し、Claude CLIに画像ファイルを読ませてメール＋記憶保存"""
-    import tempfile, urllib.request
+    import tempfile
+    import urllib.request
     tmp_path = None
     try:
         loop = asyncio.get_event_loop()
@@ -130,7 +126,9 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str 
 
 async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes: bytes, target: str = "arisan"):
     """PCMバイト列をWAV化→ASR→Claudeに投げる。カメラ・センサーと同じパターン。"""
-    import wave, tempfile, requests as _requests
+    import wave
+
+    import requests as _requests
     if len(pcm_bytes) < 512:
         print(f"[m5_watcher] {character_id}: mic_end too short ({len(pcm_bytes)} bytes), ignored")
         return
@@ -1696,8 +1694,6 @@ def api_relations(request: Request):
     chars = list_characters()
     if allowed is not None:
         chars = [c for c in chars if c["id"] in allowed]
-    char_ids = {c["id"] for c in chars}
-
     nodes = []
     for c in chars:
         cfg = get_char_config(c["id"])
@@ -2192,7 +2188,10 @@ async def api_voice_memo_register_speaker(person_id: str, filename: str):
     path = _voice_memo_dir(person_id) / filename
     if not path.exists() or path.suffix not in _AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
-    import subprocess, tempfile as _tmpmod, requests as _req
+    import subprocess
+    import tempfile as _tmpmod
+
+    import requests as _req
     with _tmpmod.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         out_path = f.name
     try:
@@ -2529,8 +2528,9 @@ async def api_status(character_id: str):
 
 @app.get("/api/{character_id}/sensors")
 async def api_sensors(character_id: str):
-    import requests as req
     import time
+
+    import requests as req
     cfg = get_char_config(character_id)
     host = await resolve_m5_host(cfg)
     if not host:
@@ -2650,10 +2650,13 @@ async def _refresh_phrase_cache(character_id: str):
 
 async def _speak_direct_from_wav(character_id: str, wav_bytes: bytes):
     """生成済みWAVをそのままM5に投げる"""
-    import requests as req, tempfile
+
+    import requests as req
     try:
         def _play():
-            import io as _io, subprocess, tempfile as _tf
+            import io as _io
+            import subprocess
+            import tempfile as _tf
             with _tf.NamedTemporaryFile(suffix=".wav", delete=False) as fin:
                 fin.write(wav_bytes)
                 in_path = fin.name
@@ -2684,7 +2687,8 @@ async def _speak_direct_from_wav(character_id: str, wav_bytes: bytes):
 
 async def _speak_direct(character_id: str, text: str):
     """TTS APIとM5に直接投げてspeakする（MCPオーバーヘッドなし）"""
-    import requests as req, tempfile
+
+    import requests as req
     try:
         # voice_settings.json から voicevox_speaker 取得
         vs_path = char_dir(character_id) / "config" / "voice_settings.json"
@@ -2694,7 +2698,8 @@ async def _speak_direct(character_id: str, text: str):
         tts_url = f"http://{VOICE_API_HOST}:8766"
 
         def _wav_to_mono16k(wav_bytes: bytes) -> io.BytesIO:
-            import subprocess, tempfile as _tf
+            import subprocess
+            import tempfile as _tf
             with _tf.NamedTemporaryFile(suffix=".wav", delete=False) as fin:
                 fin.write(wav_bytes)
                 in_path = fin.name
@@ -2749,7 +2754,8 @@ def api_reset_proximity_cooldown():
 @app.post("/api/print/moment")
 async def api_print_moment():
     """今この瞬間のぷちたちの状態（センサー＋一言）を感熱紙に印刷する。"""
-    import os as _os, socket as _sock, struct as _struct
+    import os as _os
+    import socket as _sock
     from datetime import datetime
 
     printer_addr = _os.environ.get("PRINTER_ADDRESS", "")
@@ -2781,8 +2787,9 @@ async def api_print_moment():
         rows.append({"name": c["name"], "sensor": s, "phrase": phrase})
 
     def _render_and_print():
-        from PIL import Image, ImageDraw, ImageFont
         import os
+
+        from PIL import Image, ImageDraw, ImageFont
 
         W = 384
         PAD = 12
@@ -2886,7 +2893,8 @@ class PrintPoemRequest(BaseModel):
 @app.post("/api/print/poem")
 async def api_print_poem(req: PrintPoemRequest):
     """指定した詩を感熱紙に印刷する。poem_index は _DISPLAY_POEMS のインデックス。"""
-    import os as _os, socket as _sock
+    import os as _os
+    import socket as _sock
 
     printer_addr = _os.environ.get("PRINTER_ADDRESS", "")
     if not printer_addr:
@@ -2900,8 +2908,9 @@ async def api_print_poem(req: PrintPoemRequest):
     poem = _DISPLAY_POEMS[req.poem_index]
 
     def _render_and_print():
-        from PIL import Image, ImageDraw, ImageFont
         import os
+
+        from PIL import Image, ImageDraw, ImageFont
 
         W = 384
         PAD = 16
@@ -8717,7 +8726,7 @@ def _utc_to_jst(ts: str) -> str:
     if not ts:
         return ts
     try:
-        from datetime import timezone, timedelta
+        from datetime import timedelta, timezone
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         jst = dt.astimezone(timezone(timedelta(hours=9)))
         return jst.strftime("%Y-%m-%d %H:%M")
@@ -9581,7 +9590,6 @@ async def api_costs():
                 if not ts_raw:
                     continue
                 # タイムゾーン正規化
-                from datetime import timezone
                 if "+" in ts_raw[10:] or "Z" in ts_raw:
                     dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
                     dt_jst = dt.astimezone(_jst)
@@ -9658,7 +9666,6 @@ async def api_costs():
 
     cycle_start_str = cycle_start.strftime("%Y-%m-%d")
     cycle_end_str = cycle_end.strftime("%Y-%m-%d")
-    import datetime as _dt2
     days_remaining = (cycle_end.date() - now.date()).days
     cycle_total_days = (cycle_end.date() - cycle_start.date()).days
     days_elapsed = (now.date() - cycle_start.date()).days

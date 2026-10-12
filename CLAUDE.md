@@ -1,83 +1,60 @@
-# Embodied Claude - プロジェクト指示
+# petit-ones — Claude への指示
 
-Claude に身体（目・首・耳・声・脳）を与える MCP サーバー群と、キャラクター（ぷちてゃ・ぷちこ・ぷちる）の自律行動システム。
+M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求・記憶を持って暮らすためのシステム。
+**main は動いている家そのもの**(世話人の 3 人が毎日この main で動く)。壊さないことが最優先。
 
-## MCP サーバー（使用中）
+## まず知っておくこと
 
-| ディレクトリ | 役割 |
+- **コードと家は別**。コード = このリポジトリ。家 = `PETIT_DATA_DIR`(既定 `~/petit_claude`)。家の中身(characters/・mailbox/・chat_history/・.env・記憶 DB)は git に入れない。読むのはよいが、名前・会話・写真・鍵・IP を コミット・Issue・PR・ログに写さない
+- **本番の部品は `src/m5-petit-*`**。根にある `m5-mcp/` `memory-mcp/` `desire-system/` `notes-mcp/` `relations-mcp/` `switchbot-mcp/` は切り出し前の古い置き場。直さない、参照しない
+- **家ごとの設定は git 管理外**: `autonomous-action.sh`(元は `autonomous-action.sample.sh`)、`.mcp.json`(元は `.mcp.json.example`)、`autonomous-mcp.json`。sample / example を直すときは個人の値(名前・ホスト名・鍵)を入れない
+- **ぷちの振る舞いの決まりと SOUL.md の器は別リポ** [petit-textbook](https://github.com/PetitOnes/petit-textbook)。振る舞いの決まりを足したくなったら、ここではなく教科書に
+
+## 構成(短く)
+
+| 場所 | 何 |
 |---|---|
-| `memory-mcp/` | 長期記憶（SQLite） |
-| `notes-mcp/` | ノート読み書き |
-| `relations-mcp/` | キャラクター間の関係性データ |
-| `m5-mcp/` | M5Stack 制御・センサー |
-| `switchbot-mcp/` | SwitchBot連携（プラグ・照明・カーテン・赤外線リモコン） |
+| `src/m5-petit-mcp` | 体(話す・顔・見る・感じる・寝る)の MCP |
+| `src/m5-petit-memory` | 長期記憶(SQLite)。夜の整理は `scripts/sleep.py` |
+| `src/m5-petit-desire` | 欲求(MCP + 5 分ごとの `desire_updater.py`) |
+| `src/m5-petit-notes` / `-relations` / `-switchbot` | ノート / 関係 / 家電 |
+| `dashboard/` | Web ダッシュボード(FastAPI :8765)、`generate_diary.py` |
+| `experience-daemon/` | 体の出来事を拾って次の自律行動に渡す |
+| `scripts/` | `setup_house.py`(家を用意)・`create_character.py`(子を迎える)・手紙・使用量・バックアップ |
+| `mcp-launchers/` | MCP の起動スクリプト |
+| `autonomous-action.sample.sh` | 自律行動の本体(cron 30 分ごと、子ごとに 5 分ずらす) |
+| `docs/` | くわしい説明(MCP の道具一覧、自律行動の流れ、運用、API 代) |
 
-## その他のコンポーネント
+家の中(`characters/<id>/`)の形は README の「ディレクトリ構造」と、教科書の `petit/templates/README.md`。
 
-- `dashboard/` — Web ダッシュボード（FastAPI, port 8765）
-- `desire-system/` — 欲求システム（cron 5分ごと実行）
-- `scripts/` — メールボックス・ユーティリティ
-- `autonomous-action.sh` — 自律行動スクリプト（cron 20分ごと実行）
+## 直すときの流れ
 
-## キャラクターデータ構造
+1. **branch を切って PR**。main に直接 push できるのは世話人だけ。マージも世話人だけ
+2. 動いている家に影響する変更(cron の形、プロンプト、設定ファイルの形、記憶 DB のスキーマ)は、PR の「注意してほしいこと」に書く。後方互換を壊すなら移行手順も
+3. 新しい部品や設定の項目を足したら、README(短く)か `docs/`(くわしく)に一行足す。`scripts/setup_house.py` / `create_character.py` が作るものを変えたら、そちらも直す
 
-`~/petit_claude/characters/<id>/` 以下:
+## 確かめ方
 
-```
-config/
-  config.json          # M5ホスト・表示名など
-  autonomous-mcp.json  # 自律行動用MCPサーバー設定
-  settings.json        # Claude設定（会話履歴など）
-  desire_config.json   # 欲求システム設定
-  voice_settings.json  # 音声設定
-data/
-  relations.json       # 関係性データ
-  desires.json         # 欲求レベル（desire-system出力）
-state/
-  .heartbeat-session-id / .heartbeat-session-date
-  last_session.txt
-resources/
-  petit.png            # アバター画像
-m5_scripts/            # M5Stack スケッチ
-chat_histories/        # 1対1チャット履歴（ダッシュボード）
-diary/                 # 日記テキスト（YYYY-MM-DD.txt）
-diary_summary.md       # 常時ロード用サマリー（generate_diary.py が生成）
-SOUL.md                # 人格コア（常時ロード）
-SOUL_REFLECTIONS.md    # 思索・深層記憶（参照用）
-REFLECTION_INDEX.md    # 思索索引（常時ロード）
-ROUTINES.md            # 生活リズム・行動優先順位（常時ロード）
-ROUTINES_DETAIL.md     # 詳細手順（参照用）
-TODO_ACTIVE.md         # 今やること（常時ロード）
-TODO_ARCHIVE.md        # 完了タスク（参照用）
-notes/                 # notes-mcp で読み書きするノート
+```bash
+uvx ruff check .                                   # 全体(ruff.toml。部品に [tool.ruff] があればそちら)
+(cd src/m5-petit-memory && uv sync --all-extras && uv run pytest -q)   # 触った部品
+uv run --with pytest pytest -q scripts/tests       # scripts の分
+uvx yamllint -c .yamllint .                        # YAML
 ```
 
-## グループチャット・交換ノート
+- CI(`.github/workflows/ci.yml`)は同じことをする。PR が緑になってから頼む
+- この家の PC では ROS の `PYTHONPATH` が pytest に混ざるので、`env -u PYTHONPATH uv run pytest` で動かす
+- 記憶のテストは数分かかる(埋め込みを計算する)。全部でなく触った部品だけでよい
 
-`~/petit_claude/chat_history/` 以下（正規パス）:
+## やらないこと
 
-- `exchange_notebook.json` — ぷちたち＋ありさんの交換ノート（`/notebook` スキル）
-- `exchange_notebook_kazahaya.json` — かぜおさん用交換ノート
-- `group_chat.json` — グループチャット
-- `trio_chat.json` — 3人チャット
+- 家の中身を書き換える仕事を、頼まれていないのにしない(SOUL.md・記憶 DB・crontab・`.env`)
+- 本番の `autonomous-action.sh` と `.mcp.json` を直接直さない。直すなら sample / example を直して、世話人に写してもらう
+- 古い置き場(根の `m5-mcp/` など)と `archive/` `next/` `analysis/` `tmp/` に手を入れない
+- 鍵・トークン・パスワードを、出力にも Issue にも貼らない(`.env` と MCP 設定の env には鍵が入っていることがある)
 
-## 開発ガイドライン
+## 書き方
 
-- **パッケージマネージャー**: uv / **Python**: 3.10+ / **リンター**: ruff / **テスト**: pytest + pytest-asyncio
-- コミット前: `uv run ruff check .` && `uv run pytest -v`
-
-## セキュリティ
-
-- `.env` はコミット不可（.gitignore 済み）
-- カメラパスワード・API キーは環境変数管理
-
-## 実行環境
-
-- **メイン機: ネイティブ Ubuntu 24**（claude・cron・ダッシュボード・M5連携。このリポジトリが動く場所）
-- **GPU機: 別筐体の Ubuntu 24**（TTS :8766 / ASR :8767 の音声処理）
-
-### 別PC（Windows + WSL2）で動かす場合の注意
-
-- USB カメラ: `usbipd` で転送が必要
-- 温度センサー: `/sys/class/thermal/` アクセス不可
-- CUDA: 利用可能（Whisper用）
+- Python 3.10+、uv、ruff、pytest(非同期は pytest-asyncio)。型ヒントはつける。長い関数を増やさない
+- 文章は日本語。コミットの題は「何をしたか」を一行
+- 既にある書き方に合わせる。大きな作り直しは Issue で先に相談

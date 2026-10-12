@@ -1,7 +1,8 @@
 """Fetch and extract text from Aozora Bunko with proper Shift_JIS decoding."""
-import urllib.request
 import re
 import sys
+import urllib.request
+
 
 def fetch_aozora(url, page=None, chars_per_page=3000):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
@@ -55,7 +56,7 @@ def fetch_aozora(url, page=None, chars_per_page=3000):
 
     if page is None:
         # Info mode
-        print(f"Title: 銀河鉄道の夜")
+        print("Title: 銀河鉄道の夜")
         print(f"Total characters: {total_chars}")
         print(f"Total pages ({chars_per_page} chars/page): {total_pages}")
         # Show chapter headings

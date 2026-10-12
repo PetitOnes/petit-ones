@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """詩集PDF生成スクリプト — 28ページ中とじ A5"""
-from fpdf import FPDF
 import os
+
+from fpdf import FPDF
 
 NOTO = os.path.expanduser("~/.local/share/fonts/NotoSerifJP-Light.ttf")
 CORMORANT = os.path.expanduser("~/.local/share/fonts/CormorantGaramond-Light.ttf")
@@ -687,8 +688,10 @@ class PoemBook(FPDF):
 
     # ── 奥付 ──────────────────────────────────────────────
     def colophon_page(self):
+        import os
+        import tempfile
+
         import qrcode as _qrcode
-        import tempfile, os
 
         self.add_page()
         self.set_bg()

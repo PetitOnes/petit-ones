@@ -7,11 +7,11 @@
 標準入力から生のPTY出力を受け取り、ANSIコードを除去してClaudeの
 テキスト返答だけを chat_history.json に保存する。
 """
-import sys
-import re
 import argparse
 import json
-from datetime import datetime, timezone, timedelta
+import re
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # ANSIエスケープコードの除去パターン
