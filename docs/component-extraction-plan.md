@@ -39,6 +39,7 @@
 - `PetitOnes/m5-petit-notes` — **完了**（`notes-mcp/` から。上流embodied-claudeには存在しないオリジナルコンポーネントのためNOTICE不要。Apache-2.0、16テスト通過、ブランチ保護済み、topics設定済み）
   - サニタイズ: `CHARACTER_ID`のデフォルト値`puchiko`（実キャラ名ハードコード）を`default`に置換。`PETIT_DATA_DIR`のデフォルトも`~/petit_claude`直書きから`~/petit_data`（姉妹リポと共通の慣習）に変更
 - `PetitOnes/roman2026` — **完了**（2026-08-09。RO-MAN 2026 LBR補足ページ。GitHub Pages公開: https://petitones.github.io/roman2026/ 。論文PDF・ポスターPDF・システム紹介。コンポーネント切り出しではないためキャラ名＝論文公表済みの主題はサニタイズ対象外、パス・秘密情報はgrepゼロ件確認。Apache-2.0（PDF・写真は著者著作権）、main/developブランチ保護済み、topics設定済み）
+- `PetitOnes/petit-textbook` — **完了**（2026-10-12。新規、切り出し元なし。ぷちの教科書: ぷち用(迷ったら開く、索引だけ常時ロード)+人間用(おとな・中高生・小学生未満)。Apache-2.0、main/develop 保護済み、topics 設定済み。公開サイトに出ている名前(ぷちてゃ・ぷちこ・ぷちる・ありさん)は本の主題なので残す。家族名・連絡先・絶対パス・秘密は 0 件を確認）
 
 ## 切り出しで見つかった注意点（2026-07-06）
 
