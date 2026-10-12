@@ -18,7 +18,7 @@ This fork extends the concept into a **multi-character autonomous agent framewor
 |---|---|---|
 | **Hardware** | Wi-Fi PTZ camera (Tapo C210 etc.) | M5Stack CoreS3 |
 | **Characters** | Single instance | Multiple characters (independent personality, memory, desires) |
-| **Autonomy** | User-driven (reactive) | Cron-based autonomous action every 20 min (desire-driven) |
+| **Autonomy** | User-driven (reactive) | Cron-based autonomous action every 30 min (desire-driven) |
 | **Desires** | Optional | Core feature (sensor_effects, cross_effects) |
 | **UI** | CLI only | Web dashboard (chat, desire display, diary, memory viewer) |
 | **Social** | None | Inter-character relationships & mailbox |
@@ -233,7 +233,7 @@ Unlike memory (searched/recalled), notes are persistent reference documents for 
 
 ## Autonomous Action
 
-`autonomous-action.sh` runs via cron every 20 minutes, enabling characters to act autonomously.
+`autonomous-action.sh` runs via cron every 30 minutes (each Petit offset by 5 min), enabling characters to act autonomously.
 
 ### Execution Flow
 
@@ -246,7 +246,7 @@ Unlike memory (searched/recalled), notes are persistent reference documents for 
     |-- Compute cross-effects
     |-> Write desires.json
 
-[Cron: every 20 min]
+[Cron: every 30 min]
 |-> autonomous-action.sh <char_id>
     |-- Check if within active hours (else probability-based execution)
     |-- Read: SOUL.md, ROUTINES.md, desires.json, relations.json
@@ -265,7 +265,7 @@ Unlike memory (searched/recalled), notes are persistent reference documents for 
 
 ### Schedule Control
 
-- **Active hours** (`settings.json` `active_hours`): Runs every 20 min
+- **Active hours** (`settings.json` `active_hours`): Runs every 30 min
 - **Daytime inactive**: Runs at :00 with 30% probability
 - **Nighttime inactive**: Runs at :00 with 10% probability
 

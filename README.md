@@ -420,10 +420,10 @@ mcp-launchers/
 
 ```bash
 # Goose 版（Gemini）
-*/30 * * * * /path/to/embodied-claude/autonomous-action-goose.sh <char_id>
+*/30 * * * * /path/to/petit-ones/autonomous-action-goose.sh <char_id>
 
 # Goose 版（OpenAI GPT-4o）
-*/30 * * * * GOOSE_PROVIDER=openai GOOSE_MODEL=gpt-4o /path/to/embodied-claude/autonomous-action-goose.sh <char_id>
+*/30 * * * * GOOSE_PROVIDER=openai GOOSE_MODEL=gpt-4o /path/to/petit-ones/autonomous-action-goose.sh <char_id>
 ```
 
 ## ダッシュボード
@@ -780,7 +780,7 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 バックアップ対象:
 - `~/petit_claude/` — キャラデータ・チャット履歴・ノート・トークンログなど全体
 - `~/.claude/` — Claude Code の会話ログ・メモリDB・プロジェクト設定
-- `~/work/embodied-claude/.claude/` — スラッシュコマンド・プロジェクト設定
+- `~/work/petit-ones/.claude/` — スラッシュコマンド・プロジェクト設定
 - `autonomous-action.sh` — gitignore 対象の個人設定スクリプト
 - `.env` ファイル各種
 - crontab
