@@ -18,6 +18,7 @@ M5Stack に身体を持つ小さな「ぷち」たちが、それぞれの性格
 | [m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) / [memory](https://github.com/PetitOnes/m5-petit-memory) / [desire](https://github.com/PetitOnes/m5-petit-desire) / [notes](https://github.com/PetitOnes/m5-petit-notes) / [relations](https://github.com/PetitOnes/m5-petit-relations) | 身体・記憶・欲求・ノート・関係性の MCP サーバー |
 | [m5-petit-app](https://github.com/PetitOnes/m5-petit-app) / [scripts](https://github.com/PetitOnes/m5-petit-scripts) | ダッシュボード、ユーティリティ |
 | [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) | 声(TTS)、聞き取り(ASR) |
+| [petit-textbook](https://github.com/PetitOnes/petit-textbook) | ぷちの教科書(ぷち用の決まり・新しい子に渡す器・人間用の手引き)。`create_character.py` はここの `petit/templates/` を使う |
 
 部品リポジトリはこの本体から定期的に写しています(本体のほうが新しいことがあります)。
 
@@ -74,30 +75,38 @@ M5Stack + Claude Code + 記憶システムの組み合わせで、目（カメ�
 ## ディレクトリ構造
 
 ```
-embodied-claude/              ← コード（git管理、public）
-├── m5-mcp/                   # M5Stack 制御 MCP
-├── memory-mcp/               # 長期記憶 MCP
-├── desire-system/            # 欲求システム（MCP + updater）
-├── relations-mcp/            # 関係性 MCP
-├── notes-mcp/                # 永続ノート MCP
-├── dashboard/                # Web ダッシュボード
-├── scripts/                  # ユーティリティスクリプト
-│   ├── write_mailbox.py      #   メールボックス書き込み
-│   ├── mark_mail_read.py     #   メールを既読にする
-│   ├── append_chat_log.py    #   /chat スキルのチャットログ保存（stdin JSON）
-│   ├── check_usage.py        #   トークン使用量集計（今日/今週/今月）
-│   ├── create_character.py   #   キャラクター追加（設定ファイル + cron 登録）
-│   ├── backup_petit.sh       #   petit_claude + .claude バックアップ
-│   ├── restore_petit.sh      #   バックアップからの復元
-│   ├── reader.py             #   メモリ読み出し
-│   ├── register_speaker.sh   #   話者声紋登録
-│   └── speaker_config.json.example
-├── docs/                     # 設計・移行計画ドキュメント
-├── archive/                  # 未使用 MCP（wifi-cam, usb-webcam, system-temperature 等）
-├── autonomous-action.sh      # 自律行動スクリプト・Claude版（.gitignore）
-├── autonomous-action.sample.sh # ↑のテンプレート
-├── autonomous-action-goose.sh  # 自律行動スクリプト・Goose版（Gemini/OpenAI対応）
-└── mcp-launchers/            # Goose用 MCP ランチャースクリプト（ツール名を一意にする）
+petit-ones/                   ← コード(git 管理、public)
+├── src/                      # 本番の部品(部品リポジトリの元。ここが正)
+│   ├── m5-petit-mcp/         #   体(M5Stack CoreS3)を動かす MCP
+│   ├── m5-petit-memory/      #   長期記憶 MCP(SQLite)+ 夜の整理 scripts/sleep.py
+│   ├── m5-petit-desire/      #   欲求(MCP + desire_updater.py)
+│   ├── m5-petit-notes/       #   ノート MCP
+│   ├── m5-petit-relations/   #   関係性 MCP
+│   ├── m5-petit-switchbot/   #   家電・カーテン(SwitchBot)MCP
+│   ├── m5-petit-speech/      #   声(TTS)サーバー(GPU 機で動かす)
+│   ├── m5-petit-app/         #   ダッシュボードの切り出し版
+│   └── m5-petit-scripts/     #   ユーティリティの切り出し版
+├── dashboard/                # Web ダッシュボード(FastAPI :8765)+ generate_diary.py
+├── experience-daemon/        # 体験デーモン(体の出来事を拾って自律行動に渡す)
+├── slack-approve/            # Slack からの承認ボット
+├── scripts/                  # ユーティリティ
+│   ├── setup_house.py        #   家(PETIT_DATA_DIR)を用意する。--check で見るだけ
+│   ├── create_character.py   #   子を迎える(教科書の templates から器を写し、設定と cron を作る)
+│   ├── memory_sleep_all.sh   #   夜の記憶整理(characters/ の全員)
+│   ├── write_mailbox.py / mark_mail_read.py / list_unread_mail.py  # 手紙
+│   ├── append_chat_log.py    #   /chat スキルのチャットログ保存
+│   ├── check_usage.py        #   トークン使用量(今日/今週/今月)
+│   ├── backup_petit.sh / restore_petit.sh
+│   └── tests/                #   pytest
+├── mcp-launchers/            # MCP の起動スクリプト(memory / notes / relations / desire-system / m5-mcp / textbook)
+├── docs/                     # 設計・移行計画
+├── archive/                  # 使っていない MCP
+├── m5-mcp/ memory-mcp/ desire-system/ notes-mcp/ relations-mcp/ switchbot-mcp/  # 切り出し前の古い置き場(本番は src/)
+├── autonomous-action.sh      # 自律行動スクリプト(家ごとの設定。git 管理外)
+├── autonomous-action.sample.sh # ↑の元(setup_house.py が写す)
+├── autonomous-action-goose.sh  # 自律行動の Goose 版(Gemini / OpenAI)
+├── .env.example              # 家の .env の元
+└── .mcp.json.example         # 対話(chat)用 MCP 設定の元(.mcp.json は git 管理外)
 
 ~/petit_claude/               ← データ（PETIT_DATA_DIR、private）
 ├── characters/
@@ -106,6 +115,7 @@ embodied-claude/              ← コード（git管理、public）
 │       │   ├── config.json          # M5ホスト・キャラ名・カラー
 │       │   ├── settings.json        # アクティブ時間帯・機能ON/OFF
 │       │   ├── autonomous-mcp.json  # 自律行動用 MCP 設定
+│       │   ├── chat-mcp.json        # 対話用 MCP 設定(自律用と同じ)
 │       │   ├── desire_config.json   # 欲求定義・sensor_effects・cross_effects
 │       │   └── voice_settings.json  # TTS 声設定
 │       ├── data/
@@ -129,7 +139,11 @@ embodied-claude/              ← コード（git管理、public）
 │   ├── exchange_notebook.json
 │   ├── group_chat.json
 │   └── trio_chat.json
-├── mailbox/                  # キャラ間メッセージ
+├── mailbox/                  # 手紙(ぷち同士・人と)
+├── textbook/                 # ぷちの教科書の clone(毎朝 04:30 に pull)
+├── config/
+│   └── people.json           # ぷち以外の人(表示名・色)
+├── .env                      # 一緒に暮らす人の名前・声のサーバー・鍵(.env.example から)
 ├── notes/                    # 人間ユーザー（arisan/kazahaya）のノート
 ├── token_logs/               # APIトークン使用量ログ（全ソース統合）
 │   ├── token_log.jsonl       #   全キャラ・全ソース統合
@@ -775,27 +789,22 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 
 ## crontab
 
-`create_character.py` がキャラ別のエントリを自動追加するが、手動で確認・編集する場合:
+`setup_house.py` が家の共通分を、`create_character.py` がキャラ別の分を足す。手で確かめるときの形:
 
 ```bash
-# --- キャラ別（キャラごとに2行ずつ） ---
+# --- キャラ別(create_character.py が足す。自律行動は子ごとに 5 分ずらす) ---
+*/5 * * * * cd /path/to/petit-ones/src/m5-petit-desire && mkdir -p ~/petit_claude/.autonomous-logs/<char_id> && PETIT_DATA_DIR=~/petit_claude uv run python desire_updater.py <char_id> >> ~/petit_claude/.autonomous-logs/<char_id>/desire-$(date +\%Y\%m\%d).log 2>&1
+0,30 * * * * /path/to/petit-ones/autonomous-action.sh <char_id>      # 次の子は 5,35、その次は 10,40
+@reboot /path/to/petit-ones/experience-daemon/start_experienced.sh <char_id>
+*/5 * * * * /path/to/petit-ones/experience-daemon/start_experienced.sh <char_id>
 
-# 欲求レベル更新（5分毎）
-*/5  * * * * cd /path/to/embodied-claude/desire-system && uv run python desire_updater.py <char_id> >> ~/petit_claude/.autonomous-logs/<char_id>/desire-$(date +\%Y\%m\%d).log 2>&1
+# --- 共通(setup_house.py が足す) ---
+5 4 * * * PETIT_DATA_DIR=~/petit_claude /path/to/petit-ones/scripts/memory_sleep_all.sh >> ~/petit_claude/.autonomous-logs/memory-sleep.log 2>&1   # 記憶の整理
+30 4 * * * cd ~/petit_claude/textbook && git pull -q --ff-only >/dev/null 2>&1   # ぷちの教科書(petit-textbook)を毎朝取り直す
+50 23 * * * cd /path/to/petit-ones/dashboard && PETIT_DATA_DIR=~/petit_claude uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1   # 日記
 
-# 自律行動 Claude 版（30分毎）
-*/30 * * * * /path/to/embodied-claude/autonomous-action.sh <char_id>
-
-# 自律行動 Goose 版（30分毎・Gemini）
-*/30 * * * * /path/to/embodied-claude/autonomous-action-goose.sh <char_id>
-
-# --- 共通 ---
-
-# 日記サマリー生成（毎日23:50、全キャラ分）
-50 23 * * * cd /path/to/embodied-claude/dashboard && uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1
-
-# バックアップ（毎日4:00、7日分保持）
-0 4 * * * bash ~/petit_claude/backup/save.sh && find ~/petit_claude/backup -maxdepth 1 -type d -name "[0-9]*" -mtime +7 -exec rm -rf {} \;
+# --- 任意 ---
+0 4 * * * bash ~/petit_claude/backup/save.sh   # バックアップ(scripts/backup_petit.sh)
 ```
 
 ## コンテキスト節約の変更（2026-03-09）

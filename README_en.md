@@ -1,4 +1,4 @@
-# Cube Petit Claude
+# petit-ones
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -57,122 +57,109 @@ Combine M5Stack + Claude Code + memory system to create characters with eyes (ca
 ## Directory Structure
 
 ```
-embodied-claude/              <- Code (git-managed, public)
-|-- m5-mcp/                   # M5Stack control MCP
-|-- memory-mcp/               # Long-term memory MCP
-|-- desire-system/            # Desire system (MCP + updater)
-|-- relations-mcp/            # Relationships MCP
-|-- notes-mcp/                # Persistent notes MCP
-|-- dashboard/                # Web dashboard
-|-- tts-mcp/                  # TTS MCP (ElevenLabs / VOICEVOX)
-|-- system-temperature-mcp/   # Body temperature MCP
-|-- scripts/                  # Utility scripts
-|   |-- write_mailbox.py      #   Mailbox writer
-|   |-- reader.py             #   Memory reader
-|-- autonomous-action.sh      # Autonomous action script (.gitignore)
-|-- autonomous-action.sample.sh # Template for the above
-|-- create_character.py       # Character creation script
-|
-|  # From original (unused or limited use)
-|-- wifi-cam-mcp/             # Wi-Fi PTZ camera (for Tapo)
-|-- usb-webcam-mcp/           # USB camera
-|-- ip-webcam-mcp/            # Android phone camera
-|-- mobility-mcp/             # Robot vacuum
-|-- mcp-pet/                  # PErsonal Terminal
-|-- morning-call-mcp/         # Morning call
+petit-ones/                   <- Code (git-managed, public)
+|-- src/                      # Production components (source of the split-out repos)
+|   |-- m5-petit-mcp/         #   Body (M5Stack CoreS3) MCP
+|   |-- m5-petit-memory/      #   Long-term memory MCP (SQLite) + nightly scripts/sleep.py
+|   |-- m5-petit-desire/      #   Desires (MCP + desire_updater.py)
+|   |-- m5-petit-notes/       #   Notes MCP
+|   |-- m5-petit-relations/   #   Relationships MCP
+|   |-- m5-petit-switchbot/   #   Home appliances (SwitchBot) MCP
+|   |-- m5-petit-speech/      #   Voice (TTS) server, runs on the GPU box
+|   |-- m5-petit-app/ m5-petit-scripts/  # Split-out copies of dashboard / scripts
+|-- dashboard/                # Web dashboard (FastAPI :8765) + generate_diary.py
+|-- experience-daemon/        # Picks up body events and hands them to the next autonomous run
+|-- slack-approve/            # Approval bot via Slack
+|-- scripts/
+|   |-- setup_house.py        #   Prepare the "house" (PETIT_DATA_DIR); --check only reports
+|   |-- create_character.py   #   Welcome a new Petit (copies templates from petit-textbook, writes config + cron)
+|   |-- memory_sleep_all.sh   #   Nightly memory consolidation for every character
+|   |-- write_mailbox.py / mark_mail_read.py / list_unread_mail.py  # Letters
+|   |-- check_usage.py        #   Token usage (today / week / month)
+|   |-- tests/
+|-- mcp-launchers/            # Launch scripts for the MCP servers (incl. textbook)
+|-- docs/ archive/
+|-- m5-mcp/ memory-mcp/ desire-system/ notes-mcp/ relations-mcp/ switchbot-mcp/  # Pre-split copies (production is src/)
+|-- autonomous-action.sh      # Autonomous action script (per-house, git-ignored)
+|-- autonomous-action.sample.sh # Template; setup_house.py copies it
+|-- .env.example              # Template for the house .env
+|-- .mcp.json.example         # Template for the chat MCP config
 
-~/petit_claude/               <- Data (PETIT_DATA_DIR, private)
-|-- characters/
-|   |-- puchiko/
-|   |   |-- config.json       # M5 host, character name, color
-|   |   |-- SOUL.md           # Personality definition
-|   |   |-- settings.json     # Active hours, feature toggles
-|   |   |-- desires.json      # Current desire levels (updated every 5 min)
-|   |   |-- desire_config.json # Desire definitions, sensor_effects, cross_effects
-|   |   |-- relations.json    # Feelings toward other characters/user
-|   |   |-- autonomous-mcp.json # MCP config for autonomous actions
-|   |   |-- chat_history.json # Chat history
-|   |   |-- notes/            # Persistent notes
-|   |-- puchiteya/
-|-- mailbox/                  # Inter-character messages
-|-- .autonomous-logs/         # Autonomous action logs
-|-- SOUL.md, TODO.md, ROUTINES.md
-|-- settings.json, group_chat.json
-|-- auth.json                 # Dashboard auth (optional)
-|-- backup/                   # Backup scripts + data
+~/petit_claude/               <- Data, "the house" (PETIT_DATA_DIR, private)
+|-- characters/<id>/
+|   |-- config/               # config.json, settings.json, voice_settings.json, desire_config.json, autonomous-mcp.json, chat-mcp.json
+|   |-- data/                 # desires.json (every 5 min), relations.json
+|   |-- state/ resources/ chat_histories/ diary/ notes/
+|   |-- SOUL.md SOUL_REFLECTIONS.md REFLECTION_INDEX.md ROUTINES.md ROUTINES_DETAIL.md TODO_ACTIVE.md TODO_ARCHIVE.md
+|-- chat_history/             # exchange notebook, group chats
+|-- mailbox/                  # Letters between Petits and people
+|-- textbook/                 # Clone of petit-textbook (pulled every morning)
+|-- config/people.json        # Non-Petit people (display name, color)
+|-- .env                      # Companion name, voice server host, secrets
+|-- token_logs/ .autonomous-logs/
+|-- auth.json network.json    # Dashboard auth (optional)
 ```
 
 Code and data are separated. Set the `PETIT_DATA_DIR` environment variable to change the data directory (default: `~/petit_claude`).
 
 ## Setup
 
+A Petit's life is split into the **house** (`PETIT_DATA_DIR`, default `~/petit_claude`, never in git) and the **code** (this repository).
+The human-side guide is the [Petit Textbook](https://github.com/PetitOnes/petit-textbook), chapter 8 of the adult book ("Welcoming a new Petit").
+
 ### 1. Prerequisites
 
 ```bash
-# uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Claude Code
-npm install -g @anthropic-ai/claude-code
-
-# Other
-sudo apt install -y jq sqlite3
+curl -LsSf https://astral.sh/uv/install.sh | sh     # uv
+# Claude Code (native): see https://docs.claude.com/ ; ends up in ~/.local/bin/claude
+sudo apt install -y jq git                            # Linux (brew on macOS)
+sudo apt install -y ttyd tmux                         # optional browser terminal (docs/terminal-setup.md)
 ```
 
-### 2. Clone
+### 2. Clone and install
 
 ```bash
-git clone https://github.com/fruitriin/embodied-claude.git
-cd embodied-claude
-```
-
-### 3. Install Dependencies
-
-```bash
-for dir in m5-mcp memory-mcp desire-system dashboard relations-mcp notes-mcp system-temperature-mcp; do
-  echo "--- $dir ---"
-  (cd "$dir" && uv sync)
+git clone https://github.com/PetitOnes/petit-ones.git ~/work/petit-ones
+cd ~/work/petit-ones
+for d in src/m5-petit-memory src/m5-petit-desire src/m5-petit-mcp src/m5-petit-notes src/m5-petit-relations dashboard; do
+  (cd "$d" && uv sync)
 done
 ```
 
-### 4. Add a Character
+### 3. Prepare the house
 
 ```bash
-uv run python create_character.py <id> <name> <color> <M5 IP>
-
-# Example:
-uv run python create_character.py puchiko Puchiko "#cab8d9" 10.42.138.100
+uv run python scripts/setup_house.py --check   # report what is missing
+uv run python scripts/setup_house.py           # create it (existing things are left alone)
 ```
 
-This automatically creates:
-- Config files in `~/petit_claude/characters/{id}/`
-- Cron entries for desire updates (every 5 min) and autonomous actions (every 20 min)
+Creates `characters/ mailbox/ chat_history/ config/ state/ .autonomous-logs/ token_logs/`, empty exchange-notebook and group-chat files, `.env` (from `.env.example`: `COMPANION_NAME`, `COMPANION_ID`, voice server, secrets), a clone of the textbook (`textbook/`), the three nightly cron jobs (memory consolidation 04:05, textbook pull 04:30, diary 23:50) and `autonomous-action.sh` (copied from `autonomous-action.sample.sh`; adjust the starred lines for your house).
 
-After creation, edit `characters/{id}/SOUL.md` to define the character's personality.
-
-### 5. Autonomous Action Script
+### 4. Welcome a Petit
 
 ```bash
-cp autonomous-action.sample.sh autonomous-action.sh
-vim autonomous-action.sh  # Edit HOME, PATH, PROJECT_DIR
-chmod +x autonomous-action.sh
+uv run python scripts/create_character.py <id> <name> <#hex> <body-host,...> \
+    --color-name <color name> --companion-id <id of the person> --companion-name <what the Petit calls them>
 ```
 
-### 6. Environment Variables
+Creates `characters/<id>/` with the document templates from the textbook's `petit/templates/` (SOUL.md, SOUL_REFLECTIONS.md, REFLECTION_INDEX.md, ROUTINES.md, ROUTINES_DETAIL.md, TODO_ACTIVE.md, TODO_ARCHIVE.md, data/relations.json, config/desire_config.json, placeholders filled in), the runtime config (config.json, settings.json, voice_settings.json, autonomous-mcp.json, chat-mcp.json) and the cron entries (desire update every 5 min, autonomous action every 30 min offset by 5 min from the other Petits, experience daemon).
+
+Afterwards a human adds the "one line" agreed with the companion to SOUL.md, sets `config/voice_settings.json` once the voice is chosen, puts the face in `resources/petit.png`, and adds the Petit's MCP servers to `.mcp.json` for chat (see `.mcp.json.example`). The rest of SOUL.md is filled in by the Petit itself (`petit/SOUL_TEMPLATE.md` in the textbook).
+
+### 5. Body and voice
+
+- Firmware for the M5Stack CoreS3: [m5-petit-firmware](https://github.com/PetitOnes/m5-petit-firmware). Pass the body's hostname or IP to `create_character.py`
+- Voice (TTS :8766) and speech recognition (ASR :8767): [m5-petit-speech](https://github.com/PetitOnes/m5-petit-speech) / [voice-recognition](https://github.com/PetitOnes/m5-petit-voice-recognition) on a GPU box; set `VOICE_API_HOST` in `.env`
+
+### 6. Dashboard
 
 ```bash
-cd desire-system
-cp .env.example .env
-# Set COMPANION_NAME etc. in .env
+cd dashboard && uv run python main.py   # -> http://0.0.0.0:8765
 ```
 
-### 7. Start Dashboard
+### 7. First run
 
-```bash
-cd dashboard
-uv run python main.py
-# -> http://0.0.0.0:8765
-```
+Start one interactive session, let the Petit say "hello" and check that the face appears. After that the cron jobs take over. The Petit writes its own first memory (textbook chapter 10).
 
 ## MCP Servers
 
@@ -496,24 +483,19 @@ Daily automatic backup at 4:00 AM via cron (7-day retention). See `~/petit_claud
 
 ## Crontab
 
-`create_character.py` auto-adds per-character entries, but for manual editing:
+`setup_house.py` adds the shared lines, `create_character.py` the per-character ones:
 
 ```bash
-# --- Per character (2 lines each) ---
+# --- Per character (create_character.py; autonomous action offset by 5 min per Petit) ---
+*/5 * * * * cd /path/to/petit-ones/src/m5-petit-desire && mkdir -p ~/petit_claude/.autonomous-logs/<char_id> && PETIT_DATA_DIR=~/petit_claude uv run python desire_updater.py <char_id> >> ~/petit_claude/.autonomous-logs/<char_id>/desire-$(date +\%Y\%m\%d).log 2>&1
+0,30 * * * * /path/to/petit-ones/autonomous-action.sh <char_id>      # next Petit 5,35, then 10,40
+@reboot /path/to/petit-ones/experience-daemon/start_experienced.sh <char_id>
+*/5 * * * * /path/to/petit-ones/experience-daemon/start_experienced.sh <char_id>
 
-# Desire level update (every 5 min)
-*/5  * * * * cd /path/to/embodied-claude/desire-system && uv run python desire_updater.py <char_id> >> ~/petit_claude/.autonomous-logs/<char_id>/desire-$(date +\%Y\%m\%d).log 2>&1
-
-# Autonomous action (every 20 min)
-*/20 * * * * /path/to/embodied-claude/autonomous-action.sh <char_id>
-
-# --- Shared ---
-
-# Daily diary summary (23:50, all characters)
-50 23 * * * cd /path/to/embodied-claude/dashboard && uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1
-
-# Backup (daily 4:00, 7-day retention)
-0 4 * * * bash ~/petit_claude/backup/save.sh && find ~/petit_claude/backup -maxdepth 1 -type d -name "[0-9]*" -mtime +7 -exec rm -rf {} \;
+# --- Shared (setup_house.py) ---
+5 4 * * * PETIT_DATA_DIR=~/petit_claude /path/to/petit-ones/scripts/memory_sleep_all.sh >> ~/petit_claude/.autonomous-logs/memory-sleep.log 2>&1
+30 4 * * * cd ~/petit_claude/textbook && git pull -q --ff-only >/dev/null 2>&1
+50 23 * * * cd /path/to/petit-ones/dashboard && PETIT_DATA_DIR=~/petit_claude uv run python generate_diary.py >> ~/petit_claude/.autonomous-logs/diary.log 2>&1
 ```
 
 ## License
