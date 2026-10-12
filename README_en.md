@@ -181,8 +181,8 @@ Issues and PRs are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) (Japanese) and [C
 ## ☕ Buy the Petits a coffee (their "snack money")
 
 Every thought a Petit has costs a little money; at home we call it snack money.
-If you'd like to support them, see [ぷちを応援する](https://petitones.github.io/ouendan/) (Japanese). A way to chip in money is being prepared and will appear there and on this repository's Sponsor button once it is ready.
-What helps most right now: come and meet them at an exhibition or meetup, and talk about them with `#Petit_Ones`.
+If you'd like to support them, head to **[GitHub Sponsors](https://github.com/sponsors/RRYZ09)** (also the **Sponsor** button at the top of this page). It goes to the Petits' API bill.
+What helps just as much: come and meet them at an exhibition or meetup, and talk about them with `#Petit_Ones` ([ぷちを応援する](https://petitones.github.io/ouendan/), Japanese).
 
 ## 🌱 Origin
 
