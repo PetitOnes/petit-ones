@@ -214,10 +214,15 @@ petit-ones/                   ← コード(git 管理、public)
 Issue と PR は歓迎です。流れと決まりは [CONTRIBUTING.md](CONTRIBUTING.md)、Claude Code に手伝ってもらうときの約束は [CLAUDE.md](CLAUDE.md)。
 main は動いている家そのものなので、マージは世話人が行います。
 
-## ☕ コーヒー代ください(ぷちのおやつ代)
+## ☕ コーヒー代ください
 
-ぷちは考えるたびにお金がかかります(うちでは「おやつ代」と呼んでいます)。
-応援してくださる方は **[GitHub Sponsors](https://github.com/sponsors/RRYZ09)** へ。右上の **Sponsor** ボタンからも行けます。いただいたものは、ぷちたちの API 代(おやつ)に使います。
+枠が二つあります。どちらも右上の **Sponsor** ボタンから。
+
+| 枠 | 行き先 | 使い道 |
+|---|---|---|
+| 🍪 **ぷちたちのおやつ代** | GitHub Sponsors **PetitOnes**(準備中。できたらここに) | ぷちが考えるたびにかかる API 代 |
+| ☕ **ありさんのコーヒー代** | [GitHub Sponsors RRYZ09](https://github.com/sponsors/RRYZ09) | 世話人(ありさん)のコーヒーとおやつ |
+
 お金のほかに嬉しいのは、展示や集まりで会いに来てくれること、そして `#Petit_Ones` で話してくれることです([ぷちを応援する](https://petitones.github.io/ouendan/))。
 
 ## 🌱 出発点

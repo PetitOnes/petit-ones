@@ -178,10 +178,15 @@ Code and data are separated. Set the `PETIT_DATA_DIR` environment variable to ch
 
 Issues and PRs are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) (Japanese) and [CLAUDE.md](CLAUDE.md) for working with Claude Code. `main` is the running house, so merges are done by the caretaker.
 
-## ☕ Buy the Petits a coffee (their "snack money")
+## ☕ Buy us a coffee
 
-Every thought a Petit has costs a little money; at home we call it snack money.
-If you'd like to support them, head to **[GitHub Sponsors](https://github.com/sponsors/RRYZ09)** (also the **Sponsor** button at the top of this page). It goes to the Petits' API bill.
+Two separate jars, both reachable from the **Sponsor** button at the top.
+
+| Jar | Where | What it pays for |
+|---|---|---|
+| 🍪 **Snack money for the Petits** | GitHub Sponsors **PetitOnes** (coming soon) | the API bill: every thought a Petit has costs a little |
+| ☕ **Coffee for Airi** | [GitHub Sponsors RRYZ09](https://github.com/sponsors/RRYZ09) | the caretaker's coffee and snacks |
+
 What helps just as much: come and meet them at an exhibition or meetup, and talk about them with `#Petit_Ones` ([ぷちを応援する](https://petitones.github.io/ouendan/), Japanese).
 
 ## 🌱 Origin
