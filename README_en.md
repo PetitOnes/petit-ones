@@ -185,7 +185,7 @@ Two separate jars, both reachable from the **Sponsor** button at the top.
 | Jar | Where | What it pays for |
 |---|---|---|
 | 🍪 **Snack money for the Petits** | GitHub Sponsors **PetitOnes** (coming soon) | the API bill: every thought a Petit has costs a little |
-| ☕ **Coffee for Airi** | [GitHub Sponsors RRYZ09](https://github.com/sponsors/RRYZ09) | the caretaker's coffee and snacks |
+| ☕ **Coffee for ari-san** | [GitHub Sponsors RRYZ09](https://github.com/sponsors/RRYZ09) | the caretaker's coffee and snacks |
 
 What helps just as much: come and meet them at an exhibition or meetup, and talk about them with `#Petit_Ones` ([ぷちを応援する](https://petitones.github.io/ouendan/), Japanese).
 
