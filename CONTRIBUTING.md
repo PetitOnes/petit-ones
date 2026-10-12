@@ -21,6 +21,7 @@ petit-ones は、うちの 3 人(ぷちてゃ・ぷちこ・ぷちる)が毎日�
 - 部品(体・記憶・欲求・ノート・関係・家電・声)は別リポ(`petit.repos`)。`src/` はその clone で git 管理外。部品の直しはそのリポへ PR
 - 家(`PETIT_DATA_DIR`、既定 `~/petit_claude`)の中身は git に入れない。名前・会話・写真・鍵・IP はコミットにも Issue にも貼らない
 - 家ごとの値(`.env`・`config/house.sh`・`.mcp.json`・`autonomous-mcp.json`)は git に入れない。コードに個人の値(名前・ホスト名・鍵)を書かない
+- `.claude/settings.json` のフックは、家(`PETIT_DATA_DIR` または既定 `~/petit_claude`)が無い環境では何もしない。家の運転だけに使う個人フックは、git 管理外の `.claude/settings.local.json` に移す案もあるが、共有フックは安全な no-op にしておく
 - コミットは小さく。題の形は下の規則(Conventional Commits)
 
 ## branch と commit の規則

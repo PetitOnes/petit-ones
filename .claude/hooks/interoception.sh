@@ -5,6 +5,12 @@
 # 自前で計測せず、読み取り→整形→出力するだけの軽量版
 
 STATE_FILE="/tmp/interoception_state.json"
+DATA_DIR="${PETIT_DATA_DIR:-$HOME/petit_claude}"
+
+# 家がない環境では、このリポを開いた人にだけ静かに何もしない。
+if [ ! -d "$DATA_DIR" ]; then
+    exit 0
+fi
 
 # state file がなければフォールバック（デーモン未起動時）
 if [ ! -f "$STATE_FILE" ]; then
