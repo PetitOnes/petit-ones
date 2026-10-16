@@ -1239,9 +1239,12 @@ def save_chat_log(character_id: str, log: list[dict], username: str | None = Non
         json.dump(log[-200:], f, ensure_ascii=False, indent=2)
 
 
-def append_chat(character_id: str, role: str, text: str, username: str | None = None) -> None:
+def append_chat(character_id: str, role: str, text: str, username: str | None = None, photo: str | None = None) -> None:
     log = load_chat_log(character_id, username)
-    log.append({"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+    entry = {"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()}
+    if photo:
+        entry["photo"] = photo   # 写真つき(2026-10-16): 送った人のアルバムのファイル名
+    log.append(entry)
     save_chat_log(character_id, log, username)
 
 
@@ -4241,7 +4244,11 @@ def api_memories_today(character_id: str):
 @app.get("/api/{character_id}/chat/history")
 def api_chat_history(character_id: str, request: Request):
     username = _get_username(request) or "arisan"
-    return load_chat_log(character_id, username)[-100:]
+    log = load_chat_log(character_id, username)[-100:]
+    for m in log:
+        if m.get("photo"):
+            m["photo_url"] = f"/api/album/{username}/{m['photo']}"
+    return log
 
 
 class GroupChatRequest(BaseModel):
@@ -4803,6 +4810,7 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
 class ChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
+    photo: str | None = None   # 送った写真(自分のアルバムのファイル名。先に /api/album/<me>/upload)
 
 
 class MailSendRequest(BaseModel):
@@ -4854,6 +4862,10 @@ def _activate_puchiru_cron() -> bool:
     return True
 
 
+def user_display_for(username: str) -> str:
+    return _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])["name"]
+
+
 @app.post("/api/{character_id}/chat")
 async def api_chat(character_id: str, req: ChatRequest, request: Request):
     username = _get_username(request) or "arisan"
@@ -4878,8 +4890,14 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
                 skip_user_append = True
         _chat_jobs[key] = {"state": "processing", "ts": time.time()}
 
+    # 写真つき(2026-10-16): 自分のアルバムにある写真の path を本文に添えて、Read で見てもらう
+    photo_path = None
+    if req.photo:
+        cand = _album_dir(username) / Path(req.photo).name
+        if cand.exists() and cand.suffix == ".jpg":
+            photo_path = cand
     if not skip_user_append:
-        append_chat(character_id, "user", req.message, username)
+        append_chat(character_id, "user", req.message or ("📷 写真" if photo_path else ""), username, photo=photo_path.name if photo_path else None)
 
     # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
@@ -4889,6 +4907,9 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     # @opus / @sonnet でモデル指定
     chat_model = None
     chat_message = req.message
+    if photo_path:
+        chat_message = (f"[{user_display_for(username)}が写真を送りました: {photo_path}]\n"
+                        f"まず Read でこの写真を見てから、見たものに触れて返事してください。\n{req.message}").rstrip()
     if req.message.startswith("@opus "):
         chat_model = "opus"
         chat_message = req.message[6:]
@@ -5432,7 +5453,11 @@ HTML = """<!DOCTYPE html>
     .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
     .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
-    .chat-input { display: flex; gap: 8px; }
+    .chat-input { display: flex; gap: 6px; align-items: center; }
+    .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; opacity: 0.7; }
+    .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+    .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; }
     .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
@@ -5592,7 +5617,14 @@ HTML = """<!DOCTYPE html>
         <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
+        <div id="photoPreview" style="display:none;align-items:center;gap:8px;margin-bottom:6px;">
+          <img id="photoPreviewImg" style="height:56px;border-radius:8px;" alt="">
+          <button onclick="clearPhoto()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
+        </div>
         <div class="chat-input">
+          <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
+          <button class="chat-icon-btn" onclick="document.getElementById('photoFile').click()" title="写真を送る">📷</button>
+          <button class="chat-icon-btn" id="chatMicBtn" onclick="chatMic()" title="声で入力">🎤</button>
           <input type="text" id="input" placeholder="話しかける..." />
           <button id="send">送信</button>
         </div>
@@ -5925,7 +5957,7 @@ HTML = """<!DOCTYPE html>
           chat.appendChild(sep);
           lastDay = day;
         }
-        if (m.role === "user") addMsg(m.text, "user");
+        if (m.role === "user") addMsg(m.text, "user", null, null, m.photo_url);
         else if (id === "select" || id === "group") addMsg(m.text, "group", m.color, m.name);
         else addMsg(m.text, "char");
       }
@@ -6043,7 +6075,7 @@ HTML = """<!DOCTYPE html>
       } catch(e) { document.getElementById("updated").textContent = "取得失敗"; }
     }
 
-    function addMsg(text, role, color, name) {
+    function addMsg(text, role, color, name, photoUrl) {
       const chat = document.getElementById("chat");
       if (role === "group") {
         // グループメッセージ：名前＋色付きバブル
@@ -6067,6 +6099,12 @@ HTML = """<!DOCTYPE html>
       const div = document.createElement("div");
       div.className = "msg " + role;
       div.textContent = text;
+      if (photoUrl) {
+        const img = document.createElement("img");
+        img.className = "chat-photo"; img.src = photoUrl; img.alt = "写真";
+        img.onclick = () => window.open(photoUrl, "_blank");
+        div.appendChild(img);
+      }
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
       return div;
@@ -6077,14 +6115,73 @@ HTML = """<!DOCTYPE html>
     }
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    // 写真(2026-10-16 ありさん): 選ぶ → 送信で自分のアルバムに上げてからぷちに渡す
+    let _pendingPhoto = null, _myId = "arisan";
+    function pickPhoto(inp) {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      _pendingPhoto = f;
+      const img = document.getElementById("photoPreviewImg");
+      img.src = URL.createObjectURL(f);
+      document.getElementById("photoPreview").style.display = "flex";
+      inp.value = "";
+    }
+    function clearPhoto() {
+      _pendingPhoto = null;
+      document.getElementById("photoPreview").style.display = "none";
+    }
+    async function uploadPendingPhoto() {
+      const fd = new FormData();
+      fd.append("file", _pendingPhoto, _pendingPhoto.name || "photo.jpg");
+      fd.append("title", "chat");
+      const res = await fetch(`/api/album/${_myId}/upload`, {method: "POST", body: fd});
+      if (!res.ok) throw new Error("upload " + res.status);
+      return (await res.json()).filename;
+    }
+    // 声(2026-10-16 ありさん): ブラウザの音声認識で文字にして入力欄へ
+    let _chatRec = null;
+    async function chatMic() {
+      const btn = document.getElementById("chatMicBtn");
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) { addMsg("このブラウザは音声入力に対応していません", "system"); return; }
+      if (_chatRec) { _chatRec.stop(); return; }
+      try { const s = await navigator.mediaDevices.getUserMedia({audio: true}); s.getTracks().forEach(t => t.stop()); }
+      catch { addMsg("マイクの使用を許可してください", "system"); return; }
+      const input = document.getElementById("input");
+      _chatRec = new SR();
+      _chatRec.lang = "ja-JP"; _chatRec.interimResults = true; _chatRec.maxAlternatives = 1;
+      const base = input.value;
+      _chatRec.onstart = () => { btn.classList.add("recording"); btn.textContent = "⏹"; };
+      _chatRec.onresult = e => {
+        let s = "";
+        for (const r of e.results) s += r[0].transcript;
+        input.value = base + s;
+      };
+      _chatRec.onerror = () => {};
+      _chatRec.onend = () => { btn.classList.remove("recording"); btn.textContent = "🎤"; _chatRec = null; input.focus(); };
+      _chatRec.start();
+    }
+
     async function send() {
       const input = document.getElementById("input");
       const btn = document.getElementById("send");
       const text = input.value.trim();
-      if (!text) return;
+      if (!text && !_pendingPhoto) return;
+      if (_pendingPhoto && (currentCharId === "select" || currentCharId === "group")) {
+        addMsg("写真はひとりのぷちに送ってね(みんな/だれかにはまだ)", "system"); return;
+      }
       input.value = "";
       btn.disabled = true;
-      addMsg(text, "user");
+      let photoName = null;
+      if (_pendingPhoto) {
+        const localUrl = document.getElementById("photoPreviewImg").src;
+        try { photoName = await uploadPendingPhoto(); }
+        catch { addMsg("写真を上げられませんでした", "system"); btn.disabled = false; input.value = text; return; }
+        addMsg(text || "📷 写真", "user", null, null, localUrl);
+        clearPhoto();
+      } else {
+        addMsg(text, "user");
+      }
       // 送信ごとにIDを付ける。切断→再送してもサーバー側で二重処理されない
       const msgId = genMsgId();
 
@@ -6104,7 +6201,7 @@ HTML = """<!DOCTYPE html>
         let attempts = 0;
         while (true) {
           try {
-            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId}) });
+            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, photo:photoName}) });
             if (!res.ok) throw new Error("http " + res.status);
             const data = await res.json();
             if (data.status === "processing") {
@@ -6799,7 +6896,7 @@ HTML = """<!DOCTYPE html>
     document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
 
     checkAuth();
-    fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん";}).catch(()=>{});
+    fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
     loadCharacters();
     update();
     loadChatHistoryInto(currentCharId);
