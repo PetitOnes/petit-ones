@@ -748,7 +748,9 @@ def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
 NOTEBOOK_FILE = CHAT_HISTORY_DIR / "exchange_notebook.json"
 ALBUM_DIR = DATA_DIR / "photo_album"
 ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
-ALBUM_MAX_PHOTOS = 50
+ALBUM_MAX_PHOTOS = 50                     # ぷちのアルバム
+ALBUM_MAX_PHOTOS_HUMAN = 200              # 人のアルバム(2026-10-16 ありさん「200 枚くらい、消えないで」)
+ALBUM_HUMANS = {"arisan", "kazahaya"}
 ALBUM_MAX_PX = 1200
 ALBUM_JPEG_QUALITY = 80
 
@@ -827,7 +829,8 @@ def _prune_album(person_id: str):
     d = _album_dir(person_id)
     locks = _load_locks(person_id)
     photos = sorted(d.glob("*.jpg"))
-    while len(photos) > ALBUM_MAX_PHOTOS:
+    limit = ALBUM_MAX_PHOTOS_HUMAN if person_id in ALBUM_HUMANS else ALBUM_MAX_PHOTOS
+    while len(photos) > limit:
         # ロックされていない最古のものを削除
         to_delete = next((p for p in photos if p.name not in locks), None)
         if to_delete is None:
@@ -1793,6 +1796,93 @@ def kankei_page():
 @app.get("/notes", response_class=HTMLResponse)
 def notes_page():
     return HTMLResponse(NOTES_HTML)
+
+
+# ---- 回覧板(チーム「ぷち」からぷちたちへの報告。PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>*.md) ----
+KAIRANBAN_DIR = Path(os.environ.get("PETIT_KAIRANBAN_DIR", str(DATA_DIR / "kairanban")))
+
+
+def _kairanban_title(text: str, fallback: str) -> str:
+    """最初の見出し(# / ##)。無ければファイル名の _ を空白に"""
+    for line in text.splitlines():
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+    return fallback.replace("_", " ")
+
+
+@app.get("/api/kairanban")
+def api_kairanban():
+    """回覧板の一覧(新しい順)。README と drafts/ は出さない"""
+    if not KAIRANBAN_DIR.is_dir():
+        return []
+    items = []
+    for f in sorted(KAIRANBAN_DIR.glob("*.md"), reverse=True):
+        if f.name.lower() == "readme.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        items.append({
+            "filename": f.name,
+            "date": f.name[:10],
+            "title": _kairanban_title(text, f.stem),
+            "content": text,
+        })
+    return items
+
+
+KAIRANBAN_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>回覧板</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <style>
+    body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f6f3fa; color: #333; margin: 0; padding: 16px; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.2rem; margin: 0 0 12px; }
+    h1 a { text-decoration: none; color: #999; font-size: 0.9rem; margin-right: 8px; }
+    .issue { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .issue summary { cursor: pointer; font-weight: 700; list-style: none; }
+    .issue summary::-webkit-details-marker { display: none; }
+    .issue summary .date { font-weight: 400; color: #999; font-size: 0.8rem; margin-left: 8px; }
+    .issue summary::before { content: "▸ "; color: #b8a6d4; }
+    .issue[open] summary::before { content: "▾ "; }
+    .md { font-size: 0.92rem; line-height: 1.75; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; word-break: break-word; }
+    .md h1 { font-size: 1.05rem; } .md h2 { font-size: 0.98rem; margin: 16px 0 6px; } .md h3 { font-size: 0.92rem; }
+    .md pre { background: #f4f4f4; padding: 8px; border-radius: 8px; overflow-x: auto; font-size: 0.8rem; }
+    .md code { background: #f4f4f4; padding: 1px 4px; border-radius: 4px; font-size: 0.85em; }
+    .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid #ddd; padding: 4px 8px; }
+    .empty { color: #999; text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1><a href="/">←</a>📋 回覧板</h1>
+  <div id="list"><div class="empty">読み込み中…</div></div>
+</div>
+<script>
+  (async () => {
+    const list = document.getElementById("list");
+    let items = [];
+    try { items = await (await fetch("/api/kairanban")).json(); } catch {}
+    if (!items.length) { list.innerHTML = '<div class="empty">まだ回覧板はありません</div>'; return; }
+    const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    list.innerHTML = items.map((it, i) => `<details class="issue"${i === 0 ? " open" : ""}>
+      <summary>${esc(it.title)}<span class="date">${esc(it.date)}</span></summary>
+      <div class="md">${window.marked ? marked.parse(it.content) : "<pre>" + esc(it.content) + "</pre>"}</div>
+    </details>`).join("");
+  })();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/kairanban", response_class=HTMLResponse)
+def kairanban_page():
+    return HTMLResponse(KAIRANBAN_HTML)
 
 
 @app.get("/library", response_class=HTMLResponse)
@@ -4903,6 +4993,7 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
     parts = name.split("_")
     date_str = ""
     sender = ""
+    sender_id = ""
     if parts[0] == "from" and "to" in parts:
         ti = parts.index("to")
         sender_id = "_".join(parts[1:ti])
@@ -4916,7 +5007,7 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
             time_str = parts[3] if len(parts) > 3 else ""
             if len(date_str) == 8 and len(time_str) >= 4:
                 date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
-    return {"_file": f, "filename": f.name, "date": date_str, "sender": sender}
+    return {"_file": f, "filename": f.name, "date": date_str, "sender": sender, "sender_id": sender_id}
 
 
 @app.get("/api/mailbox")
@@ -4962,6 +5053,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "content": content,
             "date": c["date"],
             "sender": sender,
+            "sender_id": c.get("sender_id", ""),
             "archived": c["archived"],
             "starred": c["starred"],
             "read_by": c["read_by"],
@@ -5271,6 +5363,10 @@ HTML = """<!DOCTYPE html>
     .mailbox-tab.active { background: var(--char, #cab8d9); color: var(--char-btn-text, #333); font-weight: 600; }
     .mail-actions { display: flex; gap: 6px; align-items: center; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
+    .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
+    .mail-reply textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; resize: vertical; }
+    .mail-reply-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.8rem; }
+    .mail-reply-send { padding: 6px 16px; border: none; border-radius: 8px; background: #e57373; color: #fff; cursor: pointer; font-size: 0.85rem; font-weight: bold; }
     .mail-action-btn:hover { opacity: 0.8; }
     .mail-action-btn.active { opacity: 1; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
@@ -5283,6 +5379,8 @@ HTML = """<!DOCTYPE html>
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
     .msg.user { background: var(--char); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
+    .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
+    .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
     .chat-input { display: flex; gap: 8px; }
     .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
@@ -5659,6 +5757,7 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
       tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
       tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
+      tabs.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
       tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
       tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
       tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
@@ -5702,11 +5801,51 @@ HTML = """<!DOCTYPE html>
       }
     }
 
+    // LINE みたいに、タブを開いたら過去の会話を吹き出しで並べる(2026-10-16 ありさん)
+    const CHAT_HISTORY_SHOW = 60;
+    function _dateLabel(ts) {
+      const d = new Date(ts);
+      if (isNaN(d)) return "";
+      const today = new Date();
+      const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      const y = new Date(today); y.setDate(today.getDate() - 1);
+      if (same(d, today)) return "今日";
+      if (same(d, y)) return "きのう";
+      return `${d.getMonth() + 1}/${d.getDate()}(${"日月火水木金土"[d.getDay()]})`;
+    }
+    async function loadChatHistoryInto(id) {
+      const chat = document.getElementById("chat");
+      let log = [];
+      try {
+        const url = (id === "select" || id === "group") ? "/api/group/history" : `/api/${id}/chat/history`;
+        log = await (await fetch(url)).json();
+      } catch { return; }
+      if (currentCharId !== id) return;          // 読んでいる間にタブが変わった
+      log = log.slice(-CHAT_HISTORY_SHOW);
+      chat.innerHTML = "";
+      let lastDay = "";
+      for (const m of log) {
+        const day = _dateLabel(m.timestamp);
+        if (day && day !== lastDay) {
+          const sep = document.createElement("div");
+          sep.className = "msg-date";
+          sep.textContent = day;
+          chat.appendChild(sep);
+          lastDay = day;
+        }
+        if (m.role === "user") addMsg(m.text, "user");
+        else if (id === "select" || id === "group") addMsg(m.text, "group", m.color, m.name);
+        else addMsg(m.text, "char");
+      }
+      chat.scrollTop = chat.scrollHeight;
+    }
+
     function switchChar(id) {
       const chatEl = document.getElementById("chat");
       chatStates[currentCharId] = chatEl.innerHTML;
       currentCharId = id;
       chatEl.innerHTML = chatStates[id] || "";
+      if (!chatStates[id]) loadChatHistoryInto(id);
       loadCharacters();
       const isGroupLike = id === "select" || id === "group";
       document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
@@ -6157,8 +6296,9 @@ HTML = """<!DOCTYPE html>
 
     async function resetSession() {
       await fetch(`/api/${currentCharId}/chat/session`, {method:"DELETE"});
-      document.getElementById("chat").innerHTML = "";
       chatStates[currentCharId] = "";
+      await loadChatHistoryInto(currentCharId);
+      addMsg("セッションをリセットしました(ここから新しい会話)", "system");
     }
 
     async function openHistory() {
@@ -6302,6 +6442,11 @@ HTML = """<!DOCTYPE html>
 
     let currentMailTab = "inbox";
 
+    window.addEventListener("load", () => {
+      // #mailbox / #settings で開く(スマホのブックマーク用。2026-10-16)
+      if (location.hash === "#mailbox") openMailbox();
+      else if (location.hash === "#settings") openSettings();
+    });
     function openMailbox() {
       currentMailTab = "inbox";
       document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
@@ -6333,11 +6478,52 @@ HTML = """<!DOCTYPE html>
           <div class="mail-actions">
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
             <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
+            ${m.sender_id ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
           </div>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
         <div class="mail-body">${bodyText}</div>
+        ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
+          <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
+          <div class="mail-reply-row">
+            <span class="mail-reply-result"></span>
+            <button class="mail-reply-send" onclick="sendReply(this)">送る</button>
+          </div>
+        </div>` : ""}
       </div>`;
+    }
+
+    // その場で返信(2026-10-16 ありさん): ↩️ で本文の下に返事欄を開き、差出人ひとりに /api/mail/send
+    function toggleReply(btn) {
+      const box = btn.closest(".mail-item").querySelector(".mail-reply");
+      if (!box) return;
+      const open = box.style.display === "none";
+      box.style.display = open ? "" : "none";
+      if (open) box.querySelector("textarea").focus();
+    }
+    async function sendReply(btn) {
+      const box = btn.closest(".mail-reply");
+      const ta = box.querySelector("textarea");
+      const result = box.querySelector(".mail-reply-result");
+      const body = ta.value.trim();
+      if (!body) { result.textContent = "本文を書いてね"; result.style.color = "#e57373"; return; }
+      btn.disabled = true; btn.textContent = "送信中…";
+      try {
+        const res = await fetch("/api/mail/send", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({to_ids: [box.dataset.to], subject: "", body})
+        });
+        const data = await res.json();
+        if (res.ok) {
+          result.textContent = "✓ 送った！"; result.style.color = "#4caf50";
+          ta.value = "";
+          setTimeout(() => { box.style.display = "none"; result.textContent = ""; }, 1200);
+        } else {
+          result.textContent = "エラー: " + (data.error || "不明"); result.style.color = "#e57373";
+        }
+      } catch (e) {
+        result.textContent = "通信エラー"; result.style.color = "#e57373";
+      } finally { btn.disabled = false; btn.textContent = "送る"; }
     }
 
     function _renderLoadMoreBtn() {
@@ -6501,6 +6687,7 @@ HTML = """<!DOCTYPE html>
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん";}).catch(()=>{});
     loadCharacters();
     update();
+    loadChatHistoryInto(currentCharId);
     setInterval(update, 30000);
 
     // 会話リレーバナー
