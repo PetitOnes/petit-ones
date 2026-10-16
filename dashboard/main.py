@@ -5534,7 +5534,6 @@ HTML = """<!DOCTYPE html>
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
     .chat-messages { overflow-x: hidden; max-width: 100%; }
     /* 話すのカードが横に広がらないように(スマホ Safari 対策 2026-10-16): 中身はカード幅まで、はみ出しは横だけ切る */
-    section { overflow-x: clip; }
     #chatBody > * { max-width: 100%; box-sizing: border-box; }
     .chat-input { max-width: 100%; }
     .msg { max-width: 85%; min-width: 0; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
