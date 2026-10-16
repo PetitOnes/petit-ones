@@ -5929,7 +5929,7 @@ HTML = """<!DOCTYPE html>
         else if (id === "select" || id === "group") addMsg(m.text, "group", m.color, m.name);
         else addMsg(m.text, "char");
       }
-      chat.scrollTop = chat.scrollHeight;
+      scrollChatToBottom();
     }
 
     function switchChar(id) {
@@ -5937,7 +5937,7 @@ HTML = """<!DOCTYPE html>
       chatStates[currentCharId] = chatEl.innerHTML;
       currentCharId = id;
       chatEl.innerHTML = chatStates[id] || "";
-      if (!chatStates[id]) loadChatHistoryInto(id);
+      if (!chatStates[id]) loadChatHistoryInto(id); else scrollChatToBottom();
       loadCharacters();
       const isGroupLike = id === "select" || id === "group";
       document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
@@ -6470,12 +6470,17 @@ HTML = """<!DOCTYPE html>
     }
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    function scrollChatToBottom() {
+      const chat = document.getElementById("chat");
+      requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+    }
     // 話す欄を畳む(2026-10-16 ありさん)。状態はこの端末に覚える
     function toggleChat(force) {
       const body = document.getElementById("chatBody");
       const hide = force !== undefined ? force : body.style.display !== "none";
       body.style.display = hide ? "none" : "";
       document.getElementById("chatToggle").textContent = hide ? "▶" : "▼";
+      if (!hide) scrollChatToBottom();   // 開いたら一番下(最新)へ(2026-10-16 ありさん)
       try { localStorage.setItem("chatCollapsed", hide ? "1" : "0"); } catch {}
     }
     try { if (localStorage.getItem("chatCollapsed") === "1") toggleChat(true); } catch {}
