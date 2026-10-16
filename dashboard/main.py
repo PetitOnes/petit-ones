@@ -5996,17 +5996,21 @@ HTML = """<!DOCTYPE html>
       const tools = document.getElementById("toolRow");
       tools.innerHTML = "";
       tools.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
-      tools.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
       tools.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
       tools.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
       tools.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
       tools.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
       tools.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
       tools.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
-      tools.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
-      tools.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
-      tools.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
-      tools.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
+      // あまり使わないもの(おかね・行動ログ・ターミナル・センサーモニター・ひみつ)は「…」を押したら出る(2026-10-16 ありさん)
+      tools.innerHTML += `<button onclick="toggleMoreTools()" id="moreToolsBtn" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="ほかの道具">…</button>`;
+      tools.innerHTML += `<span id="moreTools" style="display:none"></span>`;
+      const more = document.getElementById("moreTools");
+      more.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
+      more.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
+      more.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
+      more.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
+      more.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -6088,6 +6092,10 @@ HTML = """<!DOCTYPE html>
       scrollChatToBottom();
     }
 
+    function toggleMoreTools() {
+      const m = document.getElementById("moreTools");
+      m.style.display = m.style.display === "none" ? "" : "none";
+    }
     function switchChar(id) {
       const chatEl = document.getElementById("chat");
       chatStates[currentCharId] = chatEl.innerHTML;
