@@ -4196,11 +4196,14 @@ def _load_ui_settings() -> dict:
 
 @app.get("/api/ui")
 def api_ui_get():
-    return _load_ui_settings()
+    cur = _load_ui_settings()
+    cur.setdefault("house_title", f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち")
+    return cur
 
 
 class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
+    house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
 
 
 @app.post("/api/ui")
@@ -4209,7 +4212,10 @@ def api_ui_set(req: UiSettings):
     cur = _load_ui_settings()
     if req.topbar_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_color):
         return JSONResponse({"error": "color は #rrggbb"}, status_code=400)
-    cur["topbar_color"] = req.topbar_color or None
+    if req.topbar_color is not None or "topbar_color" not in cur:
+        cur["topbar_color"] = req.topbar_color or None
+    if req.house_title:
+        cur["house_title"] = req.house_title.strip()[:30]
     UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
     return cur
@@ -5412,10 +5418,9 @@ HTML = """<!DOCTYPE html>
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
       margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
-    .topbar .char-tabs { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
-    .topbar .char-tabs::-webkit-scrollbar { display: none; }
-    .topbar .char-tab { flex-shrink: 0; white-space: nowrap; }
+    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--char-mid); letter-spacing: 0.02em; }
     .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
+    .char-tabs { margin-bottom: 8px; }
     .tool-row { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
@@ -5542,14 +5547,15 @@ HTML = """<!DOCTYPE html>
   </div>
   <!-- トップバー(2026-10-16 ありさん): 名前(● ぷちこ)は出さず、タブ 1 行(横スクロール)+ 📬⚙️ を上に貼り付ける。h1 は JS が参照するので残す -->
   <div class="topbar">
-    <h1 style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
-    <div class="char-tabs" id="charTabs"></div>
+    <span style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></span>
+    <h1 class="house-title" id="houseTitle">ありさんち</h1>
     <div class="topbar-btns">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
     </div>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
+  <div class="char-tabs" id="charTabs"></div>
   <div class="tool-row" id="toolRow"></div>
   <!-- 更新時刻は一番下へ、「M5 接続済」はタブの緑丸で分かるので未接続のときだけ(2026-10-16 ありさん) -->
   <div style="display:flex;justify-content:flex-end;align-items:center;">
@@ -5781,6 +5787,8 @@ HTML = """<!DOCTYPE html>
       const r = document.documentElement;
       const c = _uiSettings.topbar_color;
       if (c) r.style.setProperty("--topbar-bg", c); else r.style.removeProperty("--topbar-bg");
+      const h = document.getElementById("houseTitle");
+      if (h && _uiSettings.house_title) h.textContent = _uiSettings.house_title;
       const inp = document.getElementById("topbarColor");
       if (inp) inp.value = c || getComputedStyle(r).getPropertyValue("--char-bg").trim() || "#f6f3fa";
     }
