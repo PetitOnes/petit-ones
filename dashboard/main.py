@@ -4183,6 +4183,38 @@ def api_get_settings(character_id: str):
     return get_settings(character_id)
 
 
+# ---- 家ぜんたいの見た目の設定(PETIT_DATA_DIR/config/ui.json)。トップバーの色など(2026-10-16 ありさん) ----
+UI_SETTINGS_FILE = DATA_DIR / "config" / "ui.json"
+
+
+def _load_ui_settings() -> dict:
+    try:
+        return json.loads(UI_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.get("/api/ui")
+def api_ui_get():
+    return _load_ui_settings()
+
+
+class UiSettings(BaseModel):
+    topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
+
+
+@app.post("/api/ui")
+def api_ui_set(req: UiSettings):
+    import re
+    cur = _load_ui_settings()
+    if req.topbar_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_color):
+        return JSONResponse({"error": "color は #rrggbb"}, status_code=400)
+    cur["topbar_color"] = req.topbar_color or None
+    UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cur
+
+
 @app.post("/api/{character_id}/settings")
 def api_save_settings(character_id: str, data: dict):
     save_settings(character_id, data)
@@ -5379,7 +5411,7 @@ HTML = """<!DOCTYPE html>
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
-      margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--char-bg); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
+      margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
     .topbar .char-tabs { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .topbar .char-tabs::-webkit-scrollbar { display: none; }
     .topbar .char-tab { flex-shrink: 0; white-space: nowrap; }
@@ -5646,6 +5678,13 @@ HTML = """<!DOCTYPE html>
             <span class="setting-label">🎤 マイク</span>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
           </div>
+          <div class="setting-row">
+            <span class="setting-label">🎨 トップバーの色</span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveTopbarColor(this.value)" style="width:40px;height:28px;border:none;background:none;padding:0;cursor:pointer;">
+              <button onclick="saveTopbarColor(null)" style="font-size:0.75rem;padding:4px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;cursor:pointer;">ぷちの色に戻す</button>
+            </span>
+          </div>
         </div>
         <div style="margin-top:16px;">
           <span style="font-size:0.8rem;color:#9b8ec4;font-weight:600;">M5 接続先（上から順に試す）</span>
@@ -5736,6 +5775,24 @@ HTML = """<!DOCTYPE html>
       return brightness(hex) > 160 ? darken(hex, 0.45) : "white";
     }
 
+    // トップバーの色(家ぜんたいの設定 /api/ui)。未設定ならぷちの色(--char-bg)に合わせる
+    let _uiSettings = {};
+    function applyTopbarColor() {
+      const r = document.documentElement;
+      const c = _uiSettings.topbar_color;
+      if (c) r.style.setProperty("--topbar-bg", c); else r.style.removeProperty("--topbar-bg");
+      const inp = document.getElementById("topbarColor");
+      if (inp) inp.value = c || getComputedStyle(r).getPropertyValue("--char-bg").trim() || "#f6f3fa";
+    }
+    async function saveTopbarColor(color) {
+      try {
+        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topbar_color: color})});
+        if (res.ok) _uiSettings = await res.json();
+      } catch {}
+      applyTopbarColor();
+    }
+    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); }).catch(() => {});
+
     function applyTheme(color) {
       const r = document.documentElement;
       r.style.setProperty("--char", color);
@@ -5746,6 +5803,7 @@ HTML = """<!DOCTYPE html>
       r.style.setProperty("--char-border", lighten(color, 0.72));
       r.style.setProperty("--char-btn-text", btnTextColor(color));
       document.getElementById("charDot").style.background = color;
+      applyTopbarColor();
     }
 
     async function loadCharacters() {
