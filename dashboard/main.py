@@ -5519,8 +5519,8 @@ HTML = """<!DOCTYPE html>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
   <div class="tool-row" id="toolRow"></div>
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <div class="updated" id="updated">読み込み中...</div>
+  <!-- 更新時刻は一番下へ、「M5 接続済」はタブの緑丸で分かるので未接続のときだけ(2026-10-16 ありさん) -->
+  <div style="display:flex;justify-content:flex-end;align-items:center;">
     <div style="display:flex;align-items:center;gap:8px;">
       <div id="m5status"></div>
       <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
@@ -5926,7 +5926,7 @@ HTML = """<!DOCTYPE html>
         // ステータス表示
         const m5El = document.getElementById("m5status");
         if (m5El) m5El.innerHTML = m5_online
-          ? `<span style="color:#4caf50;font-size:0.75rem">● M5 接続済</span>`
+          ? ""
           : `<span style="color:#f44336;font-size:0.75rem">● M5 未接続（会話のみ）</span>`;
         document.getElementById("sleepBtn").style.display = (m5_online && !m5_sleeping) ? "" : "none";
         document.getElementById("wakeBtn").style.display  = (m5_online && m5_sleeping)  ? "" : "none";
@@ -6788,6 +6788,7 @@ HTML = """<!DOCTYPE html>
       if (e.target === document.getElementById("mailModal")) closeMailModal();
     });
   </script>
+<div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
 </body>
 </html>
 """
