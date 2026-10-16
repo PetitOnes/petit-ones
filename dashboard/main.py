@@ -5325,9 +5325,12 @@ HTML = """<!DOCTYPE html>
     .updated { font-size: 0.75rem; color: #aaa; margin-bottom: 16px; }
     section { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
     h2 { font-size: 0.85rem; color: var(--char-mid); font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .desire { margin-bottom: 12px; }
-    .desire-label { font-size: 0.9rem; margin-bottom: 4px; display: flex; justify-content: space-between; }
-    .desire-level { font-weight: 600; }
+    /* 欲求は 1 行: 名前 | バー | %(2026-10-16 ありさん) */
+    .desire { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .desire-label { display: contents; }
+    .desire-label > span:first-child { flex: 0 0 7em; white-space: nowrap; font-size: 0.85rem; }
+    .desire-level { order: 3; flex: 0 0 2.8em; text-align: right; font-size: 0.75rem; color: #999; font-variant-numeric: tabular-nums; }
+    .desire .bar-bg { flex: 1; order: 2; min-width: 0; }
     .bar-bg { background: var(--char-soft); border-radius: 6px; height: 10px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
     .two-col { display: flex; gap: 16px; align-items: flex-start; }
@@ -5425,11 +5428,8 @@ HTML = """<!DOCTYPE html>
       .setting-label { font-size: 1rem; }
       .popup-title { font-size: 1rem; }
       .chat-messages { max-height: 40vh; }
-      /* スマホのスクロールを減らす(2026-10-16): 欲求は 1 行(名前 | バー | %)、余白を詰める */
-      .desire { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-      .desire-label { margin-bottom: 0; flex: 0 0 7.5em; font-size: 0.85rem; }
-      .desire-label .desire-level { display: none; }
-      .desire .bar-bg { flex: 1; height: 8px; }
+      /* スマホのスクロールを減らす(2026-10-16): 余白を詰める */
+      .desire .bar-bg { height: 8px; }
       section { padding: 12px 14px; margin-bottom: 10px; }
       section h2 { margin: 0 0 8px; font-size: 0.95rem; }
       .tool-row { margin-bottom: 4px; }
@@ -5538,8 +5538,10 @@ HTML = """<!DOCTYPE html>
   <div class="two-col" id="twoColLayout">
     <div class="main-col">
       <section id="desiresSection">
-        <h2>欲求</h2>
-        <div id="dominant"></div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <h2 style="margin:0">欲求</h2>
+          <div id="dominant"></div>
+        </div>
         <div id="desires"></div>
       </section>
 
