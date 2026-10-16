@@ -1922,6 +1922,7 @@ KAIRANBAN_HTML = """<!DOCTYPE html>
     .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid #ddd; padding: 4px 8px; }
     .empty { color: #999; text-align: center; padding: 40px 0; }
   </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -5746,6 +5747,21 @@ HTML = """<!DOCTYPE html>
     /* グループチャット */
     .group-tab { background: linear-gradient(135deg, #cab8d9, #fff262) !important; color: #555 !important; border-color: transparent !important; }
     .msg-group { max-width: 85%; align-self: flex-start; border-bottom-left-radius: 4px; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    /* markdown で出した本文(2026-10-16)。pre-wrap のままだと変換後の改行が二重になるので normal に */
+    .msg.md, .msg-group .md, .mail-item .mail-body.md { white-space: normal; }
+    .md > :first-child { margin-top: 0; }
+    .md > :last-child { margin-bottom: 0; }
+    .md p { margin: 0 0 0.5em; }
+    .md ul, .md ol { margin: 0.25em 0 0.5em; padding-left: 1.4em; }
+    .md h1, .md h2, .md h3, .md h4 { font-size: 1em; font-weight: 700; margin: 0.6em 0 0.3em; }
+    .md code { background: rgba(0,0,0,0.07); padding: 0 0.25em; border-radius: 4px; font-size: 0.92em; }
+    .md pre { background: rgba(0,0,0,0.07); padding: 8px; border-radius: 8px; overflow-x: auto; white-space: pre; }
+    .md pre code { background: none; padding: 0; }
+    .md blockquote { margin: 0.4em 0; padding-left: 0.8em; border-left: 3px solid rgba(0,0,0,0.2); opacity: 0.85; }
+    .md table { border-collapse: collapse; display: block; overflow-x: auto; }
+    .md th, .md td { border: 1px solid rgba(0,0,0,0.2); padding: 2px 6px; }
+    .md hr { border: 0; border-top: 1px solid rgba(0,0,0,0.2); }
+    .md a { color: inherit; text-decoration: underline; }
     .msg-name { font-size: 0.7rem; font-weight: 700; margin-bottom: 3px; }
     .interact-btn { font-size: 0.8rem; background: none; border: 1px solid #ddd; border-radius: 20px; padding: 5px 14px; cursor: pointer; color: #888; margin-top: 10px; }
     .interact-btn:hover { background: #f9f9f9; }
@@ -6391,6 +6407,22 @@ HTML = """<!DOCTYPE html>
       } catch(e) { document.getElementById("updated").textContent = "取得失敗"; }
     }
 
+    // markdown → 安全な HTML(2026-10-16)。marked が読めなかったら null(呼ぶ側は素の文字で出す)。
+    // 生の HTML タグは文字として見せ、リンクは http(s)・mailto・相対だけ、画像は出さない(外から来る文も通るので)
+    function mdHtml(text) {
+      if (!window.marked) return null;
+      const esc = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+      const okUrl = u => { const t = String(u || "").trim().toLowerCase(); return t.startsWith("http://") || t.startsWith("https://") || t.startsWith("mailto:") || t.startsWith("/") || t.startsWith("#"); };
+      const renderer = new marked.Renderer();
+      renderer.html = h => esc(typeof h === "string" ? h : ((h && h.text) || ""));
+      renderer.image = (href, title, t) => esc(t || "");
+      renderer.link = (href, title, t) => okUrl(href)
+        ? '<a href="' + esc(href) + '"' + (title ? ' title="' + esc(title) + '"' : "") + ' target="_blank" rel="noopener noreferrer">' + t + "</a>"
+        : t;
+      try { return marked.parse(String(text), { renderer: renderer, breaks: true, gfm: true }); }
+      catch (e) { return null; }
+    }
+
     function addMsg(text, role, color, name, media) {   // media: {url, kind}
       const chat = document.getElementById("chat");
       if (role === "group") {
@@ -6406,7 +6438,9 @@ HTML = """<!DOCTYPE html>
           div.appendChild(nameEl);
         }
         const textEl = document.createElement("div");
-        textEl.textContent = text;
+        const gh = mdHtml(text);
+        if (gh === null) { textEl.textContent = text; }
+        else { textEl.className = "md"; textEl.innerHTML = gh; }
         div.appendChild(textEl);
         chat.appendChild(div);
         chatToBottom();
@@ -6414,7 +6448,9 @@ HTML = """<!DOCTYPE html>
       }
       const div = document.createElement("div");
       div.className = "msg " + role;
-      div.textContent = text;
+      const ch = role === "char" ? mdHtml(text) : null;   // ぷちの返事だけ markdown(ありさんの入力と、状態の表示は素の文字)
+      if (ch === null) { div.textContent = text; }
+      else { div.classList.add("md"); div.innerHTML = ch; }
       if (media && media.url) {
         if (media.kind === "photo") {
           const img = document.createElement("img");
@@ -7033,6 +7069,7 @@ HTML = """<!DOCTYPE html>
 
     function _mailItemHtml(m) {
       const bodyText = m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const bodyMd = mdHtml(m.content);   // markdown で出せるとき(出せなければ上の素の文字)
       const starCls = m.starred ? "active" : "";
       const archiveIcon = m.archived ? "📤" : "📥";
       const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
@@ -7051,7 +7088,7 @@ HTML = """<!DOCTYPE html>
           </div>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
-        <div class="mail-body">${bodyText}</div>
+        <div class="mail-body${bodyMd === null ? "" : " md"}">${bodyMd === null ? bodyText : bodyMd}</div>
         ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
           <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
           <div class="mail-reply-row">
