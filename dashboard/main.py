@@ -4281,6 +4281,7 @@ def _transcribe_audio_file(path: Path) -> str | None:
     """ffmpeg で 16kHz mono WAV にして ASR(/transcribe)へ。ASR が落ちていれば None"""
     import subprocess
     import tempfile
+
     import requests as _rq
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         wav_path = Path(f.name)
@@ -5473,7 +5474,7 @@ HTML = """<!DOCTYPE html>
       --char-btn-text: white;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; }
+    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
@@ -5531,7 +5532,8 @@ HTML = """<!DOCTYPE html>
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .msg { max-width: 85%; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .chat-messages { overflow-x: hidden; }
+    .msg { max-width: 85%; min-width: 0; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
@@ -5551,12 +5553,13 @@ HTML = """<!DOCTYPE html>
     .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
     .chat-input { display: flex; gap: 6px; align-items: center; }
-    .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; opacity: 0.7; }
-    .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
+    /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
+    .chat-input .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; min-height: 0; opacity: 0.7; color: inherit; }
+    .chat-input .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
     .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; cursor: pointer; }
     .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
-    .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
+    .chat-input input { flex: 1; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
     .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
