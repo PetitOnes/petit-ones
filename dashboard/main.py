@@ -5532,7 +5532,11 @@ HTML = """<!DOCTYPE html>
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .chat-messages { overflow-x: hidden; }
+    .chat-messages { overflow-x: hidden; max-width: 100%; }
+    /* 話すのカードが横に広がらないように(スマホ Safari 対策 2026-10-16): 中身はカード幅まで、はみ出しは横だけ切る */
+    section { overflow-x: clip; }
+    #chatBody > * { max-width: 100%; box-sizing: border-box; }
+    .chat-input { max-width: 100%; }
     .msg { max-width: 85%; min-width: 0; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
@@ -5564,7 +5568,7 @@ HTML = """<!DOCTYPE html>
     .plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
     .chat-input .plus-menu button { background: none; color: #333; border: none; border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; text-align: left; cursor: pointer; white-space: nowrap; min-height: 0; }
     .chat-input .plus-menu button:hover { background: #f3f0f8; }
-    .chat-input input { flex: 1; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
+    .chat-input input { flex: 1 1 0; width: 0; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
     .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
