@@ -5328,9 +5328,9 @@ HTML = """<!DOCTYPE html>
     /* 欲求は 1 行: 名前 | バー | %(2026-10-16 ありさん) */
     .desire { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
     .desire-label { display: contents; }
-    .desire-label > span:first-child { flex: 0 0 7em; white-space: nowrap; font-size: 0.85rem; }
+    .desire-label > span:first-child { flex: 0 0 8rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
     .desire-level { order: 3; flex: 0 0 2.8em; text-align: right; font-size: 0.75rem; color: #999; font-variant-numeric: tabular-nums; }
-    .desire .bar-bg { flex: 1; order: 2; min-width: 0; }
+    .desire .bar-bg { flex: 0 1 160px; order: 2; min-width: 0; }   /* バーは短め、開始位置は名前の幅(8rem)で揃える */
     .bar-bg { background: var(--char-soft); border-radius: 6px; height: 10px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
     .two-col { display: flex; gap: 16px; align-items: flex-start; }
