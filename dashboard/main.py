@@ -5420,7 +5420,10 @@ HTML = """<!DOCTYPE html>
       margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
     .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--char-mid); letter-spacing: 0.02em; }
     .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
-    .char-tabs { margin-bottom: 8px; }
+    /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
+    .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .char-tabs::-webkit-scrollbar { display: none; }
+    .char-tabs .char-tab { flex-shrink: 0; white-space: nowrap; }
     .tool-row { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
