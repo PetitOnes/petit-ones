@@ -5559,8 +5559,8 @@ HTML = """<!DOCTYPE html>
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
     .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; cursor: pointer; }
     .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
-    .chat-input #chatPlusBtn { font-size: 1.5rem; line-height: 1; padding: 0 6px; }
-    .chat-input #chatPlusBtn.recording { color: #e53935; }
+    .chat-input #chatPlusBtn { font-size: 1.3rem; line-height: 1; padding: 0 4px; }
+    .chat-input #chatPlusBtn.recording { animation: pulse 1s infinite; }
     .plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
     .chat-input .plus-menu button { background: none; color: #333; border: none; border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; text-align: left; cursor: pointer; white-space: nowrap; min-height: 0; }
     .chat-input .plus-menu button:hover { background: #f3f0f8; }
@@ -5732,7 +5732,7 @@ HTML = """<!DOCTYPE html>
         <div class="chat-input" style="position:relative">
           <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
           <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
-          <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">＋</button>
+          <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">📎</button>
           <div id="plusMenu" class="plus-menu" style="display:none">
             <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
             <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
@@ -6292,7 +6292,7 @@ HTML = """<!DOCTYPE html>
       _chatRecorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearTimeout(_chatRecTimer);
-        btn.classList.remove("recording"); btn.textContent = "＋";
+        btn.classList.remove("recording"); btn.textContent = "📎";
         const type = _chatRecorder.mimeType || mime || "audio/webm";
         _chatRecorder = null;
         if (!_chatChunks.length) return;
@@ -6301,7 +6301,7 @@ HTML = """<!DOCTYPE html>
         _showMediaPreview("audio", new File([blob], "voice" + ext, {type}));
       };
       _chatRecorder.start(250);
-      btn.classList.add("recording"); btn.textContent = "⏹";
+      btn.classList.add("recording"); btn.textContent = "🔴";
       _chatRecTimer = setTimeout(() => { if (_chatRecorder) _chatRecorder.stop(); }, 60000);
     }
 
