@@ -5528,7 +5528,8 @@ HTML = """<!DOCTYPE html>
 
 
       <section>
-        <h2 id="chatTitle">話す</h2>
+        <h2 style="cursor:pointer;user-select:none" onclick="toggleChat()"><span id="chatTitle">話す</span> <span id="chatToggle">▼</span></h2>
+        <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
         <div class="chat-input">
@@ -5542,6 +5543,7 @@ HTML = """<!DOCTYPE html>
           <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
           <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
         </div>
+        </div><!-- /chatBody -->
       </section>
 
       <section id="memoriesSection">
@@ -6369,6 +6371,15 @@ HTML = """<!DOCTYPE html>
     }
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    // 話す欄を畳む(2026-10-16 ありさん)。状態はこの端末に覚える
+    function toggleChat(force) {
+      const body = document.getElementById("chatBody");
+      const hide = force !== undefined ? force : body.style.display !== "none";
+      body.style.display = hide ? "none" : "";
+      document.getElementById("chatToggle").textContent = hide ? "▶" : "▼";
+      try { localStorage.setItem("chatCollapsed", hide ? "1" : "0"); } catch {}
+    }
+    try { if (localStorage.getItem("chatCollapsed") === "1") toggleChat(true); } catch {}
     function toggleMemories() {
       const el = document.getElementById("memories");
       const toggle = document.getElementById("memoriesToggle");
