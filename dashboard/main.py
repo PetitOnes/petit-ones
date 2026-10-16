@@ -5538,9 +5538,9 @@ HTML = """<!DOCTYPE html>
   <div class="two-col" id="twoColLayout">
     <div class="main-col">
       <section id="desiresSection">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
           <h2 style="margin:0">欲求</h2>
-          <div id="dominant"></div>
+          <div id="dominant" title="いちばん強い欲求"></div>
         </div>
         <div id="desires"></div>
       </section>
@@ -5942,7 +5942,8 @@ HTML = """<!DOCTYPE html>
         }
         const domEl = document.getElementById("dominant");
         if (desires.dominant) {
-          domEl.innerHTML = `<span class="dominant">いちばん強い欲求: ${DESIRE_LABELS[desires.dominant]||desires.dominant}</span>`;
+          // 「いちばん強い欲求:」の文字は出さず、右側に名前だけ(2026-10-16 ありさん)
+          domEl.innerHTML = `<span class="dominant">${DESIRE_LABELS[desires.dominant]||desires.dominant}</span>`;
         }
         const desEl = document.getElementById("desires");
         if (desires.desires && Object.keys(desires.desires).length > 0) {
