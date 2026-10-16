@@ -6840,9 +6840,13 @@ HTML = """<!DOCTYPE html>
       const archiveIcon = m.archived ? "📤" : "📥";
       const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
       const fn = m.filename.replace(/'/g,"\\'");
-      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}">
+      // 差出人のぷちの色を背景に(2026-10-16 ありさん)
+      const sc = (characters.find(c => c.id === m.sender_id) || {}).color;
+      const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
+      const senderStyle = sc ? `color:${readableText(sc)}` : "";
+      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
         <div class="mail-header">
-          <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
+          <span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span>
           <div class="mail-actions">
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
             <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
