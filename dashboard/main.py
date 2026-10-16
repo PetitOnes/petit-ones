@@ -5424,7 +5424,15 @@ HTML = """<!DOCTYPE html>
       .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
       .setting-label { font-size: 1rem; }
       .popup-title { font-size: 1rem; }
-      .chat-messages { max-height: 50vh; }
+      .chat-messages { max-height: 40vh; }
+      /* スマホのスクロールを減らす(2026-10-16): 欲求は 1 行(名前 | バー | %)、余白を詰める */
+      .desire { margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+      .desire-label { margin-bottom: 0; flex: 0 0 7.5em; font-size: 0.85rem; }
+      .desire-label .desire-level { display: none; }
+      .desire .bar-bg { flex: 1; height: 8px; }
+      section { padding: 12px 14px; margin-bottom: 10px; }
+      section h2 { margin: 0 0 8px; font-size: 0.95rem; }
+      .tool-row { margin-bottom: 4px; }
     }
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
@@ -5507,8 +5515,8 @@ HTML = """<!DOCTYPE html>
     <div class="topbar-btns">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
-      <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
     </div>
+    <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
   <div class="tool-row" id="toolRow"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -5757,12 +5765,13 @@ HTML = """<!DOCTYPE html>
       // 「選んで話す」「みんなで」タブを末尾に追加
       const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
-      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
-        style="${isSelect?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('select')">だれかと 💬</button>`;
+      // 「みんな」「だれか」の順、文字だけ(2026-10-16 ありさん)
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('group')">みんなで 🌟</button>`;
+        onclick="switchChar('group')">みんな</button>`;
+      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
+        style="${isSelect?"opacity:1":"opacity:0.8"}"
+        onclick="switchChar('select')">だれか</button>`;
       // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
       const tools = document.getElementById("toolRow");
       tools.innerHTML = "";
