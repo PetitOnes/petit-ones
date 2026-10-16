@@ -1239,11 +1239,13 @@ def save_chat_log(character_id: str, log: list[dict], username: str | None = Non
         json.dump(log[-200:], f, ensure_ascii=False, indent=2)
 
 
-def append_chat(character_id: str, role: str, text: str, username: str | None = None, photo: str | None = None) -> None:
+def append_chat(character_id: str, role: str, text: str, username: str | None = None, media: str | None = None, via: str | None = None) -> None:
     log = load_chat_log(character_id, username)
     entry = {"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()}
-    if photo:
-        entry["photo"] = photo   # 写真つき(2026-10-16): 送った人のアルバムのファイル名
+    if media:
+        entry["media"] = media   # 写真/声つき(2026-10-16): chat_media/<username>/ のファイル名
+    if via:
+        entry["via"] = via       # "group"/"select": みんな・だれか経由(その子のタブには出さない)
     log.append(entry)
     save_chat_log(character_id, log, username)
 
@@ -4243,12 +4245,100 @@ def api_memories_today(character_id: str):
 
 @app.get("/api/{character_id}/chat/history")
 def api_chat_history(character_id: str, request: Request):
+    """その子との 1 対 1 の会話だけ(みんな・だれか経由は除く。古い記録は group_chat.json と同じ文なら除く)"""
     username = _get_username(request) or "arisan"
-    log = load_chat_log(character_id, username)[-100:]
-    for m in log:
-        if m.get("photo"):
-            m["photo_url"] = f"/api/album/{username}/{m['photo']}"
-    return log
+    group_texts = {(m.get("role"), m.get("text")) for m in load_group_log()}
+    log = []
+    for m in load_chat_log(character_id, username):
+        if m.get("via"):
+            continue
+        if (m.get("role"), m.get("text")) in group_texts:
+            continue
+        if m.get("media"):
+            m["media_url"] = f"/api/chat-media/{username}/{m['media']}"
+            m["media_kind"] = _chat_media_kind(m["media"])
+        log.append(m)
+    return log[-100:]
+
+
+# ---- 話すで送る写真と声(2026-10-16 ありさん)。PETIT_DATA_DIR/chat_media/<username>/ に置く。アルバムに入れるかは選べる ----
+CHAT_MEDIA_DIR = DATA_DIR / "chat_media"
+_CHAT_PHOTO_EXTS = {".jpg"}
+_CHAT_AUDIO_EXTS = {".webm", ".wav", ".ogg", ".mp4", ".m4a"}
+
+
+def _chat_media_dir(username: str) -> Path:
+    d = CHAT_MEDIA_DIR / username
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _chat_media_kind(filename: str) -> str:
+    return "photo" if Path(filename).suffix.lower() in _CHAT_PHOTO_EXTS else "audio"
+
+
+def _transcribe_audio_file(path: Path) -> str | None:
+    """ffmpeg で 16kHz mono WAV にして ASR(/transcribe)へ。ASR が落ちていれば None"""
+    import subprocess
+    import tempfile
+    import requests as _rq
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        wav_path = Path(f.name)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(wav_path)],
+                       capture_output=True, check=True, timeout=60)
+        for url in [_ASR_URL, _ASR_FALLBACK_URL]:
+            try:
+                with open(wav_path, "rb") as wf:
+                    r = _rq.post(f"{url}/transcribe", files={"file": (path.stem + ".wav", wf, "audio/wav")}, timeout=60)
+                r.raise_for_status()
+                return (r.json().get("text") or "").strip()
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+@app.post("/api/chat-media/{username}/upload")
+async def api_chat_media_upload(username: str, request: Request, file: UploadFile = File(...), save_album: bool = Form(False)):
+    """話す用の写真/声を置く。写真は縮めて JPEG に。save_album=true なら自分のアルバムにも入れる"""
+    me = _get_username(request) or "arisan"
+    if username != me or username not in ALBUM_PERSONS:
+        return JSONResponse({"error": "自分の分だけ"}, status_code=403)
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        return JSONResponse({"error": "大きすぎます(20MB まで)"}, status_code=400)
+    ctype = (file.content_type or "").lower()
+    ext = Path(file.filename or "").suffix.lower()
+    from zoneinfo import ZoneInfo
+    stamp = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d_%H%M%S")
+    if ctype.startswith("image/") or ext in {".jpg", ".jpeg", ".png", ".heic", ".webp"}:
+        try:
+            data = _compress_image(data)
+        except Exception:
+            return JSONResponse({"error": "画像を読めませんでした"}, status_code=400)
+        fname = f"{stamp}_photo.jpg"
+        if save_album:
+            (_album_dir(username) / _album_filename(username, "chat")).write_bytes(data)
+            _prune_album(username)
+    else:
+        if ext not in _CHAT_AUDIO_EXTS:
+            ext = ".webm" if "webm" in ctype else ".mp4" if "mp4" in ctype else ".ogg" if "ogg" in ctype else ".wav"
+        fname = f"{stamp}_voice{ext}"
+    (_chat_media_dir(username) / fname).write_bytes(data)
+    return {"ok": True, "filename": fname, "url": f"/api/chat-media/{username}/{fname}", "kind": _chat_media_kind(fname)}
+
+
+@app.get("/api/chat-media/{username}/{filename}")
+def api_chat_media_file(username: str, filename: str):
+    path = _chat_media_dir(username) / Path(filename).name
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    mt = {".jpg": "image/jpeg", ".webm": "audio/webm", ".ogg": "audio/ogg", ".mp4": "audio/mp4", ".m4a": "audio/mp4", ".wav": "audio/wav"}.get(path.suffix.lower(), "application/octet-stream")
+    return Response(content=path.read_bytes(), media_type=mt)
 
 
 class GroupChatRequest(BaseModel):
@@ -4295,8 +4385,8 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4322,8 +4412,8 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
                 prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
                 context = f"{message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
             reply = await call_claude(char["id"], context, username=username)
-            append_chat(char["id"], "user", message, username)
-            append_chat(char["id"], char["id"], reply, username)
+            append_chat(char["id"], "user", message, username, via="group")
+            append_chat(char["id"], char["id"], reply, username, via="group")
             r = {
                 "character_id": char["id"],
                 "name": char.get("name", char["id"]),
@@ -4399,8 +4489,8 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4794,8 +4884,8 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4810,7 +4900,7 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
 class ChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
-    photo: str | None = None   # 送った写真(自分のアルバムのファイル名。先に /api/album/<me>/upload)
+    media: str | None = None        # 話すで送った写真/声(chat_media/<me>/ のファイル名。先に /api/chat-media/<me>/upload)
 
 
 class MailSendRequest(BaseModel):
@@ -4890,14 +4980,16 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
                 skip_user_append = True
         _chat_jobs[key] = {"state": "processing", "ts": time.time()}
 
-    # 写真つき(2026-10-16): 自分のアルバムにある写真の path を本文に添えて、Read で見てもらう
-    photo_path = None
-    if req.photo:
-        cand = _album_dir(username) / Path(req.photo).name
-        if cand.exists() and cand.suffix == ".jpg":
-            photo_path = cand
+    # 写真/声つき(2026-10-16): chat_media にあるものだけ受け付ける
+    media_path = None
+    if req.media:
+        cand = _chat_media_dir(username) / Path(req.media).name
+        if cand.exists():
+            media_path = cand
+    media_kind = _chat_media_kind(media_path.name) if media_path else None
     if not skip_user_append:
-        append_chat(character_id, "user", req.message or ("📷 写真" if photo_path else ""), username, photo=photo_path.name if photo_path else None)
+        shown = req.message or ("📷 写真" if media_kind == "photo" else "🎤 声" if media_kind == "audio" else "")
+        append_chat(character_id, "user", shown, username, media=media_path.name if media_path else None)
 
     # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
@@ -4907,9 +4999,14 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     # @opus / @sonnet でモデル指定
     chat_model = None
     chat_message = req.message
-    if photo_path:
-        chat_message = (f"[{user_display_for(username)}が写真を送りました: {photo_path}]\n"
-                        f"まず Read でこの写真を見てから、見たものに触れて返事してください。\n{req.message}").rstrip()
+    if media_path and media_kind == "photo":
+        chat_message = (f"[{user_display_for(username)}が写真を送りました: {media_path}]\n"
+                        f"まず Read でこの写真を見てから、見えたものに触れて返事してください。\n{req.message}").rstrip()
+    elif media_path and media_kind == "audio":
+        transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
+        heard = f"聞こえた言葉: 「{transcript}」" if transcript else "(いま文字起こしができなかった。transcribe_audio で聞き直せる)"
+        chat_message = (f"[{user_display_for(username)}が声を送りました: {media_path}]\n{heard}\n"
+                        f"声で話しかけられたつもりで返事してください。\n{req.message}").rstrip()
     if req.message.startswith("@opus "):
         chat_model = "opus"
         chat_message = req.message[6:]
@@ -5457,7 +5554,8 @@ HTML = """<!DOCTYPE html>
     .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; opacity: 0.7; }
     .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
-    .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; }
+    .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; cursor: pointer; }
+    .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
     .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
@@ -5617,14 +5715,16 @@ HTML = """<!DOCTYPE html>
         <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
-        <div id="photoPreview" style="display:none;align-items:center;gap:8px;margin-bottom:6px;">
-          <img id="photoPreviewImg" style="height:56px;border-radius:8px;" alt="">
-          <button onclick="clearPhoto()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
+        <div id="mediaPreview" style="display:none;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
+          <img id="mediaPreviewImg" style="display:none;height:56px;border-radius:8px;" alt="">
+          <span id="mediaPreviewAudio" style="display:none;font-size:0.85rem;color:#666;"></span>
+          <label id="mediaAlbumLabel" style="display:none;font-size:0.78rem;color:#666;align-items:center;gap:4px;"><input type="checkbox" id="mediaSaveAlbum"> アルバムにも保存</label>
+          <button onclick="clearMedia()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
         </div>
         <div class="chat-input">
           <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
           <button class="chat-icon-btn" onclick="document.getElementById('photoFile').click()" title="写真を送る">📷</button>
-          <button class="chat-icon-btn" id="chatMicBtn" onclick="chatMic()" title="声で入力">🎤</button>
+          <button class="chat-icon-btn" id="chatMicBtn" onclick="chatMic()" title="声を送る(押して録音、もう一度で止める)">🎤</button>
           <input type="text" id="input" placeholder="話しかける..." />
           <button id="send">送信</button>
         </div>
@@ -5957,7 +6057,7 @@ HTML = """<!DOCTYPE html>
           chat.appendChild(sep);
           lastDay = day;
         }
-        if (m.role === "user") addMsg(m.text, "user", null, null, m.photo_url);
+        if (m.role === "user") addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
         else if (id === "select" || id === "group") addMsg(m.text, "group", m.color, m.name);
         else addMsg(m.text, "char");
       }
@@ -6075,7 +6175,7 @@ HTML = """<!DOCTYPE html>
       } catch(e) { document.getElementById("updated").textContent = "取得失敗"; }
     }
 
-    function addMsg(text, role, color, name, photoUrl) {
+    function addMsg(text, role, color, name, media) {   // media: {url, kind}
       const chat = document.getElementById("chat");
       if (role === "group") {
         // グループメッセージ：名前＋色付きバブル
@@ -6099,11 +6199,17 @@ HTML = """<!DOCTYPE html>
       const div = document.createElement("div");
       div.className = "msg " + role;
       div.textContent = text;
-      if (photoUrl) {
-        const img = document.createElement("img");
-        img.className = "chat-photo"; img.src = photoUrl; img.alt = "写真";
-        img.onclick = () => window.open(photoUrl, "_blank");
-        div.appendChild(img);
+      if (media && media.url) {
+        if (media.kind === "photo") {
+          const img = document.createElement("img");
+          img.className = "chat-photo"; img.src = media.url; img.alt = "写真";
+          img.onclick = () => window.open(media.url, "_blank");
+          div.appendChild(img);
+        } else {
+          const au = document.createElement("audio");
+          au.className = "chat-audio"; au.controls = true; au.src = media.url; au.preload = "none";
+          div.appendChild(au);
+        }
       }
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
@@ -6115,70 +6221,85 @@ HTML = """<!DOCTYPE html>
     }
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-    // 写真(2026-10-16 ありさん): 選ぶ → 送信で自分のアルバムに上げてからぷちに渡す
-    let _pendingPhoto = null, _myId = "arisan";
+    // 写真と声(2026-10-16 ありさん): 選ぶ/録る → 送信で chat_media に上げてからぷちに渡す。アルバムに入れるかは選ぶ
+    let _pendingMedia = null, _myId = "arisan";
+    function _showMediaPreview(kind, file) {
+      _pendingMedia = {kind, file};
+      const img = document.getElementById("mediaPreviewImg"), au = document.getElementById("mediaPreviewAudio");
+      img.style.display = kind === "photo" ? "" : "none";
+      au.style.display = kind === "audio" ? "" : "none";
+      document.getElementById("mediaAlbumLabel").style.display = kind === "photo" ? "flex" : "none";
+      if (kind === "photo") img.src = URL.createObjectURL(file);
+      else au.textContent = `🎤 声(${Math.round(file.size / 1024)} KB)`;
+      document.getElementById("mediaPreview").style.display = "flex";
+    }
     function pickPhoto(inp) {
       const f = inp.files && inp.files[0];
-      if (!f) return;
-      _pendingPhoto = f;
-      const img = document.getElementById("photoPreviewImg");
-      img.src = URL.createObjectURL(f);
-      document.getElementById("photoPreview").style.display = "flex";
+      if (f) _showMediaPreview("photo", f);
       inp.value = "";
     }
-    function clearPhoto() {
-      _pendingPhoto = null;
-      document.getElementById("photoPreview").style.display = "none";
+    function clearMedia() {
+      _pendingMedia = null;
+      document.getElementById("mediaPreview").style.display = "none";
+      document.getElementById("mediaSaveAlbum").checked = false;
     }
-    async function uploadPendingPhoto() {
+    async function uploadPendingMedia() {
       const fd = new FormData();
-      fd.append("file", _pendingPhoto, _pendingPhoto.name || "photo.jpg");
-      fd.append("title", "chat");
-      const res = await fetch(`/api/album/${_myId}/upload`, {method: "POST", body: fd});
+      const f = _pendingMedia.file;
+      fd.append("file", f, f.name || (_pendingMedia.kind === "photo" ? "photo.jpg" : "voice.webm"));
+      fd.append("save_album", document.getElementById("mediaSaveAlbum").checked ? "true" : "false");
+      const res = await fetch(`/api/chat-media/${_myId}/upload`, {method: "POST", body: fd});
       if (!res.ok) throw new Error("upload " + res.status);
-      return (await res.json()).filename;
+      return await res.json();   // {filename, url, kind}
     }
-    // 声(2026-10-16 ありさん): ブラウザの音声認識で文字にして入力欄へ
-    let _chatRec = null;
+    // 声はそのまま送る(録音 → 音声ファイル)。押して録音、もう一度押して止める。60 秒まで
+    let _chatRecorder = null, _chatChunks = [], _chatRecTimer = null;
     async function chatMic() {
       const btn = document.getElementById("chatMicBtn");
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) { addMsg("このブラウザは音声入力に対応していません", "system"); return; }
-      if (_chatRec) { _chatRec.stop(); return; }
-      try { const s = await navigator.mediaDevices.getUserMedia({audio: true}); s.getTracks().forEach(t => t.stop()); }
+      if (_chatRecorder) { _chatRecorder.stop(); return; }
+      if (!navigator.mediaDevices || !window.MediaRecorder) { addMsg("このブラウザでは録音できません(https が要ります)", "system"); return; }
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
       catch { addMsg("マイクの使用を許可してください", "system"); return; }
-      const input = document.getElementById("input");
-      _chatRec = new SR();
-      _chatRec.lang = "ja-JP"; _chatRec.interimResults = true; _chatRec.maxAlternatives = 1;
-      const base = input.value;
-      _chatRec.onstart = () => { btn.classList.add("recording"); btn.textContent = "⏹"; };
-      _chatRec.onresult = e => {
-        let s = "";
-        for (const r of e.results) s += r[0].transcript;
-        input.value = base + s;
+      _chatChunks = [];
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find(m => MediaRecorder.isTypeSupported(m)) || "";
+      _chatRecorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
+      _chatRecorder.ondataavailable = e => { if (e.data.size > 0) _chatChunks.push(e.data); };
+      _chatRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearTimeout(_chatRecTimer);
+        btn.classList.remove("recording"); btn.textContent = "🎤";
+        const type = _chatRecorder.mimeType || mime || "audio/webm";
+        _chatRecorder = null;
+        if (!_chatChunks.length) return;
+        const ext = type.includes("mp4") ? ".mp4" : type.includes("ogg") ? ".ogg" : type.includes("wav") ? ".wav" : ".webm";
+        const blob = new Blob(_chatChunks, {type});
+        _showMediaPreview("audio", new File([blob], "voice" + ext, {type}));
       };
-      _chatRec.onerror = () => {};
-      _chatRec.onend = () => { btn.classList.remove("recording"); btn.textContent = "🎤"; _chatRec = null; input.focus(); };
-      _chatRec.start();
+      _chatRecorder.start(250);
+      btn.classList.add("recording"); btn.textContent = "⏹";
+      _chatRecTimer = setTimeout(() => { if (_chatRecorder) _chatRecorder.stop(); }, 60000);
     }
 
     async function send() {
       const input = document.getElementById("input");
       const btn = document.getElementById("send");
       const text = input.value.trim();
-      if (!text && !_pendingPhoto) return;
-      if (_pendingPhoto && (currentCharId === "select" || currentCharId === "group")) {
-        addMsg("写真はひとりのぷちに送ってね(みんな/だれかにはまだ)", "system"); return;
+      if (!text && !_pendingMedia) return;
+      if (_pendingMedia && (currentCharId === "select" || currentCharId === "group")) {
+        addMsg("写真や声は、ひとりのぷちのタブから送ってね", "system"); return;
       }
       input.value = "";
       btn.disabled = true;
-      let photoName = null;
-      if (_pendingPhoto) {
-        const localUrl = document.getElementById("photoPreviewImg").src;
-        try { photoName = await uploadPendingPhoto(); }
-        catch { addMsg("写真を上げられませんでした", "system"); btn.disabled = false; input.value = text; return; }
-        addMsg(text || "📷 写真", "user", null, null, localUrl);
-        clearPhoto();
+      let mediaName = null;
+      if (_pendingMedia) {
+        const kind = _pendingMedia.kind;
+        let up;
+        try { up = await uploadPendingMedia(); }
+        catch { addMsg("写真/声を上げられませんでした", "system"); btn.disabled = false; input.value = text; return; }
+        mediaName = up.filename;
+        addMsg(text || (kind === "photo" ? "📷 写真" : "🎤 声"), "user", null, null, {url: up.url, kind});
+        clearMedia();
       } else {
         addMsg(text, "user");
       }
@@ -6201,7 +6322,7 @@ HTML = """<!DOCTYPE html>
         let attempts = 0;
         while (true) {
           try {
-            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, photo:photoName}) });
+            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, media:mediaName}) });
             if (!res.ok) throw new Error("http " + res.status);
             const data = await res.json();
             if (data.status === "processing") {
