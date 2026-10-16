@@ -856,9 +856,28 @@ def _save_mailbox_metadata(data: dict) -> None:
     MAILBOX_METADATA_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _get_mail_meta(filename: str) -> dict:
-    meta = _load_mailbox_metadata()
+def _get_mail_meta(filename: str, meta: dict | None = None) -> dict:
+    """1 通ぶんのメタ。一覧では meta(= _load_mailbox_metadata())を渡して、通ごとに JSON を読み直さない(2026-10-16)"""
+    if meta is None:
+        meta = _load_mailbox_metadata()
     return meta.get("mails", {}).get(filename, {"archived": False, "starred": False})
+
+
+# メール本文の cache: filename -> (mtime, content)。9,000 通を毎回読んでいた「全メール」を速くする(2026-10-16)
+_MAIL_CONTENT_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _read_mail_cached(f: Path) -> str:
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        return ""
+    cached = _MAIL_CONTENT_CACHE.get(f.name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    content = f.read_text(encoding="utf-8")
+    _MAIL_CONTENT_CACHE[f.name] = (mtime, content)
+    return content
 
 
 class MailMetaUpdate(BaseModel):
@@ -1097,8 +1116,7 @@ def list_characters() -> list[dict]:
                 chars.append(cfg)
             except Exception:
                 chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
-        else:
-            chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
+        # config/config.json が無いフォルダ(puchiku などの残骸)は出さない(2026-10-16 ありさん)
     return chars
 
 
@@ -4855,16 +4873,26 @@ def api_photo_serve(character_id: str, filename: str):
     return Response(content=photo_path.read_bytes(), media_type="image/jpeg")
 
 
+_DISPLAY_NAME_CACHE: dict[str, tuple[float, str]] = {}   # char_id -> (config の mtime, 表示名)
+
+
 def _char_display_name(char_id: str) -> str:
-    """キャラクターIDから表示名を取得する。"""
+    """キャラクターIDから表示名を取得する(config.json の mtime で cache。メール 9,000 通で毎回読んでいた)。"""
     config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
-    if config_path.exists():
-        try:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            return cfg.get("name", char_id)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return char_id
+    try:
+        mtime = config_path.stat().st_mtime
+    except OSError:
+        return char_id
+    cached = _DISPLAY_NAME_CACHE.get(char_id)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    name = char_id
+    try:
+        name = json.loads(config_path.read_text(encoding="utf-8")).get("name", char_id)
+    except (json.JSONDecodeError, OSError):
+        pass
+    _DISPLAY_NAME_CACHE[char_id] = (mtime, name)
+    return name
 
 
 def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
@@ -4898,7 +4926,8 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
         return {"total": 0, "items": []}
-    # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）
+    # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）。メタは 1 回だけ読む
+    all_meta = _load_mailbox_metadata()
     candidates = []
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
@@ -4906,7 +4935,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         info = _parse_mail_meta_from_file(f, username)
         if info is None:
             continue
-        meta = _get_mail_meta(f.name)
+        meta = _get_mail_meta(f.name, all_meta)
         if filter == "inbox" and meta["archived"]:
             continue
         if filter == "archived" and not meta["archived"]:
@@ -4922,7 +4951,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
     # Phase2: 該当ページ分だけコンテンツ読み込み
     items = []
     for c in candidates[offset:offset + limit]:
-        content = c["_file"].read_text(encoding="utf-8")
+        content = _read_mail_cached(c["_file"])
         sender = c["sender"]
         if not sender:
             lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
@@ -4947,17 +4976,18 @@ def api_mailbox_all(filter: str = "all"):
     if not mailbox_dir.exists():
         return []
     mails = []
+    all_meta = _load_mailbox_metadata()
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
             continue
-        meta = _get_mail_meta(f.name)
+        meta = _get_mail_meta(f.name, all_meta)
         if filter == "inbox" and meta["archived"]:
             continue
         if filter == "archived" and not meta["archived"]:
             continue
         if filter == "starred" and not meta["starred"]:
             continue
-        content = f.read_text(encoding="utf-8")
+        content = _read_mail_cached(f)
         name = f.stem
         parts = name.split("_")
         date_str = ""
@@ -5480,9 +5510,9 @@ HTML = """<!DOCTYPE html>
           <div class="setting-row">
             <span class="setting-label">⏱️ 自律行動の頻度</span>
             <select id="autonomousSkip" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-              <option value="0">20分に1回（毎回）</option>
-              <option value="1">40分に1回（1回スキップ）</option>
-              <option value="2">60分に1回（2回スキップ）</option>
+              <option value="0">30分に1回（毎回）</option>
+              <option value="1">60分に1回（1回スキップ）</option>
+              <option value="2">90分に1回（2回スキップ）</option>
             </select>
           </div>
           <div class="setting-row">
@@ -5624,6 +5654,8 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
         onclick="switchChar('group')">みんなで 🌟</button>`;
+      // ここで折り返す(2026-10-16 ありさん: スマホでは「みんなで」の後で改行して、絵文字の列を次の行に)
+      tabs.innerHTML += `<div style="flex-basis:100%;height:0"></div>`;
       tabs.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
       tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
       tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
