@@ -5494,8 +5494,9 @@ HTML = """<!DOCTYPE html>
     <button onclick="cancelRelay()" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:4px 14px;cursor:pointer;font-weight:bold;">🛑 止める</button>
   </div>
   <div class="header">
-    <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
-    <div style="display:flex;gap:4px;">
+    <!-- いちばん上の名前(● ぷちこ)は出さない(2026-10-16 ありさん)。タブで分かる。要素は JS が参照するので残す -->
+    <h1 style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
+    <div style="display:flex;gap:4px;margin-left:auto;">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
       <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
