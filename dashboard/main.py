@@ -6384,7 +6384,15 @@ HTML = """<!DOCTYPE html>
       await fetch(`/api/${currentCharId}/m5/wake`, {method:"POST"});
     }
 
-    async function resetSession() {
+    // リセットは 2 回押し(2026-10-16 ありさん: 押しただけでセッションが消えるのをやめる)
+    let _resetArmed = null;
+    function resetSession() {
+      const btn = document.getElementById("resetBtn");
+      if (_resetArmed) { clearTimeout(_resetArmed); _resetArmed = null; btn.textContent = "リセット"; return _resetSessionNow(); }
+      btn.textContent = "もう一度押すとリセット";
+      _resetArmed = setTimeout(() => { _resetArmed = null; btn.textContent = "リセット"; }, 4000);
+    }
+    async function _resetSessionNow() {
       await fetch(`/api/${currentCharId}/chat/session`, {method:"DELETE"});
       chatStates[currentCharId] = "";
       await loadChatHistoryInto(currentCharId);
