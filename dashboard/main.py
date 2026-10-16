@@ -4245,15 +4245,15 @@ def api_memories_today(character_id: str):
 
 @app.get("/api/{character_id}/chat/history")
 def api_chat_history(character_id: str, request: Request):
-    """その子との 1 対 1 の会話だけ(みんな・だれか経由は除く。古い記録は group_chat.json と同じ文なら除く)"""
+    """その子との会話(みんな・だれか経由も出す。経由の印 via を付ける。古い記録は group_chat.json と同じ文なら via=group)"""
     username = _get_username(request) or "arisan"
-    group_texts = {(m.get("role"), m.get("text")) for m in load_group_log()}
+    group_types = {(m.get("role"), m.get("text")): (m.get("type") or "group") for m in load_group_log()}
     log = []
     for m in load_chat_log(character_id, username):
-        if m.get("via"):
-            continue
-        if (m.get("role"), m.get("text")) in group_texts:
-            continue
+        if not m.get("via"):
+            via = group_types.get((m.get("role"), m.get("text")))
+            if via:
+                m["via"] = "select" if via == "select" else "group"
         if m.get("media"):
             m["media_url"] = f"/api/chat-media/{username}/{m['media']}"
             m["media_kind"] = _chat_media_kind(m["media"])
@@ -5553,6 +5553,7 @@ HTML = """<!DOCTYPE html>
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
     .msg.user { background: var(--char); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
     .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
+    .msg-via { font-size: 0.62rem; opacity: 0.55; margin-bottom: 2px; letter-spacing: 0.04em; }
     .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
     .chat-input { display: flex; gap: 6px; align-items: center; }
@@ -6073,9 +6074,16 @@ HTML = """<!DOCTYPE html>
           chat.appendChild(sep);
           lastDay = day;
         }
-        if (m.role === "user") addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
-        else if (id === "select" || id === "group") addMsg(m.text, "group", m.color, m.name);
-        else addMsg(m.text, "char");
+        let el;
+        if (m.role === "user") el = addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
+        else if (id === "select" || id === "group") el = addMsg(m.text, "group", m.color, m.name);
+        else el = addMsg(m.text, "char");
+        if (m.via && el) {   // みんな・だれか経由の印(2026-10-16)
+          const tag = document.createElement("div");
+          tag.className = "msg-via";
+          tag.textContent = m.via === "select" ? "だれか" : "みんな";
+          el.prepend(tag);
+        }
       }
       scrollChatToBottom();
     }
