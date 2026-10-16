@@ -5375,6 +5375,13 @@ HTML = """<!DOCTYPE html>
     .msg { max-width: 85%; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
+      margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--char-bg); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
+    .topbar .char-tabs { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; margin-bottom: 0; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .topbar .char-tabs::-webkit-scrollbar { display: none; }
+    .topbar .char-tab { flex-shrink: 0; white-space: nowrap; }
+    .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
+    .tool-row { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
@@ -5493,16 +5500,17 @@ HTML = """<!DOCTYPE html>
     <span id="relayBannerText">会話リレー中...</span>
     <button onclick="cancelRelay()" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:4px 14px;cursor:pointer;font-weight:bold;">🛑 止める</button>
   </div>
-  <div class="header">
-    <!-- いちばん上の名前(● ぷちこ)は出さない(2026-10-16 ありさん)。タブで分かる。要素は JS が参照するので残す -->
+  <!-- トップバー(2026-10-16 ありさん): 名前(● ぷちこ)は出さず、タブ 1 行(横スクロール)+ 📬⚙️ を上に貼り付ける。h1 は JS が参照するので残す -->
+  <div class="topbar">
     <h1 style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
-    <div style="display:flex;gap:4px;margin-left:auto;">
+    <div class="char-tabs" id="charTabs"></div>
+    <div class="topbar-btns">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
       <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
     </div>
   </div>
-  <div class="char-tabs" id="charTabs"></div>
+  <div class="tool-row" id="toolRow"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;">
     <div class="updated" id="updated">読み込み中...</div>
     <div style="display:flex;align-items:center;gap:8px;">
@@ -5755,20 +5763,21 @@ HTML = """<!DOCTYPE html>
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
         onclick="switchChar('group')">みんなで 🌟</button>`;
-      // ここで折り返す(2026-10-16 ありさん: スマホでは「みんなで」の後で改行して、絵文字の列を次の行に)
-      tabs.innerHTML += `<div style="flex-basis:100%;height:0"></div>`;
-      tabs.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
-      tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
-      tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
-      tabs.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
-      tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
-      tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
-      tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
-      tabs.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
-      tabs.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
-      tabs.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
-      tabs.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
-      tabs.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
+      // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
+      const tools = document.getElementById("toolRow");
+      tools.innerHTML = "";
+      tools.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
+      tools.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
+      tools.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
+      tools.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
+      tools.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
+      tools.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
+      tools.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
+      tools.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
+      tools.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
+      tools.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
+      tools.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
+      tools.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
