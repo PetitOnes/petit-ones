@@ -438,6 +438,8 @@ fi
 # --- allowedTools ---
 # Claude Code の --allowedTools で許可するツールのリスト
 # セキュリティ: 必要最小限のディレクトリのみ指定すること（.env ファイルなど機密情報も読める）
+# (ヒアドキュメントの中にコメントは書けない: そのまま道具名の列に混ざる)
+# mcp__petit-sns__* = ぷちたち。(TeamPuchi/petit-sns の MCP)。家の config/*-mcp.json に petit-sns があるときだけ使える
 ALLOWED_TOOLS=$(cat <<TOOLS
 Read($ALLOWED_DIR/**),
 Read($ALLOWED_DATA_DIR/**),
@@ -509,7 +511,6 @@ mcp__textbook__textbook_read,
 mcp__textbook__textbook_search,
 mcp__textbook__textbook_propose,
 mcp__textbook__textbook_version,
-# ぷちたち。(petit-sns、TeamPuchi/petit-sns の MCP。家の config/*-mcp.json に petit-sns があるときだけ使える)
 mcp__petit-sns__sns_post,
 mcp__petit-sns__sns_timeline,
 mcp__petit-sns__sns_react,
