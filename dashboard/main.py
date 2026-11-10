@@ -4305,7 +4305,7 @@ def api_memories_today(character_id: str):
 
 
 @app.get("/api/{character_id}/chat/history")
-def api_chat_history(character_id: str, request: Request, limit: int = 100):
+def api_chat_history(character_id: str, request: Request, limit: int = 100, skip: int = 0):
     """その子との会話(みんな・だれか経由も出す。経由の印 via を付ける。古い記録は group_chat.json と同じ文なら via=group)"""
     username = _get_username(request) or "arisan"
     group_types = {(m.get("role"), m.get("text")): (m.get("type") or "group") for m in load_group_log()}
@@ -4322,7 +4322,7 @@ def api_chat_history(character_id: str, request: Request, limit: int = 100):
             m["medias"] = [{"url": f"/api/chat-media/{username}/{x['file']}", "kind": _chat_media_kind(x["file"]), "title": x.get("title", "")}
                            for x in m["medias"] if x.get("file")]
         log.append(m)
-    return log[-max(1, min(limit, 5000)):]
+    return _history_page(log, limit, skip)
 
 
 # ---- 話すで送る写真と声(2026-10-16 ありさん)。PETIT_DATA_DIR/chat_media/<username>/ に置く。アルバムに入れるかは選べる ----
@@ -4488,9 +4488,15 @@ def _chat_jobs_gc() -> None:
         _chat_jobs.pop(k, None)
 
 
+def _history_page(log: list, limit: int, skip: int) -> list:
+    """記録の新しいほうから skip 件をとばして、その前の limit 件(古い順のまま)。画面が少しずつ遡るため"""
+    end = max(0, len(log) - max(0, skip))
+    return log[max(0, end - max(1, min(limit, 5000))):end]
+
+
 @app.get("/api/group/history")
-def api_group_history(limit: int = 200):
-    log = load_group_log()[-max(1, min(limit, 5000)):]
+def api_group_history(limit: int = 200, skip: int = 0):
+    log = _history_page(load_group_log(), limit, skip)
     for m in log:   # 写真/声つきの発言(2026-11-10): 送った人の chat_media を指す
         who = m.get("media_user")
         if who and m.get("media"):
@@ -5582,9 +5588,19 @@ def api_me(request: Request):
     return {"username": username, "name": info["name"], "color": info["color"]}
 
 
+_HTML_GZ: bytes | None = None   # トップページを縮めたもの(1 回だけ作る)
+
+
 @app.get("/", response_class=HTMLResponse)
-def index():
-    return HTMLResponse(HTML, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+def index(request: Request):
+    headers = {"Cache-Control": "no-cache, no-store, must-revalidate", "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        global _HTML_GZ
+        if _HTML_GZ is None:
+            import gzip
+            _HTML_GZ = gzip.compress(HTML.encode("utf-8"), 6)
+        return Response(_HTML_GZ, media_type="text/html; charset=utf-8", headers={**headers, "Content-Encoding": "gzip"})
+    return HTMLResponse(HTML, headers=headers)
 
 
 HTML = """<!DOCTYPE html>
@@ -5596,7 +5612,7 @@ HTML = """<!DOCTYPE html>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>プチたち</title>
-  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" onload="window._mdReady && window._mdReady()"></script>
   <style>
     :root {
       --char: #cab8d9;
@@ -6279,7 +6295,7 @@ HTML = """<!DOCTYPE html>
     }
     // 会話の記録はぜんぶ手元に持ち、まず新しいほうから CHAT_HISTORY_SHOW 件を出す。
     // 上へ遡って端に近づいたら、その前の分を足す(2026-11-10 ありさん)
-    const _hist = {};   // id -> {log, shown}
+    const _hist = {};   // id -> {shown: 出した数, more: まだ前がある, busy: 取りにいっている}
     function _histEl(id, m) {
       let el;
       if (m.role === "user") el = addMsg(m.text, "user", null, null, (m.medias && m.medias.length) ? m.medias : (m.media_url ? {url: m.media_url, kind: m.media_kind} : null));
@@ -6299,37 +6315,42 @@ HTML = """<!DOCTYPE html>
       sep.textContent = day;
       return sep;
     }
+    function _histUrl(id, skip) {
+      const base = (id === "select" || id === "group") ? "/api/group/history" : `/api/${id}/chat/history`;
+      return `${base}?limit=${CHAT_HISTORY_SHOW}&skip=${skip}`;
+    }
     async function loadChatHistoryInto(id) {
       const chat = document.getElementById("chat");
       let log = [];
-      try {
-        const url = (id === "select" || id === "group") ? "/api/group/history?limit=5000" : `/api/${id}/chat/history?limit=5000`;
-        log = await (await fetch(url)).json();
-      } catch { return; }
+      try { log = await (await fetch(_histUrl(id, 0))).json(); } catch { return; }
       if (currentCharId !== id) return;          // 読んでいる間にタブが変わった
-      const shown = Math.min(CHAT_HISTORY_SHOW, log.length);
-      _hist[id] = {log, shown};
+      _hist[id] = {shown: log.length, more: log.length >= CHAT_HISTORY_SHOW, busy: false};
       chat.innerHTML = "";
       let lastDay = "";
-      for (const m of log.slice(log.length - shown)) {
+      for (const m of log) {
         const day = _dateLabel(m.timestamp);
         if (day && day !== lastDay) { chat.appendChild(_histDateEl(day)); lastDay = day; }
         _histEl(id, m);
       }
       scrollChatToBottom();
     }
-    // 古い分を上に足す。見ている場所がずれないよう、足した高さだけスクロールを戻す
-    function loadOlderChat() {
+    // 古い分を取ってきて上に足す。見ている場所がずれないよう、足した高さだけスクロールを戻す
+    async function loadOlderChat() {
       const id = currentCharId, h = _hist[id];
-      if (!h || h.shown >= h.log.length) return;
+      if (!h || !h.more || h.busy || _pane) return;
+      h.busy = true;
+      let older = [];
+      try { older = await (await fetch(_histUrl(id, h.shown))).json(); } catch { h.busy = false; return; }
+      if (currentCharId !== id) { h.busy = false; return; }
+      h.more = older.length >= CHAT_HISTORY_SHOW;
+      h.shown += older.length;
       const chat = document.getElementById("chat");
-      const end = h.log.length - h.shown, start = Math.max(0, end - CHAT_HISTORY_SHOW);
       const before = document.documentElement.scrollHeight, y = window.scrollY;
       _holdScroll = true;
       let anchor = chat.firstChild;
       const frag = document.createDocumentFragment();
       let lastDay = "";
-      for (const m of h.log.slice(start, end)) {
+      for (const m of older) {
         const day = _dateLabel(m.timestamp);
         if (day && day !== lastDay) { frag.appendChild(_histDateEl(day)); lastDay = day; }
         const el = _histEl(id, m);   // addMsg は末尾に足すので、束に移す
@@ -6340,11 +6361,13 @@ HTML = """<!DOCTYPE html>
         const next = anchor.nextSibling; anchor.remove(); anchor = next;
       }
       chat.insertBefore(frag, anchor);
-      h.shown += end - start;
       _holdScroll = false;
       window.scrollTo(0, y + (document.documentElement.scrollHeight - before));
+      h.busy = false;
     }
     window.addEventListener("scroll", () => { if (window.scrollY < 600) loadOlderChat(); }, {passive: true});
+    // markdown の部品はあとから届いてもよい。届いたら、いま出ている会話を作り直す
+    window._mdReady = () => { if (_hist[currentCharId] && !_pane) loadChatHistoryInto(currentCharId); };
     // いま画面の上にある会話の日付を、頭のすぐ下に出す。止まったら少しして消える
     let _dateFloatTimer = null, _dateFloatBusy = false;
     function updateDateFloat() {
