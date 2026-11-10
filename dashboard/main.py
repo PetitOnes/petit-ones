@@ -1922,7 +1922,6 @@ KAIRANBAN_HTML = """<!DOCTYPE html>
     .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid #ddd; padding: 4px 8px; }
     .empty { color: #999; text-align: center; padding: 40px 0; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -5530,6 +5529,7 @@ HTML = """<!DOCTYPE html>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>プチたち</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <style>
     :root {
       --char: #cab8d9;
@@ -6132,9 +6132,9 @@ HTML = """<!DOCTYPE html>
         + tool("📓", "ノート", 'href="/notes"')
         + tool("📖", "交換日記", 'href="/notebook"')
         + tool("📋", "回覧板", 'href="/kairanban"')
-        + tool("📚", "ライブラリ", 'href="/library"')
         + tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
         + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">`
+        + tool("📚", "ライブラリ", 'href="/library"')
         + tool("🔒", "ひみつ", 'href="/kankei"')
         + tool("📡", "モニタ", 'href="/display" target="_blank"')
         + tool("🖥️", "ターミナル", 'href="/terminal"')
