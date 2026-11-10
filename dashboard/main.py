@@ -5753,7 +5753,7 @@ HTML = """<!DOCTYPE html>
     .md > :last-child { margin-bottom: 0; }
     .md p { margin: 0 0 0.5em; }
     .md ul, .md ol { margin: 0.25em 0 0.5em; padding-left: 1.4em; }
-    .md h1, .md h2, .md h3, .md h4 { font-size: 1em; font-weight: 700; margin: 0.6em 0 0.3em; }
+    .md h1, .md h2, .md h3, .md h4 { font-size: 1em; font-weight: 700; margin: 0.6em 0 0.3em; color: inherit; font-family: inherit; letter-spacing: 0; text-transform: none; }
     .md code { background: rgba(0,0,0,0.07); padding: 0 0.25em; border-radius: 4px; font-size: 0.92em; }
     .md pre { background: rgba(0,0,0,0.07); padding: 8px; border-radius: 8px; overflow-x: auto; white-space: pre; }
     .md pre code { background: none; padding: 0; }
