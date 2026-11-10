@@ -9023,11 +9023,15 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
         }
         el.innerHTML = data.map(e => {
           const cls = authorColors[e.author] || "author-arisan";
-          const escaped = e.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>");
+          // 本文は content、古い書き方で text のものもある。どちらも無いと、1 件のせいで全体が出なくなっていた
+          const escaped = String(e.content ?? e.text ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>");
+          // 日付は date、無ければ timestamp から
+          let when = e.date || "";
+          if (!when && e.timestamp) { const d = new Date(e.timestamp); when = isNaN(d) ? String(e.timestamp) : d.toLocaleString("ja-JP", {year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"}); }
           return `<div class="entry">
             <div class="entry-header">
-              <span class="entry-author ${cls}">${e.author}</span>
-              <span class="entry-date">${e.date}</span>
+              <span class="entry-author ${cls}">${e.author || ""}</span>
+              <span class="entry-date">${when}</span>
             </div>
             <div class="entry-content">${escaped}</div>
           </div>`;
