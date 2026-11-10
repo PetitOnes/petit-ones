@@ -6795,7 +6795,8 @@ HTML = """<!DOCTYPE html>
         const canvas = await html2canvas(stage, {scale: 2, backgroundColor: getComputedStyle(stage).backgroundColor, useCORS: true, logging: false});
         _shotBlob = await new Promise(ok => canvas.toBlob(ok, "image/png"));
         const url = URL.createObjectURL(_shotBlob);
-        const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+        const now = new Date(), p2 = v => String(v).padStart(2, "0");   // ファイル名の時刻は、この端末の時刻で
+        const stamp = `${now.getFullYear()}${p2(now.getMonth() + 1)}${p2(now.getDate())}_${p2(now.getHours())}${p2(now.getMinutes())}`;
         document.getElementById("shotImg").src = url;
         const save = document.getElementById("shotSave");
         save.href = url; save.download = `kaiwa_${stamp}.png`;
