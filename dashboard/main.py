@@ -9083,7 +9083,7 @@ ALBUM_HTML = """<!DOCTYPE html>
       cursor:pointer; color:#fff; background:none; border:none; }
     /* だれの分か・件数を 1 行に(2026-11-10 ありさん): タブをやめてドロップダウン */
     .bar { display:flex; align-items:center; gap:8px; padding:10px 12px; flex-wrap:nowrap; }
-    .bar label { display:flex; align-items:center; gap:4px; font-size:0.78rem; color:#aaa; white-space:nowrap; min-width:0; }
+    .bar label { display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#aaa; white-space:nowrap; min-width:0; }
     .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
     .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
     /* 上げる行は 1 行: 📁 | 題 | 送信(2026-11-10 ありさん) */
@@ -9122,7 +9122,7 @@ ALBUM_HTML = """<!DOCTYPE html>
   <a href="/" class="back-link">← ダッシュボードに戻る</a>
 
   <div class="bar">
-    <label>だれの <select id="personSelect"></select></label>
+    <label><select id="personSelect"></select> のアルバム</label>
     <button class="seen-all" id="seenAllBtn" style="display:none" onclick="markAllSeen()">ぜんぶ見た</button>
     <span class="count" id="countLabel"></span>
   </div>
@@ -9406,7 +9406,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     .empty { text-align:center; color:#666; padding:40px; }
     /* だれの分か・件数を 1 行に(2026-11-10 ありさん): タブをやめてドロップダウン */
     .bar { display:flex; align-items:center; gap:8px; padding:10px 12px; flex-wrap:nowrap; }
-    .bar label { display:flex; align-items:center; gap:4px; font-size:0.78rem; color:#aaa; white-space:nowrap; min-width:0; }
+    .bar label { display:flex; align-items:center; gap:6px; font-size:0.9rem; color:#aaa; white-space:nowrap; min-width:0; }
     .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
     .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
     /* スマホ幅: 1 段目に名前と日時、2 段目に再生とボタン */
@@ -9433,7 +9433,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
   <a href="/" class="back-link">← ダッシュボードに戻る</a>
 
   <div class="bar">
-    <label>だれの <select id="personSelect"></select></label>
+    <label><select id="personSelect"></select> のボイスメモ</label>
     <span class="count" id="countLabel"></span>
   </div>
 
