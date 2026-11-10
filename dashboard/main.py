@@ -5795,10 +5795,11 @@ HTML = """<!DOCTYPE html>
     </div>
   </div>
 
-  <div id="groupStatusPanel" style="display:none;margin-bottom:16px;">
-    <section>
-      <h2>プチたちの状態</h2>
-      <div id="groupCharStatus"></div>
+  <!-- ぷちたちの状態(2026-11-10 ありさん): いつも道具の列の下に。閉じておき、開いたそのときに体へ確かめにいく -->
+  <div id="groupStatusPanel">
+    <section style="padding-top:12px;padding-bottom:12px">
+      <h2 style="margin:0;cursor:pointer;user-select:none" onclick="toggleGroupStatus()">ぷちたちの状態 <span id="groupStatusToggle">▶</span></h2>
+      <div id="groupCharStatus" style="display:none;margin-top:8px"></div>
     </section>
   </div>
 
@@ -6210,15 +6211,20 @@ HTML = """<!DOCTYPE html>
       document.getElementById("diaryCol").style.display = isGroupLike ? "none" : "";
       document.getElementById("desiresSection").style.display = isGroupLike ? "none" : "";
       document.getElementById("memoriesSection").style.display = isGroupLike ? "none" : "";
-      document.getElementById("groupStatusPanel").style.display = id === "group" ? "" : "none";
       if (!isGroupLike) { update(); updateDiary(); }
       else {
         const upd = document.getElementById("updated"); if (upd) upd.textContent = "";
         document.getElementById("diaryContent").innerHTML = "";
-        if (id === "group") updateGroupStatus();
       }
     }
 
+    function toggleGroupStatus() {
+      const body = document.getElementById("groupCharStatus");
+      const open = body.style.display === "none";
+      body.style.display = open ? "" : "none";
+      document.getElementById("groupStatusToggle").textContent = open ? "▼" : "▶";
+      if (open) updateGroupStatus();   // 開いたそのときに確かめる
+    }
     async function updateGroupStatus() {
       const panel = document.getElementById("groupCharStatus");
       panel.innerHTML = '<div class="empty">確認中...</div>';
