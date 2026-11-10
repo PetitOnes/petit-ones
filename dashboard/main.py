@@ -5656,6 +5656,9 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* 遡っているあいだ、いま見ている日付を上に薄く出す(2026-11-10 ありさん) */
+    .date-float { position: fixed; left: 50%; transform: translateX(-50%); z-index: 45; padding: 3px 12px; font-size: 0.72rem; color: #fff; background: rgba(90,78,70,0.55); border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.25s; white-space: nowrap; }
+    .date-float.show { opacity: 1; }
     /* 吹き出しの枠は濃いクリーム色(2026-11-10 ありさん) */
     .msg.char, .msg.user, .msg.thinking, .msg-group { border: 1px solid var(--ui-cream-line); }
     /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
@@ -5803,6 +5806,7 @@ HTML = """<!DOCTYPE html>
 
   <!-- 会話は画面いっぱい(ページのスクロールがそのまま会話。2026-11-10 ありさん)。見出しは出さない -->
   <span style="display:none"><span id="chatTitle">話す</span><span id="chatToggle"></span><!-- 「最近した会話」は、画面で遡れるので出さない(JS が参照するので置いておく) --><button id="historyBtn"></button></span>
+  <div class="date-float" id="dateFloat"></div>
   <div id="chatBody">
     <div class="chat-messages" id="chat"></div>
   </div>
@@ -6234,6 +6238,24 @@ HTML = """<!DOCTYPE html>
       window.scrollTo(0, y + (document.documentElement.scrollHeight - before));
     }
     window.addEventListener("scroll", () => { if (window.scrollY < 600) loadOlderChat(); }, {passive: true});
+    // いま画面の上にある会話の日付を、頭のすぐ下に出す。止まったら少しして消える
+    let _dateFloatTimer = null, _dateFloatBusy = false;
+    function updateDateFloat() {
+      _dateFloatBusy = false;
+      const el = document.getElementById("dateFloat");
+      const headBottom = document.querySelector(".sticky-head").getBoundingClientRect().bottom;
+      let label = "";
+      for (const d of document.querySelectorAll("#chat > .msg-date")) {
+        if (d.getBoundingClientRect().top <= headBottom + 4) label = d.textContent; else break;
+      }
+      if (!label) { el.classList.remove("show"); return; }
+      el.textContent = label;
+      el.style.top = (headBottom + 8) + "px";
+      el.classList.add("show");
+      clearTimeout(_dateFloatTimer);
+      _dateFloatTimer = setTimeout(() => el.classList.remove("show"), 1500);
+    }
+    window.addEventListener("scroll", () => { if (!_dateFloatBusy) { _dateFloatBusy = true; requestAnimationFrame(updateDateFloat); } }, {passive: true});
 
     function toggleMoreTools() {
       const m = document.getElementById("moreTools");
