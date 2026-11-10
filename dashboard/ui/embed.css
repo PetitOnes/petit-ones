@@ -1,0 +1,20 @@
+/* ほかのページ(アルバム・ボイスメモ)を、トップページの会話の場所に埋めて出すときの見た目。
+   <html class="embed"> のときだけ効く。暗い配色をクリームに替え、そのページの題と「戻る」は出さない。
+   アクセントはトップページから ?accent=rrggbb で渡る(--embed-accent)。 */
+html.embed body { background: var(--ui-cream); color: #3A322D; }
+html.embed h1, html.embed .back-link { display: none; }
+html.embed .tabs { padding-top: 14px; }
+html.embed .tab-btn { background: #fff; border: 1.5px solid var(--ui-cream-line); color: #6E625A; font-family: var(--ui-font-maru-head); font-weight: 700; }
+html.embed .tab-btn.active { background: var(--embed-accent, #E0674C); border-color: var(--embed-accent, #E0674C); color: #fff; }
+html.embed .viewer-bar, html.embed .rec-timer, html.embed .rec-status { color: #6E625A; }
+html.embed select, html.embed #titleInput, html.embed .rename-form input { background: #fff; color: #3A322D; border: 1.5px solid var(--ui-cream-line); }
+html.embed .upload-area label, html.embed .rec-btn, html.embed .rename-cancel, html.embed .reg-btn { background: #f3e9d8; color: #6E625A; }
+html.embed .reg-btn:disabled { background: #f6f1e8; color: #b9aea4; }
+html.embed #uploadBtn, html.embed .rename-save { background: var(--embed-accent, #E0674C); color: #fff; }
+html.embed .rec-btn.recording { background: #e74c3c; }
+html.embed .photo-card, html.embed .memo-card { background: #fff; border: 1px solid var(--ui-cream-line); }
+html.embed .photo-card .caption { color: #6E625A; }
+html.embed .read-dot { background: #f3e9d8; color: #6E625A; }
+html.embed .memo-date, html.embed .empty, html.embed .edit-btn { color: #9a8d82; }
+html.embed .memo-card .del-btn { color: #B84E33; }
+html.embed .list, html.embed .grid { padding-bottom: 84px; }   /* 下の「会話にもどる」に隠れないように */

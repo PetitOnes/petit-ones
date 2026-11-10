@@ -1830,7 +1830,7 @@ def api_relations(request: Request):
 
 # ---- 部品(トークン・原子・分子)の CSS と見本ページ。中身は dashboard/ui/ ----
 UI_DIR = Path(__file__).parent / "ui"
-_UI_CSS = ("tokens.css", "atoms.css", "molecules.css")
+_UI_CSS = ("tokens.css", "atoms.css", "molecules.css", "embed.css")
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -5726,6 +5726,11 @@ HTML = """<!DOCTYPE html>
     /* 遡っているあいだ、いま見ている日付を上に薄く出す(2026-11-10 ありさん) */
     .date-float { position: fixed; left: 50%; transform: translateX(-50%); z-index: 45; padding: 3px 12px; font-size: 0.72rem; color: #fff; background: rgba(90,78,70,0.55); border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.25s; white-space: nowrap; }
     .date-float.show { opacity: 1; }
+    /* 会話の場所に出すページ(アルバム・ボイスメモ) */
+    .pane-frame { display: none; position: fixed; left: 0; right: 0; bottom: 0; width: 100%; border: none; z-index: 30; background: var(--ui-cream); height: auto; }
+    .pane-back { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 35; min-height: 42px; padding: 0 20px; border: none; border-radius: 999px; background: var(--topbar-bg, var(--char)); color: var(--topbar-fg, var(--char-btn-text)); font: inherit; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.95rem; box-shadow: 0 4px 14px rgba(0,0,0,0.2); cursor: pointer; }
+    .tool[data-on] .tool-name { color: var(--topbar-bg, #b84e33); font-weight: 700; }
+    .tool[data-on] .tool-icon { opacity: 1; }
     /* 吹き出しの枠は濃いクリーム色(2026-11-10 ありさん) */
     .msg.char, .msg.user, .msg.thinking, .msg-group { border: 1px solid var(--ui-cream-line); }
     /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
@@ -5906,6 +5911,8 @@ HTML = """<!DOCTYPE html>
   <!-- 会話は画面いっぱい(ページのスクロールがそのまま会話。2026-11-10 ありさん)。見出しは出さない -->
   <span style="display:none"><span id="chatTitle">話す</span><span id="chatToggle"></span><!-- 「最近した会話」は、画面で遡れるので出さない(JS が参照するので置いておく) --><button id="historyBtn"></button></span>
   <div class="date-float" id="dateFloat"></div>
+  <iframe id="paneFrame" class="pane-frame" title="アルバム・ボイスメモ"></iframe>
+  <button id="paneBack" class="pane-back" style="display:none" onclick="showPane(null)">💬 会話にもどる</button>
   <div id="chatBody">
     <div class="chat-messages" id="chat"></div>
   </div>
@@ -6206,8 +6213,8 @@ HTML = """<!DOCTYPE html>
       document.getElementById("toolRow").innerHTML =
           tool("🌱", "ようす", 'onclick="openYousu()"')
         + tool("✉️", "メール", 'onclick="openMailCompose()"')
-        + tool("🖼️", "アルバム", 'href="/album"')
-        + tool("🎤", "ボイスメモ", 'href="/voice_memo"')
+        + tool("🖼️", "アルバム", `onclick="showPane('album')"${_pane === "album" ? ' data-on="1"' : ""}`)
+        + tool("🎤", "ボイスメモ", `onclick="showPane('voice')"${_pane === "voice" ? ' data-on="1"' : ""}`)
         + tool("📓", "ノート", 'href="/notes"')
         + tool("📖", "交換日記", 'href="/notebook"')
         + tool("📋", "回覧板", 'href="/kairanban"')
@@ -6374,6 +6381,7 @@ HTML = """<!DOCTYPE html>
     document.addEventListener("click", e => { if (!e.target.closest("#charPick")) closeCharMenu(); });
     function switchChar(id) {
       closeCharMenu();
+      if (_pane) showPane(null);   // ぷちを選んだら会話へもどる
       const chatEl = document.getElementById("chat");
       chatStates[currentCharId] = chatEl.innerHTML;
       currentCharId = id;
@@ -6396,6 +6404,32 @@ HTML = """<!DOCTYPE html>
       }
     }
 
+    // アルバム・ボイスメモは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
+    // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
+    let _pane = null;
+    const PANES = {album: "/album", voice: "/voice_memo"};
+    function showPane(name) {
+      if (name === _pane) name = null;
+      _pane = name;
+      const f = document.getElementById("paneFrame");
+      document.getElementById("chatBody").style.display = name ? "none" : "";
+      document.getElementById("chatDock").style.display = name ? "none" : "";
+      document.getElementById("paneBack").style.display = name ? "" : "none";
+      if (name) {
+        const accent = (_uiSettings.topbar_color || "").replace("#", "");
+        const top = Math.round(document.querySelector(".sticky-head").getBoundingClientRect().bottom);
+        f.style.top = top + "px";
+        f.style.height = `calc(100dvh - ${top}px)`;   // iframe は top と bottom だけでは伸びない
+        f.src = PANES[name] + "?embed=1" + (accent ? "&accent=" + accent : "");
+        f.style.display = "block";
+      } else {
+        f.style.display = "none";
+        f.removeAttribute("src");
+        chatToBottom();
+      }
+      document.querySelectorAll("#toolRow .tool").forEach(t => t.removeAttribute("data-on"));
+      if (name) { const t = document.querySelector(`#toolRow .tool[onclick="showPane('${name}')"]`); if (t) t.setAttribute("data-on", "1"); }
+    }
     function openYousu() {
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
@@ -9032,6 +9066,17 @@ ALBUM_HTML = """<!DOCTYPE html>
     .read-dot { font-size:0.65rem; background:#3a3a5e; border-radius:10px;
       padding:1px 6px; color:#99aaff; }
   </style>
+  <link rel="stylesheet" href="/ui/embed.css">
+  <script>
+    // トップページの会話の場所に埋めて出すとき(?embed=1): 配色をそろえる(ui/embed.css)
+    (() => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("embed")) return;
+      document.documentElement.classList.add("embed");
+      const a = q.get("accent");
+      if (/^[0-9a-fA-F]{6}$/.test(a || "")) document.documentElement.style.setProperty("--embed-accent", "#" + a);
+    })();
+  </script>
 </head>
 <body>
   <h1>🖼️ アルバム</h1>
@@ -9298,6 +9343,17 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
       text-decoration:none; font-size:0.9rem; }
   </style>
+  <link rel="stylesheet" href="/ui/embed.css">
+  <script>
+    // トップページの会話の場所に埋めて出すとき(?embed=1): 配色をそろえる(ui/embed.css)
+    (() => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("embed")) return;
+      document.documentElement.classList.add("embed");
+      const a = q.get("accent");
+      if (/^[0-9a-fA-F]{6}$/.test(a || "")) document.documentElement.style.setProperty("--embed-accent", "#" + a);
+    })();
+  </script>
 </head>
 <body>
   <h1>🎤 ボイスメモ</h1>
