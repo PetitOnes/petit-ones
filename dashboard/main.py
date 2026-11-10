@@ -2119,7 +2119,8 @@ async def api_album_delete(person_id: str, filename: str):
 # ===================== ボイスメモ =====================
 VOICE_MEMO_DIR = DATA_DIR / "voice_memo"
 VOICE_MEMO_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
-VOICE_MEMO_MAX = 10
+VOICE_MEMO_MAX = 10          # 人のボイスメモ
+VOICE_MEMO_MAX_PETIT = 20    # ぷちのボイスメモ(2026-11-10 ありさん)
 VOICE_MEMO_MAX_SEC = 30
 VOICE_MEMO_MAX_BYTES = 6 * 1024 * 1024  # 6MB ≈ 30秒の上限
 
@@ -2146,7 +2147,8 @@ def _prune_voice_memo(person_id: str):
         [f for f in d.iterdir() if f.suffix in _AUDIO_EXTS],
         key=lambda f: f.stat().st_mtime,
     )
-    while len(memos) > VOICE_MEMO_MAX:
+    limit = VOICE_MEMO_MAX if person_id in ALBUM_HUMANS else VOICE_MEMO_MAX_PETIT
+    while len(memos) > limit:
         to_delete = next((f for f in memos if f.name not in locks), None)
         if to_delete is None:
             break
@@ -2210,7 +2212,7 @@ def _save_listens(person_id: str, listens: dict):
 
 @app.get("/voice_memo", response_class=HTMLResponse)
 def voice_memo_page():
-    return HTMLResponse(VOICE_MEMO_HTML.replace("__VOICE_MAX__", str(VOICE_MEMO_MAX)))
+    return HTMLResponse(VOICE_MEMO_HTML.replace("__VOICE_MAX_PETIT__", str(VOICE_MEMO_MAX_PETIT)).replace("__VOICE_MAX__", str(VOICE_MEMO_MAX)))
 
 
 @app.get("/api/voice_memo/{person_id}")
@@ -9410,9 +9412,18 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
     .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
     /* スマホ幅: 1 段目に名前と日時、2 段目に再生とボタン */
-    .memo-card { flex-wrap:wrap; }
-    .memo-card .memo-info { flex:1 1 100% !important; }
-    .memo-card audio { flex:1 1 120px; min-width:0; max-width:none; }
+    /* 1 件 = ▶・名前と日時・秒数・「…」(2026-11-10 ありさん) */
+    .memo-card { position:relative; }
+    .memo-card audio { display:none; }
+    .play-btn { flex:0 0 40px; width:40px; height:40px; border:none; border-radius:50%; background:#667eea; color:#fff; font-size:1rem; line-height:1; cursor:pointer; padding:0; }
+    .memo-time { flex:0 0 auto; font-size:0.8rem; color:#aaa; font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .more-btn { flex:0 0 36px; width:36px; height:36px; border:none; border-radius:50%; background:none; color:#aaa; font-size:1.3rem; line-height:1; cursor:pointer; padding:0; }
+    .lock-mark { display:none; }
+    .memo-card.locked .lock-mark { display:inline; }
+    .memo-menu { position:absolute; right:8px; top:calc(100% - 8px); z-index:20; min-width:200px; padding:6px; border-radius:12px; background:#33334d; box-shadow:0 6px 24px rgba(0,0,0,0.35); display:flex; flex-direction:column; gap:2px; }
+    .memo-menu a, .memo-menu button { display:block; width:100%; padding:10px 12px; border:none; border-radius:8px; background:none; color:#eee; font:inherit; font-size:0.9rem; text-align:left; text-decoration:none; cursor:pointer; white-space:nowrap; box-sizing:border-box; }
+    .memo-menu button:disabled { opacity:0.5; cursor:default; }
+    .memo-menu .mi-del { color:#ff8a80; }
     .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
       text-decoration:none; font-size:0.9rem; }
   </style>
@@ -9575,7 +9586,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       list.innerHTML = "";
       const res = await fetch(`/api/voice_memo/${currentPerson}`);
       const memos = await res.json();
-      showCount(memos.length, __VOICE_MAX__, "件");
+      showCount(memos.length, PERSONS.find(p=>p.id===currentPerson)?.human ? __VOICE_MAX__ : __VOICE_MAX_PETIT__, "件");
       if (!memos.length) { empty.style.display="block"; return; }
       empty.style.display="none";
       memos.forEach(m => {
@@ -9587,16 +9598,16 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
         const rawTime = parts[1] || "";
         const timeStr = rawTime.length === 6 ? rawTime.slice(0,2)+":"+rawTime.slice(2,4)+":"+rawTime.slice(4,6) : rawTime;
         const label = parts.slice(3).join("_").replace(/[.][^.]+$/, "") || m.filename;
+        // 1 件 = 再生ボタン・名前と日時・秒数・「…」。ほかの操作は「…」の中(2026-11-10 ありさん)
         const card = document.createElement("div");
         card.className = "memo-card";
-        const lockIcon = m.locked ? "🔒" : "🔓";
         if (m.locked) card.classList.add("locked");
+        const st = {filename: m.filename, locked: !!m.locked, registered: !!m.registered, speed: 1};
+        const url = () => `/api/voice_memo/${currentPerson}/${st.filename}`;
         card.innerHTML = `
-          <div class="memo-info" style="flex:1;min-width:0">
-            <div style="display:flex;align-items:center;gap:4px">
-              <div class="memo-label" title="${m.filename}">${label}</div>
-              <button class="edit-btn" title="名前を変更">✏️</button>
-            </div>
+          <button class="play-btn" title="再生">▶</button>
+          <div class="memo-info">
+            <div class="memo-label" title="${m.filename}"><span class="lock-mark">🔒 </span><span class="label-text">${label}</span></div>
             <div class="rename-form">
               <input class="rename-input" type="text" value="${label}" placeholder="新しい名前">
               <button class="rename-save">保存</button>
@@ -9604,70 +9615,100 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
             </div>
             <div class="memo-date">${dateStr} ${timeStr}</div>
           </div>
-          <audio controls src="/api/voice_memo/${currentPerson}/${m.filename}"></audio>
-          <button class="reg-btn" ${m.registered ? "disabled" : ""} title="話者認識に登録">${m.registered ? "登録済み" : "話者認識に登録"}</button>
-          <button class="lock-btn" title="${m.locked ? 'ロック解除' : 'ロック'}">${lockIcon}</button>
-          <button class="del-btn" title="削除">🗑️</button>`;
-        let currentFilename = m.filename;
-        card.querySelector(".del-btn").onclick = () => deleteMemo(currentFilename, card);
-        card.querySelector(".lock-btn").onclick = () => toggleLock(currentFilename, card);
-        card.querySelector(".reg-btn").onclick = () => registerSpeaker(currentFilename, card);
-        card.querySelector(".edit-btn").onclick = () => {
-          card.querySelector(".rename-form").style.display = "flex";
+          <span class="memo-time"></span>
+          <button class="more-btn" title="ほかの操作" aria-haspopup="true">⋯</button>
+          <audio preload="metadata" src="${url()}"></audio>
+          <div class="memo-menu" style="display:none">
+            <a class="mi-dl" href="${url()}" download="${m.filename}">⬇️ ダウンロード</a>
+            <button class="mi-speed">⏩ 再生速度 <b>1×</b></button>
+            <button class="mi-reg"></button>
+            <button class="mi-rename">✏️ 名前を変える</button>
+            <button class="mi-lock"></button>
+            <button class="mi-del">🗑️ 削除する</button>
+          </div>`;
+        const q = sel => card.querySelector(sel);
+        const audio = q("audio"), play = q(".play-btn"), time = q(".memo-time"), menu = q(".memo-menu");
+        const fmt = t => isFinite(t) && t >= 0 ? `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}` : "";
+        const showTime = () => {
+          const dur = fmt(audio.duration);
+          time.textContent = audio.paused && !audio.currentTime ? dur : fmt(audio.currentTime) + (dur ? " / " + dur : "");
         };
-        card.querySelector(".rename-cancel").onclick = () => {
-          card.querySelector(".rename-form").style.display = "none";
+        const showMenu = () => {
+          q(".mi-reg").textContent = st.registered ? "🗣 話者認識に登録済み" : "🗣 話者認識に登録";
+          q(".mi-reg").disabled = st.registered;
+          q(".mi-lock").textContent = st.locked ? "🔓 ロックを外す" : "🔒 ロックする";
+          q(".mi-speed b").textContent = st.speed + "×";
+          card.classList.toggle("locked", st.locked);
         };
-        card.querySelector(".rename-save").onclick = async () => {
-          const newTitle = card.querySelector(".rename-input").value.trim();
+        showMenu();
+        audio.addEventListener("loadedmetadata", showTime);
+        audio.addEventListener("durationchange", showTime);
+        audio.addEventListener("timeupdate", showTime);
+        audio.addEventListener("play", () => { play.textContent = "⏸"; });
+        audio.addEventListener("pause", () => { play.textContent = "▶"; showTime(); });
+        audio.addEventListener("ended", () => { audio.currentTime = 0; play.textContent = "▶"; showTime(); });
+        play.onclick = () => {
+          if (audio.paused) {
+            document.querySelectorAll("#memoList audio").forEach(a => { if (a !== audio) a.pause(); });   // 鳴らすのは 1 つだけ
+            audio.playbackRate = st.speed;
+            audio.play();
+          } else audio.pause();
+        };
+        q(".more-btn").onclick = e => {
+          e.stopPropagation();
+          const open = menu.style.display === "none";
+          closeMemoMenus();
+          menu.style.display = open ? "" : "none";
+        };
+        menu.onclick = e => e.stopPropagation();
+        q(".mi-dl").onclick = () => closeMemoMenus();
+        q(".mi-speed").onclick = () => {   // 押すたびに 1 → 1.25 → 1.5 → 2 → 0.75
+          const steps = [1, 1.25, 1.5, 2, 0.75];
+          st.speed = steps[(steps.indexOf(st.speed) + 1) % steps.length];
+          audio.playbackRate = st.speed;
+          showMenu();
+        };
+        q(".mi-reg").onclick = async () => {
+          const btn = q(".mi-reg");
+          btn.disabled = true; btn.textContent = "🗣 登録中…";
+          try {
+            const j = await (await fetch(`${url()}/register_speaker`, {method:"POST"})).json();
+            if (j.ok) st.registered = true; else alert("登録失敗: " + JSON.stringify(j));
+          } catch (e) { alert("エラー: " + e.message); }
+          showMenu();
+        };
+        q(".mi-rename").onclick = () => { closeMemoMenus(); q(".rename-form").style.display = "flex"; q(".rename-input").focus(); };
+        q(".mi-lock").onclick = async () => {
+          const j = await (await fetch(`${url()}/lock`, {method:"POST"})).json();
+          if (j.ok) { st.locked = j.locked; showMenu(); }
+          closeMemoMenus();
+        };
+        q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
+        q(".rename-cancel").onclick = () => { q(".rename-form").style.display = "none"; };
+        q(".rename-save").onclick = async () => {
+          const newTitle = q(".rename-input").value.trim();
           if (!newTitle) return;
-          const res = await fetch(`/api/voice_memo/${currentPerson}/${currentFilename}/rename`, {
+          const res = await fetch(`${url()}/rename`, {
             method:"PATCH", headers:{"Content-Type":"application/json"},
             body: JSON.stringify({new_title: newTitle}),
           });
           const j = await res.json();
           if (j.ok) {
-            currentFilename = j.filename;
-            card.querySelector(".memo-label").textContent = newTitle;
-            card.querySelector("audio").src = `/api/voice_memo/${currentPerson}/${j.filename}`;
-            card.querySelector(".rename-form").style.display = "none";
+            st.filename = j.filename;
+            q(".label-text").textContent = newTitle;
+            audio.src = url();
+            q(".mi-dl").href = url(); q(".mi-dl").download = j.filename;
+            q(".rename-form").style.display = "none";
           } else { alert("失敗: " + JSON.stringify(j)); }
         };
         list.appendChild(card);
       });
     }
 
-    async function toggleLock(filename, card) {
-      const res = await fetch(`/api/voice_memo/${currentPerson}/${filename}/lock`, {method:"POST"});
-      const j = await res.json();
-      if (!j.ok) return;
-      const btn = card.querySelector(".lock-btn");
-      btn.textContent = j.locked ? "🔒" : "🔓";
-      btn.title = j.locked ? "ロック解除" : "ロック";
-      card.classList.toggle("locked", j.locked);
+    function closeMemoMenus() {
+      document.querySelectorAll(".memo-menu").forEach(mn => { mn.style.display = "none"; });
     }
-
-    async function registerSpeaker(filename, card) {
-      const btn = card.querySelector(".reg-btn");
-      if (btn.disabled) return;
-      btn.disabled = true;
-      btn.textContent = "登録中…";
-      try {
-        const res = await fetch(`/api/voice_memo/${currentPerson}/${filename}/register_speaker`, {method:"POST"});
-        const j = await res.json();
-        if (j.ok) {
-          btn.textContent = "登録済み";
-        } else {
-          btn.textContent = "話者認識に登録";
-          btn.disabled = false;
-          alert("登録失敗: " + JSON.stringify(j));
-        }
-      } catch(e) {
-        btn.textContent = "話者認識に登録";
-        btn.disabled = false;
-        alert("エラー: " + e.message);
-      }
-    }
+    document.addEventListener("click", closeMemoMenus);
 
     async function deleteMemo(filename, card) {
       if (!confirm(`「${filename}」を削除しますか？`)) return;

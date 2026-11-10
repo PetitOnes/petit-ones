@@ -21,3 +21,8 @@ html.embed .list, html.embed .grid { padding-bottom: 84px; }   /* 下の「会�
 html.embed .upload-area label.pick.has-file { border-color: var(--embed-accent, #E0674C); }
 html.embed .seen-all { border-color: var(--ui-cream-line); color: #6E625A; background: #fff; }
 html.embed .photo-card.unread::after { background: var(--embed-accent, #E0674C); }
+html.embed .play-btn { background: var(--embed-accent, #E0674C); }
+html.embed .memo-time, html.embed .more-btn { color: #6E625A; }
+html.embed .memo-menu { background: #fff; box-shadow: 0 6px 24px rgba(0,0,0,0.18); }
+html.embed .memo-menu a, html.embed .memo-menu button { color: #3A322D; }
+html.embed .memo-menu .mi-del { color: #B84E33; }
