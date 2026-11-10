@@ -6690,17 +6690,20 @@ HTML = """<!DOCTYPE html>
             fetch(`/api/${c.id}/status`),
             fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({})),
           ]);
-          const { m5_online } = await res.json();
+          const { m5_online, m5_sleeping } = await res.json();
           const color = c.color || "#cab8d9";
+          // 起きているか寝ているか(体がつながっているときだけ分かる)
+          const awake = m5_online ? `<span style="font-size:0.75rem;color:#888;white-space:nowrap;" title="${m5_sleeping ? "体はスリープ中" : "体は起きている"}">${m5_sleeping ? "😴 ねてる" : "☀️ おきてる"}</span>` : "";
           let batt = "";
           if (m5_online && typeof sens.battery === "number") {
             const pct = Math.round(sens.battery);
-            const volt = typeof sens.voltage === "number" ? ` ${(sens.voltage / 1000).toFixed(2)}V` : "";
+            const volt = typeof sens.voltage === "number" ? ` <span style="opacity:0.7">${(sens.voltage / 1000).toFixed(2)}V</span>` : "";
             batt = `<span style="font-size:0.75rem;color:${pct <= 20 ? "#f44336" : "#888"};white-space:nowrap;font-variant-numeric:tabular-nums;" title="電池">${pct <= 20 ? "🪫" : "🔋"} ${pct}%${volt}</span>`;
           }
           return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             <span style="font-weight:700;flex:1;color:${readableText(color)};">${c.name||c.id}</span>
+            ${awake}
             ${batt}
             <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};white-space:nowrap;">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
           </div>`;
