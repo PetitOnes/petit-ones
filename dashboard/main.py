@@ -9474,7 +9474,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       {id:"arisan",    label:"ありさん", human:true},
       {id:"kazahaya",  label:"かぜお",   human:true},
     ];
-    let currentPerson = PERSONS[0].id;
+    let currentPerson = "arisan";   // 開いたときは自分のボイスメモ(下でログイン中の人に合わせる)
     let mediaRecorder = null;
     let recordedChunks = [];
     let recTimerInterval = null;
@@ -9718,18 +9718,24 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       else alert("削除に失敗しました");
     }
 
-    buildTabs();
-    // 初期表示: ぷちタブは録音UI非表示
-    const initHuman = PERSONS.find(p=>p.id===currentPerson)?.human;
-    document.getElementById("recArea").style.display = initHuman ? "" : "none";
-    document.querySelector(".upload-area").style.display = initHuman ? "" : "none";
     // HTTPS以外では録音ボタンを無効化
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       document.getElementById("recBtn").disabled = true;
       document.getElementById("recBtn").style.opacity = "0.4";
       document.getElementById("recStatus").textContent = "⚠️ マイク録音はHTTPS環境でのみ使えます。ファイルアップロードをご利用ください。";
     }
-    loadMemos();
+    (async () => {
+      try {
+        const me = await fetch("/api/me").then(r => r.json());
+        if (me.username && PERSONS.some(p => p.id === me.username)) currentPerson = me.username;
+      } catch (e) {}
+      buildTabs();
+      // ぷちの分を見ているときは録音の欄を出さない
+      const initHuman = PERSONS.find(p=>p.id===currentPerson)?.human;
+      document.getElementById("recArea").style.display = initHuman ? "" : "none";
+      document.querySelector(".upload-area").style.display = initHuman ? "" : "none";
+      loadMemos();
+    })();
   </script>
 </body>
 </html>
