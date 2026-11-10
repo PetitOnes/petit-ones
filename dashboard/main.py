@@ -4334,6 +4334,7 @@ def api_ui_get():
 class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
+    send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true}, …] の順。show=false は「ほか」の中
 
 
@@ -4348,6 +4349,8 @@ def api_ui_set(req: UiSettings):
         cur["topbar_color"] = req.topbar_color or None
     if req.house_title:
         cur["house_title"] = req.house_title.strip()[:30]
+    if req.send_key in ("enter", "ctrl_enter"):
+        cur["send_key"] = req.send_key
     if req.tools is not None:
         cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True))}
                         for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
@@ -5870,6 +5873,9 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu button:hover { background: #f3f0f8; }
     .chat-input input { flex: 1 1 0; width: 0; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
+    /* 話しかける欄は何行でも書ける(改行できる)。書いた分だけ伸びて、5 行ぶんで止まる */
+    .chat-input #input { flex: 1 1 0; width: 0; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font: inherit; font-size: 0.875rem; line-height: 1.4; outline: none; resize: none; max-height: 8.2em; overflow-y: auto; display: block; }
+    .chat-input #input:focus { border-color: var(--topbar-bg, var(--char)); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
     .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
     .sub-btn { font-size: 0.8rem; color: var(--char-mid); background: none; border: 1px solid var(--char-border); border-radius: 20px; padding: 5px 14px; cursor: pointer; margin-top: 10px; }
@@ -5897,6 +5903,7 @@ HTML = """<!DOCTYPE html>
     @media (max-width: 600px) {
       .msg { font-size: 1rem; }
       .chat-input input { font-size: 1rem; padding: 12px 16px; }
+      .chat-input #input { font-size: 1rem; padding: 11px 16px; }
       .chat-input button { font-size: 1rem; padding: 12px 20px; min-height: 44px; }
       .char-tab { font-size: 0.95rem; padding: 8px 18px; min-height: 40px; }
       .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
@@ -6094,7 +6101,7 @@ HTML = """<!DOCTYPE html>
       <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
       <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
       </div>
-      <input type="text" id="input" placeholder="話しかける..." />
+      <textarea id="input" rows="1" placeholder="話しかける..."></textarea>
       <button id="send">送信</button>
     </div>
   </div>
@@ -6206,6 +6213,12 @@ HTML = """<!DOCTYPE html>
             <button class="a-btn a-btn--sub a-btn--s" onclick="saveTopbarColor(null)">ぷちの色に戻す</button>
           </span>
         </div>
+        <span class="a-heading" style="display:block;margin-top:18px">送信のしかた</span>
+        <p class="a-hint" style="margin:4px 0 8px">話しかける欄でのキーの使い方。送信ボタンはどちらでも使える。</p>
+        <div class="m-pills" id="sendKeyPills" style="flex-wrap:wrap">
+          <button class="a-pill" data-send-key="enter" onclick="saveSendKey('enter')">Enter で送信</button>
+          <button class="a-pill" data-send-key="ctrl_enter" onclick="saveSendKey('ctrl_enter')">Ctrl+Enter で送信(Enter は改行)</button>
+        </div>
         <span class="a-heading" style="display:block;margin-top:18px">道具の列</span>
         <p class="a-hint" style="margin:4px 0 6px">▲▼ で並びを変える。スイッチを切った道具は「ほか」の中に入る。</p>
         <div id="toolSettings"></div>
@@ -6316,7 +6329,7 @@ HTML = """<!DOCTYPE html>
       } catch {}
       applyTopbarColor();
     }
-    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); if (document.getElementById("toolRow").children.length) renderToolRow(); }).catch(() => {});
+    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); renderSendKey(); if (document.getElementById("toolRow").children.length) renderToolRow(); }).catch(() => {});
 
     function applyTheme(color) {
       const r = document.documentElement;
@@ -6533,7 +6546,21 @@ HTML = """<!DOCTYPE html>
     }
 
     // ---- 家の設定(みんな・だれかのときの ⚙️): トップバーの色、道具の列の並びと出す/「ほか」 ----
+    function renderSendKey() {
+      const cur = _uiSettings.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
+      document.querySelectorAll("#sendKeyPills [data-send-key]").forEach(b => b.classList.toggle("is-on", b.dataset.sendKey === cur));
+      document.getElementById("input").placeholder = cur === "ctrl_enter" ? "話しかける…(Ctrl+Enter で送信)" : "話しかける...";
+    }
+    async function saveSendKey(mode) {
+      _uiSettings.send_key = mode;   // 先に画面へ
+      renderSendKey();
+      try {
+        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({send_key: mode})});
+        if (res.ok) _uiSettings = await res.json();
+      } catch {}
+    }
     function openHouseSettings() {
+      renderSendKey();
       renderToolSettings();
       applyTopbarColor();
       document.getElementById("houseSettingsOverlay").classList.add("open");
@@ -7705,6 +7732,7 @@ HTML = """<!DOCTYPE html>
     document.getElementById("send").addEventListener("click", send);
     // 送信は、文字か写真・声が入っているときだけ押せる
     function refreshSend() {
+      if (typeof growInput === "function") growInput();   // 送って空になったときも、欄の高さを戻す
       const empty = !document.getElementById("input").value.trim() && !_pendingMedia;
       const b = document.getElementById("send");
       b.classList.toggle("is-empty", empty);
@@ -7712,7 +7740,23 @@ HTML = """<!DOCTYPE html>
     }
     document.getElementById("input").addEventListener("input", refreshSend);
     refreshSend();
-    document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
+    // 送り方は家の設定(⚙️ → 送信のしかた)。
+    //   enter      … Enter で送信、Shift+Enter で改行(はじめの形)
+    //   ctrl_enter … Ctrl(⌘)+Enter で送信、Enter は改行
+    // かな漢字の変換を決める Enter では送らない
+    document.getElementById("input").addEventListener("keydown", e => {
+      if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
+      const ctrlMode = _uiSettings.send_key === "ctrl_enter";
+      const wantSend = ctrlMode ? (e.ctrlKey || e.metaKey) : !e.shiftKey;
+      if (wantSend) { e.preventDefault(); send(); }
+    });
+    // 書いた分だけ欄を伸ばす
+    function growInput() {
+      const el = document.getElementById("input");
+      el.style.height = "auto";
+      el.style.height = Math.min(el.scrollHeight + 2, 132) + "px";
+    }
+    document.getElementById("input").addEventListener("input", growInput);
 
     checkAuth();
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
