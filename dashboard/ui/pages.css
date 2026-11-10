@@ -2,7 +2,7 @@
    色・大きさは tokens.css、部品は atoms.css・molecules.css。 */
 
 * { box-sizing: border-box; }
-body { margin: 0; padding: 0 12px 96px; font-family: var(--ui-font); color: var(--ui-text); background: var(--ui-bg); line-height: 1.6; }
+body { margin: 0; padding: 0 12px 96px; overflow-x: hidden; font-family: var(--ui-font); color: var(--ui-text); background: var(--ui-bg); line-height: 1.6; }
 .p-wrap { max-width: 720px; margin: 0 auto; }
 
 /* 直接開いたときだけ出る頭(埋めて出しているときは、トップページの頭があるので出さない) */
@@ -11,8 +11,8 @@ body { margin: 0; padding: 0 12px 96px; font-family: var(--ui-font); color: var(
 html.embed .p-head { display: none; }
 
 /* 1 行目: 「○○ ▾ の…」と、右に件数など */
-/* スクロールしても上に残る(2026-11-10 ありさん)。左右は本文の余白ぶんはみ出して、下の文字が透けないように */
-.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 -12px; padding: 10px 12px; background: var(--p-char, var(--ui-surface)); border-bottom: 1px solid var(--ui-line); transition: background 0.3s; }
+/* スクロールしても上に残る(2026-11-10 ありさん)。帯は画面の端から端まで(本文は最大 720px なので、はみ出して伸ばす)。中身は本文の幅に合わせる */
+.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 calc(50% - 50vw); padding: 10px max(12px, calc(50vw - 360px)); background: var(--p-char, var(--ui-surface)); border-bottom: 1px solid var(--ui-line); transition: background 0.3s; }
 .o-bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 700; color: var(--p-char-ink, var(--ui-text-sub)); white-space: nowrap; min-width: 0; }
 .o-bar .a-input { min-height: 36px; font-size: 0.9rem; border-radius: var(--ui-radius-s); }
 .o-bar .o-bar-end { margin-left: auto; font-size: 0.8rem; color: var(--ui-text-sub); white-space: nowrap; }
