@@ -5798,7 +5798,7 @@ HTML = """<!DOCTYPE html>
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
-    .msg.user { background: var(--char); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
+    .msg.user { background: var(--char-bubble, var(--char)); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
     .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
     .msg-via { font-size: 0.62rem; opacity: 0.55; margin-bottom: 2px; letter-spacing: 0.04em; }
     .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
@@ -6376,6 +6376,8 @@ HTML = """<!DOCTYPE html>
       r.style.setProperty("--char-soft", lighten(color, 0.86));
       r.style.setProperty("--char-border", lighten(color, 0.72));
       r.style.setProperty("--char-btn-text", btnTextColor(color));
+      // 自分の吹き出しの色。とても明るい色(黄色など)は、そのままだと濃すぎるので白で薄める(2026-11-10 ありさん)
+      r.style.setProperty("--char-bubble", brightness(color) > 200 ? lighten(color, 0.55) : color);
       document.getElementById("charDot").style.background = color;
       applyTopbarColor();
     }
