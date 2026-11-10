@@ -12,8 +12,8 @@ html.embed .p-head { display: none; }
 
 /* 1 行目: 「○○ ▾ の…」と、右に件数など */
 /* スクロールしても上に残る(2026-11-10 ありさん)。左右は本文の余白ぶんはみ出して、下の文字が透けないように */
-.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 -12px; padding: 10px 12px; background: var(--ui-surface); border-bottom: 1px solid var(--ui-line); }
-.o-bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--ui-text-sub); white-space: nowrap; min-width: 0; }
+.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 -12px; padding: 10px 12px; background: var(--p-char, var(--ui-surface)); border-bottom: 1px solid var(--ui-line); transition: background 0.3s; }
+.o-bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 700; color: var(--p-char-ink, var(--ui-text-sub)); white-space: nowrap; min-width: 0; }
 .o-bar .a-input { min-height: 36px; font-size: 0.9rem; border-radius: var(--ui-radius-s); }
 .o-bar .o-bar-end { margin-left: auto; font-size: 0.8rem; color: var(--ui-text-sub); white-space: nowrap; }
 .o-bar select.o-bar-end { width: auto; }

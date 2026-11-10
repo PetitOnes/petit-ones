@@ -42,9 +42,20 @@ window.PetitPage = (() => {
       o.value = c.id; o.textContent = c.name || c.id; o.selected = c.id === cur;
       sel.appendChild(o);
     }
+    // 1 行目の背景は、選んでいる子の色(2026-11-10 ありさん)。文字は、明るい色なら濃く、暗い色なら白
+    const paint = id => {
+      const c = (chars.find(x => x.id === id) || {}).color || "";
+      if (!/^#[0-9a-fA-F]{6}$/.test(c)) { root.style.removeProperty("--p-char"); root.style.removeProperty("--p-char-ink"); return; }
+      const [r, g, b] = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+      const bright = (r * 299 + g * 587 + b * 114) / 1000 > 160;
+      root.style.setProperty("--p-char", c);
+      root.style.setProperty("--p-char-ink", bright ? `rgb(${[r, g, b].map(v => Math.round(v * 0.4)).join(",")})` : "#fff");
+    };
+    paint(cur);
     sel.onchange = () => {
       q.set("char", sel.value);
       history.replaceState(null, "", location.pathname + "?" + q.toString());
+      paint(sel.value);
       onChange(sel.value);
     };
     return cur;
