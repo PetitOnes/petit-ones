@@ -6502,7 +6502,7 @@ HTML = """<!DOCTYPE html>
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
       kairanban: {icon: "📋", name: "回覧板",     attr: 'href="/kairanban"'},
-      library:   {icon: "📚", name: "ライブラリ", attr: 'href="/library"'},
+      library:   {icon: "📚", name: "ライブラリ", pane: "library"},
       kankei:    {icon: "🔒", name: "ひみつ",     attr: 'href="/kankei"'},
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
@@ -6625,10 +6625,10 @@ HTML = """<!DOCTYPE html>
       }
     }
 
-    // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記は別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
+    // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", library: "/library"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -8943,6 +8943,17 @@ LIBRARY_HTML = """<!DOCTYPE html>
       .top-bar.reading-mode h1 { display: none; }
     }
   </style>
+  <link rel="stylesheet" href="/ui/embed.css">
+  <script>
+    // トップページの会話の場所に埋めて出すとき(?embed=1): 配色をそろえる(ui/embed.css)
+    (() => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("embed")) return;
+      document.documentElement.classList.add("embed");
+      const a = q.get("accent");
+      if (/^[0-9a-fA-F]{6}$/.test(a || "")) document.documentElement.style.setProperty("--embed-accent", "#" + a);
+    })();
+  </script>
 </head>
 <body>
   <div class="top-bar">

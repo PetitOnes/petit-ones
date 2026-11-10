@@ -53,3 +53,17 @@ html.embed .entry-content { color: #3A322D; }
 html.embed .author-label, html.embed .author-arisan { color: #B84E33; }
 html.embed .author-petitya { color: #8f7417; }
 html.embed .author-petiko { color: #7a5fa8; }
+
+/* ---- ライブラリ(/library) ---- */
+html.embed .layout { padding-top: 12px; }
+html.embed .book-item { background: #fff; border-color: var(--ui-cream-line); color: #3A322D; }
+html.embed .book-item:hover { background: var(--ui-paper); }
+html.embed .book-item.active { background: #fdeee9; border-color: var(--embed-accent, #E0674C); }
+html.embed .book-meta, html.embed .font-label { color: #9a8d82; }
+html.embed .reading-toolbar { background: #fff; border-bottom-color: var(--ui-cream-line); color: #3A322D; }
+html.embed .book-content { color: #3A322D; }
+html.embed .book-title-bar { color: #3A322D; border-bottom-color: var(--ui-cream-line); }
+html.embed .tool-btn { background: #f3e9d8; border-color: var(--ui-cream-line); color: #3A322D; }
+html.embed .tool-btn:hover { background: #ecdfc9; }
+html.embed .tool-btn.done { background: #dcefd8; border-color: #8fb58a; }
+@media (max-width: 640px) { html.embed .sidebar { max-height: 40vh; } }
