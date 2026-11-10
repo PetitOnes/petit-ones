@@ -5752,6 +5752,8 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* 「起こす」ボタンは出さない(2026-11-10 ありさん)。JS が表示を切り替えるので、ここで止める */
+    #wakeBtn { display: none !important; }
     /* ぷち 1 人の帯と、開いたときの中身 */
     .char-bar { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px max(16px, calc(50vw - 434px)); border: none; border-bottom: 1px solid var(--ui-cream-line); background: var(--ui-cream); color: #6E625A; font: inherit; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.9rem; text-align: left; cursor: pointer; }
     .char-bar .char-pick-dot { box-shadow: none; }
