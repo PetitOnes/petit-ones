@@ -948,12 +948,37 @@ def get_m5_hosts(cfg: dict) -> list[str]:
     return [host] if host else []
 
 
+_m5_last_good: dict[tuple, str] = {}
+
+
 async def resolve_m5_host(cfg: dict, port: int = 80, timeout: float = 2.0) -> str | None:
-    """M5ホスト候補を順に試し、最初に応答したホストを返す。全滅なら None。"""
-    for host in get_m5_hosts(cfg):
-        if await check_m5_online(host, port, timeout):
-            return host
-    return None
+    """M5ホスト候補のうち、応答したホストを返す。全滅なら None。"""
+    hosts = get_m5_hosts(cfg)
+    if not hosts:
+        return None
+    key = (tuple(hosts), port)
+    # 前に応えたアドレスを先に(候補を順に待つと、届かない 1 件ごとに timeout 秒かかる)
+    last = _m5_last_good.get(key)
+    if last and await check_m5_online(last, port, timeout):
+        return last
+    # 候補を同時に試し、最初に応えたものを使う
+    tasks = {asyncio.ensure_future(check_m5_online(h, port, timeout)): h for h in hosts}
+    found = None
+    try:
+        for fut in asyncio.as_completed(list(tasks)):
+            await fut
+            done = [h for t, h in tasks.items() if t.done() and not t.cancelled() and t.result()]
+            if done:
+                found = next(h for h in hosts if h in done)   # 同時に応えたら上にあるほう
+                break
+    finally:
+        for t in tasks:
+            t.cancel()
+    if found:
+        _m5_last_good[key] = found
+    else:
+        _m5_last_good.pop(key, None)
+    return found
 
 
 def get_char_config(character_id: str) -> dict:
@@ -1875,7 +1900,7 @@ KAIRANBAN_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>回覧板</title>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
@@ -4674,7 +4699,7 @@ TERMINAL3_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>個別チャット</title>
   <style>
@@ -5501,7 +5526,7 @@ HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>プチたち</title>
   <style>
@@ -5515,7 +5540,7 @@ HTML = """<!DOCTYPE html>
       --char-btn-text: white;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--ui-font-maru); background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
+    body { font-family: var(--ui-font-maru); background: var(--ui-cream); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
@@ -5584,7 +5609,7 @@ HTML = """<!DOCTYPE html>
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
       /* 画面が広くても端から端まで(body は最大 900px なので、はみ出して伸ばす)。中身は本文の幅に合わせる */
-      margin: -16px calc(50% - 50vw) 8px; padding: 10px calc(50vw - 50% - 4px) 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
+      margin: -16px calc(50% - 50vw) 0; padding: 10px calc(50vw - 50% - 4px) 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
     .topbar .house-title { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; font-size: 1.05rem; font-weight: 700; font-family: var(--ui-font-maru-head); color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
     .topbar-btns { display: flex; gap: 8px; flex-shrink: 0; margin-left: auto; }
     /* ぷちを選ぶ(題の右。2026-11-10 ありさん): 押すと下に一覧が出る */
@@ -5605,7 +5630,8 @@ HTML = """<!DOCTYPE html>
     .char-tabs::-webkit-scrollbar { display: none; }
     .char-tabs .char-tab { flex-shrink: 0; white-space: nowrap; }
     /* 道具の列: 絵文字の下に名前。折り返さず横スクロール */
-    .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; margin-bottom: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    /* 帯は端から端まで。下に薄い線、その下(本文)はクリーム色(2026-11-10 ありさん) */
+    .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; margin: 0 calc(50% - 50vw) 12px; padding: 8px calc(50vw - 50%) 6px; background: var(--ui-paper); border-bottom: 1px solid var(--ui-cream-line); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .tool-row::-webkit-scrollbar { display: none; }
     .tool { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; padding: 4px 3px; border: none; background: none; color: #777; font: inherit; text-decoration: none; cursor: pointer; }
     .tool-icon { font-size: 1.2rem; line-height: 1.2; opacity: 0.75; }
@@ -5669,7 +5695,7 @@ HTML = """<!DOCTYPE html>
       .desire .bar-bg { height: 8px; }
       section { padding: 12px 14px; margin-bottom: 10px; }
       section h2 { margin: 0 0 8px; font-size: 0.95rem; }
-      .tool-row { margin-bottom: 4px; }
+      .tool-row { margin-bottom: 10px; }
     }
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
@@ -7221,7 +7247,7 @@ TERMINAL_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>ターミナル</title>
   <style>
@@ -7586,7 +7612,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>秘密の相関図</title>
   <style>
@@ -7993,7 +8019,7 @@ NOTES_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>📓 ノート</title>
   <script async src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
@@ -8293,7 +8319,7 @@ LIBRARY_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>📚 ライブラリ</title>
   <style>
@@ -8562,7 +8588,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>📖 交換ノート</title>
   <style>
@@ -8693,7 +8719,7 @@ ALBUM_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>🖼️ アルバム</title>
   <style>
@@ -8964,7 +8990,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>🎤 ボイスメモ</title>
   <style>
@@ -10405,7 +10431,7 @@ COSTS_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
 <link rel="stylesheet" href="/ui/tokens.css">
 <title>コスト管理</title>
 <style>

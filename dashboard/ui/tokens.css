@@ -19,6 +19,11 @@
   --char-border: #e0d8f0;
   --char-btn-text: #fff;
 
+  /* 里親さん側の紙の色(ぷち設定ページ・きせかえ) */
+  --ui-cream: #FBF4E8;
+  --ui-paper: #FFFDF8;
+  --ui-cream-line: #E3D6C2;
+
   /* 面 */
   --ui-bg: var(--char-bg);
   --ui-surface: #fff;
@@ -87,16 +92,16 @@
 
 /* 里親さん側の土台(ぷち設定ページ・きせかえの値) */
 :root[data-ui="foster"] {
-  --ui-bg: #FBF4E8;
+  --ui-bg: var(--ui-cream);
   --ui-surface: #fff;
-  --ui-surface-soft: #FFFDF8;
+  --ui-surface-soft: var(--ui-paper);
 
   --ui-text: #3A322D;
   --ui-text-sub: #6E625A;
   --ui-text-mute: #9a8d82;   /* 里親さん側に無い段。文字色と線の間をこちらで決めた */
   --ui-heading: var(--ui-accent-text);
 
-  --ui-line: #E3D6C2;
+  --ui-line: var(--ui-cream-line);
   --ui-line-soft: #eee1cf;
 
   --ui-danger: #B84E33;
