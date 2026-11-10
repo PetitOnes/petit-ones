@@ -4274,6 +4274,7 @@ def api_ui_get():
 class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
+    tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true}, …] の順。show=false は「ほか」の中
 
 
 @app.post("/api/ui")
@@ -4282,10 +4283,14 @@ def api_ui_set(req: UiSettings):
     cur = _load_ui_settings()
     if req.topbar_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_color):
         return JSONResponse({"error": "color は #rrggbb"}, status_code=400)
-    if req.topbar_color is not None or "topbar_color" not in cur:
+    # 送られてきたときだけ変える(null は「ぷちの色に戻す」。道具の列だけ送ったときは色を触らない)
+    if "topbar_color" in req.model_fields_set or "topbar_color" not in cur:
         cur["topbar_color"] = req.topbar_color or None
     if req.house_title:
         cur["house_title"] = req.house_title.strip()[:30]
+    if req.tools is not None:
+        cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True))}
+                        for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
     UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
     return cur
@@ -5615,6 +5620,8 @@ HTML = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
   <title>プチたち</title>
   <script src="/ui/md.js"></script>
   <script async src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" onload="window._mdReady && window._mdReady()"></script>
@@ -5745,6 +5752,13 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* 家の設定: 押せるものの色はトップバーの色に */
+    .house-settings { --ui-accent: var(--topbar-bg, var(--char)); --ui-accent-ink: var(--topbar-fg, #fff); --ui-accent-text: #8a5a4c; --ui-accent-line: var(--ui-cream-line); --ui-accent-soft: #f6ebe4; --ui-heading: #8a7f78; }
+    .tool-set-row { padding: 4px 0; }
+    .tool-set-move { display: inline-flex; flex-shrink: 0; }
+    .tool-set-move .a-icon-btn { min-width: 34px; min-height: 34px; font-size: 0.8rem; }
+    .tool-set-move .a-icon-btn:disabled { opacity: 0.25; cursor: default; }
+    .tool-set-name { flex: 1; min-width: 0; font-size: 0.95rem; }
     /* 遡っているあいだ、いま見ている日付を上に薄く出す(2026-11-10 ありさん) */
     .date-float { position: fixed; left: 50%; transform: translateX(-50%); z-index: 45; padding: 3px 12px; font-size: 0.72rem; color: #fff; background: rgba(90,78,70,0.55); border-radius: 999px; opacity: 0; pointer-events: none; transition: opacity 0.25s; white-space: nowrap; }
     .date-float.show { opacity: 1; }
@@ -6082,11 +6096,8 @@ HTML = """<!DOCTYPE html>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
           </div>
           <div class="setting-row">
-            <span class="setting-label">🎨 トップバーの色</span>
-            <span style="display:flex;align-items:center;gap:8px;">
-              <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveTopbarColor(this.value)" style="width:40px;height:28px;border:none;background:none;padding:0;cursor:pointer;">
-              <button onclick="saveTopbarColor(null)" style="font-size:0.75rem;padding:4px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;cursor:pointer;">ぷちの色に戻す</button>
-            </span>
+            <span class="setting-label">🏠 家の設定（色・道具の列）</span>
+            <button class="a-btn a-btn--sub a-btn--s" onclick="closePopup('settingsOverlay'); openHouseSettings()">開く</button>
           </div>
         </div>
         <div style="margin-top:16px;">
@@ -6095,6 +6106,30 @@ HTML = """<!DOCTYPE html>
           <button class="add-hour-btn" onclick="addM5HostRow('')">＋ 追加</button>
         </div>
         <button class="save-settings-btn" onclick="saveSettings()">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 家の設定(2026-11-10 ありさん): みんな・だれかのときの ⚙️。部品は ui/atoms.css・molecules.css -->
+  <div class="overlay" id="houseSettingsOverlay" onclick="closeIfOverlay(event,'houseSettingsOverlay')">
+    <div class="popup house-settings">
+      <div class="popup-header">
+        <span class="popup-title">家の設定</span>
+        <button class="popup-close" onclick="closePopup('houseSettingsOverlay')">✕</button>
+      </div>
+      <div class="popup-body">
+        <span class="a-heading">トップバーの色</span>
+        <div class="m-row">
+          <span>🎨 色</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveTopbarColor(this.value)" style="width:44px;height:32px;border:none;background:none;padding:0;cursor:pointer;">
+            <button class="a-btn a-btn--sub a-btn--s" onclick="saveTopbarColor(null)">ぷちの色に戻す</button>
+          </span>
+        </div>
+        <span class="a-heading" style="display:block;margin-top:18px">道具の列</span>
+        <p class="a-hint" style="margin:4px 0 6px">▲▼ で並びを変える。スイッチを切った道具は「ほか」の中に入る。</p>
+        <div id="toolSettings"></div>
+        <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="resetTools()">はじめの並びに戻す</button>
       </div>
     </div>
   </div>
@@ -6198,7 +6233,7 @@ HTML = """<!DOCTYPE html>
       } catch {}
       applyTopbarColor();
     }
-    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); }).catch(() => {});
+    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); if (document.getElementById("toolRow").children.length) renderToolRow(); }).catch(() => {});
 
     function applyTheme(color) {
       const r = document.documentElement;
@@ -6230,25 +6265,7 @@ HTML = """<!DOCTYPE html>
         + `<span>${label}</span><span class="caret">▼</span>`;
       // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
       // 道具は 絵文字 + 名前(2026-11-10 ありさん)。あまり使わないものは「ほか」を押したら出る
-      const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
-      const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
-      document.getElementById("toolRow").innerHTML =
-          tool("🌱", "ようす", 'onclick="openYousu()"')
-        + tool("✉️", "メール", 'onclick="openMailCompose()"')
-        + tool("🖼️", "アルバム", `onclick="showPane('album')"${_pane === "album" ? ' data-on="1"' : ""}`)
-        + tool("🎤", "ボイスメモ", `onclick="showPane('voice')"${_pane === "voice" ? ' data-on="1"' : ""}`)
-        + tool("📓", "ノート", `onclick="showPane('notes')"${_pane === "notes" ? ' data-on="1"' : ""}`)
-        + tool("📖", "交換日記", `onclick="showPane('notebook')"${_pane === "notebook" ? ' data-on="1"' : ""}`)
-        + tool("📋", "回覧板", 'href="/kairanban"')
-        + tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
-        + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">`
-        + tool("📚", "ライブラリ", 'href="/library"')
-        + tool("🔒", "ひみつ", 'href="/kankei"')
-        + tool("📡", "モニタ", 'href="/display" target="_blank"')
-        + tool("🖥️", "ターミナル", 'href="/terminal"')
-        + tool("🔍", "行動ログ", 'href="/stream-logs"')
-        + tool("💰", "おかね", 'href="/costs"')
-        + `</span>`;
+      renderToolRow();
 
       const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
@@ -6392,6 +6409,89 @@ HTML = """<!DOCTYPE html>
     }
     window.addEventListener("scroll", () => { if (!_dateFloatBusy) { _dateFloatBusy = true; requestAnimationFrame(updateDateFloat); } }, {passive: true});
 
+    // 道具の一覧。並びと、列に出すか「ほか」に入れるかは家の設定(⚙️ → 道具の列)で変えられる
+    const TOOLS = {
+      yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
+      mail:      {icon: "✉️", name: "メール",     attr: 'onclick="openMailCompose()"'},
+      album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
+      voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
+      notes:     {icon: "📓", name: "ノート",     pane: "notes"},
+      notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
+      kairanban: {icon: "📋", name: "回覧板",     attr: 'href="/kairanban"'},
+      library:   {icon: "📚", name: "ライブラリ", attr: 'href="/library"'},
+      kankei:    {icon: "🔒", name: "ひみつ",     attr: 'href="/kankei"'},
+      monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
+      terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
+      logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
+      costs:     {icon: "💰", name: "おかね",     attr: 'href="/costs"'},
+    };
+    const TOOLS_DEFAULT_SHOWN = ["yousu", "mail", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
+    // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す
+    function toolOrder() {
+      const saved = Array.isArray(_uiSettings.tools) ? _uiSettings.tools.filter(t => t && TOOLS[t.id]) : [];
+      const seen = new Set(saved.map(t => t.id));
+      const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? false : TOOLS_DEFAULT_SHOWN.includes(id)}));
+      return saved.map(t => ({id: t.id, show: t.show !== false})).concat(rest);
+    }
+    function renderToolRow() {
+      const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
+      const one = t => {
+        const d = TOOLS[t.id];
+        const attr = d.pane ? `onclick="showPane('${d.pane}')"${_pane === d.pane ? ' data-on="1"' : ""}` : d.attr;
+        return tool(d.icon, d.name, attr);
+      };
+      const order = toolOrder();
+      const shown = order.filter(t => t.show), more = order.filter(t => !t.show);
+      const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
+      document.getElementById("toolRow").innerHTML = shown.map(one).join("")
+        + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
+            + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">` + more.map(one).join("") + `</span>` : "");
+    }
+
+    // ---- 家の設定(みんな・だれかのときの ⚙️): トップバーの色、道具の列の並びと出す/「ほか」 ----
+    function openHouseSettings() {
+      renderToolSettings();
+      applyTopbarColor();
+      document.getElementById("houseSettingsOverlay").classList.add("open");
+    }
+    function renderToolSettings() {
+      const order = toolOrder();
+      document.getElementById("toolSettings").innerHTML = order.map((t, i) => {
+        const d = TOOLS[t.id];
+        return `<div class="m-row tool-set-row">
+          <span class="tool-set-move">
+            <button class="a-icon-btn" title="上へ" ${i === 0 ? "disabled" : ""} onclick="moveTool(${i}, -1)">▲</button>
+            <button class="a-icon-btn" title="下へ" ${i === order.length - 1 ? "disabled" : ""} onclick="moveTool(${i}, 1)">▼</button>
+          </span>
+          <span class="tool-set-name">${d.icon} ${d.name}</span>
+          <label class="a-toggle" title="列に出す"><input type="checkbox" ${t.show ? "checked" : ""} onchange="showTool(${i}, this.checked)"><span></span></label>
+        </div>`;
+      }).join("");
+    }
+    async function saveTools(order) {
+      _uiSettings.tools = order;   // 先に画面へ
+      renderToolRow();
+      renderToolSettings();
+      try {
+        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tools: order})});
+        if (res.ok) _uiSettings = await res.json();
+      } catch {}
+    }
+    function moveTool(i, d) {
+      const order = toolOrder(), j = i + d;
+      if (j < 0 || j >= order.length) return;
+      [order[i], order[j]] = [order[j], order[i]];
+      saveTools(order);
+    }
+    function showTool(i, on) {
+      const order = toolOrder();
+      order[i].show = on;
+      saveTools(order);
+    }
+    function resetTools() {
+      saveTools(Object.keys(TOOLS).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})));
+    }
+
     function toggleMoreTools() {
       const m = document.getElementById("moreTools");
       m.style.display = m.style.display === "none" ? "contents" : "none";
@@ -6418,7 +6518,6 @@ HTML = """<!DOCTYPE html>
       if (!chatStates[id]) loadChatHistoryInto(id); else scrollChatToBottom();
       loadCharacters();
       const isGroupLike = id === "select" || id === "group";
-      document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
       document.getElementById("sleepBtn").style.display = "none";
       document.getElementById("wakeBtn").style.display = "none";
       document.getElementById("m5status").innerHTML = "";
@@ -7414,6 +7513,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function openSettings() {
+      if (currentCharId === "select" || currentCharId === "group") return openHouseSettings();   // みんな・だれかのときは家の設定
       const [res, m5Res] = await Promise.all([
         fetch(`/api/${currentCharId}/settings`),
         fetch(`/api/${currentCharId}/config/m5_hosts`),
