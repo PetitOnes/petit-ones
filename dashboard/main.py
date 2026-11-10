@@ -964,16 +964,13 @@ async def resolve_m5_host(cfg: dict, port: int = 80, timeout: float = 2.0) -> st
     # 候補を同時に試し、最初に応えたものを使う
     tasks = {asyncio.ensure_future(check_m5_online(h, port, timeout)): h for h in hosts}
     found = None
-    try:
-        for fut in asyncio.as_completed(list(tasks)):
-            await fut
-            done = [h for t, h in tasks.items() if t.done() and not t.cancelled() and t.result()]
-            if done:
-                found = next(h for h in hosts if h in done)   # 同時に応えたら上にあるほう
-                break
-    finally:
-        for t in tasks:
-            t.cancel()
+    # 残りは止めずに終わるのを待たせておく(途中で止めると、名前が引けない候補の失敗がログに「拾われなかった例外」として出る)
+    for fut in asyncio.as_completed(list(tasks)):
+        await fut
+        done = [h for t, h in tasks.items() if t.done() and t.result()]
+        if done:
+            found = next(h for h in hosts if h in done)   # 同時に応えたら上にあるほう
+            break
     if found:
         _m5_last_good[key] = found
     else:
