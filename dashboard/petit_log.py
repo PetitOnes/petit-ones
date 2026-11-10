@@ -346,11 +346,8 @@ def build(src: Sources, before: str | None = None, days: int = 3, today: Date | 
             "earliest": earliest.isoformat() if earliest else None}
 
 
-def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit: int = 30) -> dict:
-    """日記の一覧(新しい順)。記憶のある日と、まとめのある日。まとめはここでは作らない(あるものだけ)。
-
-    返すもの: {"items": [{"date", "weekday", "has_summary", "head", "count"}], "next_before", "more", "earliest"}
-    """
+def _diary_dates(char_dir: Path, memory_db: Path) -> tuple[list[Date], dict[str, int], dict[str, Path]]:
+    """日記に出す日(記憶のある日と、まとめのある日)を新しい順に。あわせて、日ごとの記憶の件数と、まとめのファイル"""
     counts: dict[str, int] = {}
     try:
         conn = sqlite3.connect(f"file:{memory_db}?mode=ro", uri=True)
@@ -368,6 +365,27 @@ def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit
         except ValueError:
             continue
     dates.sort(reverse=True)
+    return dates, counts, summaries
+
+
+def diary_neighbors(char_dir: Path, memory_db: Path, date: str) -> tuple[str | None, str | None]:
+    """その日の前の日・次の日(日記に出す日のなかで)。無ければ None"""
+    try:
+        day = Date.fromisoformat(date)
+    except ValueError:
+        return None, None
+    dates, _, _ = _diary_dates(char_dir, memory_db)
+    prev = next((d for d in dates if d < day), None)             # 新しい順なので、最初に見つかる古い日
+    nxt = next((d for d in reversed(dates) if d > day), None)    # 古い順に見て、最初に見つかる新しい日
+    return (prev.isoformat() if prev else None, nxt.isoformat() if nxt else None)
+
+
+def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit: int = 30) -> dict:
+    """日記の一覧(新しい順)。記憶のある日と、まとめのある日。まとめはここでは作らない(あるものだけ)。
+
+    返すもの: {"items": [{"date", "weekday", "has_summary", "head", "count"}], "next_before", "more", "earliest"}
+    """
+    dates, counts, summaries = _diary_dates(char_dir, memory_db)
     earliest = dates[-1].isoformat() if dates else None
     if before:
         try:

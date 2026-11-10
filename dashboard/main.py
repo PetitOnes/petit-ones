@@ -1889,7 +1889,9 @@ def api_diary_day(character_id: str, date: str):
     if not _is_petit(character_id):
         return JSONResponse({"error": "unknown character"}, status_code=404)
     memories = _query_memories(character_id, 200, date_filter=date)
-    return {"date": date, "summary": petit_log.diary_summary(char_dir(character_id), date), "count": len(memories), "memories": memories}
+    prev_day, next_day = petit_log.diary_neighbors(char_dir(character_id), memory_db_path(character_id), date)
+    return {"date": date, "summary": petit_log.diary_summary(char_dir(character_id), date), "count": len(memories), "memories": memories,
+            "prev": prev_day, "next": next_day}
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html"}

@@ -46,6 +46,8 @@ html.embed .p-head { display: none; }
 .o-diary-top b { font-family: var(--ui-font-head); font-size: 0.95rem; }
 .o-diary-head { margin-top: 2px; font-size: var(--ui-fs-m); color: var(--ui-text-sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .o-diary-head.is-none { color: var(--ui-text-mute); }
+.o-day-nav { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
+.o-day-nav-end { margin-left: auto; display: flex; gap: 6px; }
 .o-diary-summary { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.8; }
 
 .p-empty { padding: 40px 0; text-align: center; color: var(--ui-text-mute); font-size: var(--ui-fs-m); }

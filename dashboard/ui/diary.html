@@ -30,7 +30,14 @@
 
     <!-- 1 日ぶん -->
     <div id="dayView" style="display:none">
-      <button class="a-btn a-btn--sub a-btn--s" onclick="showList()">← 一覧</button>
+      <!-- 一覧へ戻る・前の日・次の日(日記のある日のなかで) -->
+      <div class="o-day-nav">
+        <button class="a-btn a-btn--sub a-btn--s" onclick="showList()">← 一覧</button>
+        <span class="o-day-nav-end">
+          <button class="a-btn a-btn--sub a-btn--s" id="prevBtn" disabled onclick="go(this)">◀ 前の日</button>
+          <button class="a-btn a-btn--sub a-btn--s" id="nextBtn" disabled onclick="go(this)">次の日 ▶</button>
+        </span>
+      </div>
       <h2 class="o-day" id="dayTitle"></h2>
       <div class="m-card">
         <span class="a-heading">まとめ</span>
@@ -125,11 +132,17 @@
       document.getElementById("dayView").style.display = "";
       document.getElementById("dayTitle").textContent = dayLabel(date);
       document.getElementById("daySummary").textContent = "読み込み中…";
+      document.getElementById("prevBtn").disabled = document.getElementById("nextBtn").disabled = true;
       document.getElementById("dayMemories").textContent = "";
       window.scrollTo(0, 0);
       try {
         const res = await (await fetch(`/api/${charId}/diary_day/${date}`)).json();
         if (openDate !== date) return;
+        for (const [id, d] of [["prevBtn", res.prev], ["nextBtn", res.next]]) {
+          const b = document.getElementById(id);
+          b.disabled = !d;
+          b.dataset.date = d || "";
+        }
         renderSummary(res.summary, res.count);
         document.getElementById("memTitle").textContent = `その日の記憶(${res.count} 件)`;
         document.getElementById("dayMemories").innerHTML = (res.memories || []).map(m => {
@@ -140,6 +153,8 @@
         document.getElementById("daySummary").textContent = "読み込めませんでした";
       }
     }
+
+    function go(btn) { if (btn.dataset.date) openDay(btn.dataset.date); }
 
     // まとめは、押したときだけ作る(一覧や開いただけでは作らない)
     async function summarize() {
