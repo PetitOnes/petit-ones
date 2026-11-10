@@ -748,7 +748,9 @@ def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
 NOTEBOOK_FILE = CHAT_HISTORY_DIR / "exchange_notebook.json"
 ALBUM_DIR = DATA_DIR / "photo_album"
 ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
-ALBUM_MAX_PHOTOS = 50
+ALBUM_MAX_PHOTOS = 50                     # ぷちのアルバム
+ALBUM_MAX_PHOTOS_HUMAN = 200              # 人のアルバム(2026-10-16 ありさん「200 枚くらい、消えないで」)
+ALBUM_HUMANS = {"arisan", "kazahaya"}
 ALBUM_MAX_PX = 1200
 ALBUM_JPEG_QUALITY = 80
 
@@ -827,7 +829,8 @@ def _prune_album(person_id: str):
     d = _album_dir(person_id)
     locks = _load_locks(person_id)
     photos = sorted(d.glob("*.jpg"))
-    while len(photos) > ALBUM_MAX_PHOTOS:
+    limit = ALBUM_MAX_PHOTOS_HUMAN if person_id in ALBUM_HUMANS else ALBUM_MAX_PHOTOS
+    while len(photos) > limit:
         # ロックされていない最古のものを削除
         to_delete = next((p for p in photos if p.name not in locks), None)
         if to_delete is None:
@@ -856,9 +859,28 @@ def _save_mailbox_metadata(data: dict) -> None:
     MAILBOX_METADATA_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _get_mail_meta(filename: str) -> dict:
-    meta = _load_mailbox_metadata()
+def _get_mail_meta(filename: str, meta: dict | None = None) -> dict:
+    """1 通ぶんのメタ。一覧では meta(= _load_mailbox_metadata())を渡して、通ごとに JSON を読み直さない(2026-10-16)"""
+    if meta is None:
+        meta = _load_mailbox_metadata()
     return meta.get("mails", {}).get(filename, {"archived": False, "starred": False})
+
+
+# メール本文の cache: filename -> (mtime, content)。9,000 通を毎回読んでいた「全メール」を速くする(2026-10-16)
+_MAIL_CONTENT_CACHE: dict[str, tuple[float, str]] = {}
+
+
+def _read_mail_cached(f: Path) -> str:
+    try:
+        mtime = f.stat().st_mtime
+    except OSError:
+        return ""
+    cached = _MAIL_CONTENT_CACHE.get(f.name)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    content = f.read_text(encoding="utf-8")
+    _MAIL_CONTENT_CACHE[f.name] = (mtime, content)
+    return content
 
 
 class MailMetaUpdate(BaseModel):
@@ -1027,6 +1049,21 @@ BASE_TOOLS = [
     "mcp__notes__write_note",
     "mcp__notes__append_note",
     "mcp__notes__delete_note",
+    # ぷちたち。(petit-sns)。家の config/chat-mcp.json に petit-sns があるときだけ使える(2026-10-20)
+    "mcp__petit-sns__sns_post",
+    "mcp__petit-sns__sns_timeline",
+    "mcp__petit-sns__sns_react",
+    "mcp__petit-sns__sns_comment",
+    "mcp__petit-sns__sns_inbox",
+    "mcp__petit-sns__board_list",
+    "mcp__petit-sns__board_thread",
+    "mcp__petit-sns__board_post",
+    "mcp__petit-sns__board_reply",
+    "mcp__petit-sns__board_like",
+    "mcp__petit-sns__sns_my_profile",
+    "mcp__petit-sns__sns_update_profile",
+    "mcp__petit-sns__sns_allowed",
+    "mcp__petit-sns__sns_find",
     # m5-module (ENV PRO: 気温・湿度・気圧, GPS)
     "mcp__m5-module__get_env",
     "mcp__m5-module__get_gps",
@@ -1097,8 +1134,7 @@ def list_characters() -> list[dict]:
                 chars.append(cfg)
             except Exception:
                 chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
-        else:
-            chars.append({"id": d.name, "name": d.name, "color": "#cab8d9"})
+        # config/config.json が無いフォルダ(puchiku などの残骸)は出さない(2026-10-16 ありさん)
     return chars
 
 
@@ -1218,9 +1254,14 @@ def save_chat_log(character_id: str, log: list[dict], username: str | None = Non
         json.dump(log[-200:], f, ensure_ascii=False, indent=2)
 
 
-def append_chat(character_id: str, role: str, text: str, username: str | None = None) -> None:
+def append_chat(character_id: str, role: str, text: str, username: str | None = None, media: str | None = None, via: str | None = None) -> None:
     log = load_chat_log(character_id, username)
-    log.append({"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()})
+    entry = {"role": role, "text": text, "timestamp": datetime.now(timezone.utc).isoformat()}
+    if media:
+        entry["media"] = media   # 写真/声つき(2026-10-16): chat_media/<username>/ のファイル名
+    if via:
+        entry["via"] = via       # "group"/"select": みんな・だれか経由(その子のタブには出さない)
+    log.append(entry)
     save_chat_log(character_id, log, username)
 
 
@@ -1775,6 +1816,93 @@ def kankei_page():
 @app.get("/notes", response_class=HTMLResponse)
 def notes_page():
     return HTMLResponse(NOTES_HTML)
+
+
+# ---- 回覧板(チーム「ぷち」からぷちたちへの報告。PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>*.md) ----
+KAIRANBAN_DIR = Path(os.environ.get("PETIT_KAIRANBAN_DIR", str(DATA_DIR / "kairanban")))
+
+
+def _kairanban_title(text: str, fallback: str) -> str:
+    """最初の見出し(# / ##)。無ければファイル名の _ を空白に"""
+    for line in text.splitlines():
+        if line.startswith("#"):
+            return line.lstrip("#").strip()
+    return fallback.replace("_", " ")
+
+
+@app.get("/api/kairanban")
+def api_kairanban():
+    """回覧板の一覧(新しい順)。README と drafts/ は出さない"""
+    if not KAIRANBAN_DIR.is_dir():
+        return []
+    items = []
+    for f in sorted(KAIRANBAN_DIR.glob("*.md"), reverse=True):
+        if f.name.lower() == "readme.md":
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        items.append({
+            "filename": f.name,
+            "date": f.name[:10],
+            "title": _kairanban_title(text, f.stem),
+            "content": text,
+        })
+    return items
+
+
+KAIRANBAN_HTML = """<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>回覧板</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <style>
+    body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f6f3fa; color: #333; margin: 0; padding: 16px; }
+    .wrap { max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.2rem; margin: 0 0 12px; }
+    h1 a { text-decoration: none; color: #999; font-size: 0.9rem; margin-right: 8px; }
+    .issue { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .issue summary { cursor: pointer; font-weight: 700; list-style: none; }
+    .issue summary::-webkit-details-marker { display: none; }
+    .issue summary .date { font-weight: 400; color: #999; font-size: 0.8rem; margin-left: 8px; }
+    .issue summary::before { content: "▸ "; color: #b8a6d4; }
+    .issue[open] summary::before { content: "▾ "; }
+    .md { font-size: 0.92rem; line-height: 1.75; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; word-break: break-word; }
+    .md h1 { font-size: 1.05rem; } .md h2 { font-size: 0.98rem; margin: 16px 0 6px; } .md h3 { font-size: 0.92rem; }
+    .md pre { background: #f4f4f4; padding: 8px; border-radius: 8px; overflow-x: auto; font-size: 0.8rem; }
+    .md code { background: #f4f4f4; padding: 1px 4px; border-radius: 4px; font-size: 0.85em; }
+    .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid #ddd; padding: 4px 8px; }
+    .empty { color: #999; text-align: center; padding: 40px 0; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1><a href="/">←</a>📋 回覧板</h1>
+  <div id="list"><div class="empty">読み込み中…</div></div>
+</div>
+<script>
+  (async () => {
+    const list = document.getElementById("list");
+    let items = [];
+    try { items = await (await fetch("/api/kairanban")).json(); } catch {}
+    if (!items.length) { list.innerHTML = '<div class="empty">まだ回覧板はありません</div>'; return; }
+    const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    list.innerHTML = items.map((it, i) => `<details class="issue"${i === 0 ? " open" : ""}>
+      <summary>${esc(it.title)}<span class="date">${esc(it.date)}</span></summary>
+      <div class="md">${window.marked ? marked.parse(it.content) : "<pre>" + esc(it.content) + "</pre>"}</div>
+    </details>`).join("");
+  })();
+</script>
+</body>
+</html>"""
+
+
+@app.get("/kairanban", response_class=HTMLResponse)
+def kairanban_page():
+    return HTMLResponse(KAIRANBAN_HTML)
 
 
 @app.get("/library", response_class=HTMLResponse)
@@ -4075,6 +4203,44 @@ def api_get_settings(character_id: str):
     return get_settings(character_id)
 
 
+# ---- 家ぜんたいの見た目の設定(PETIT_DATA_DIR/config/ui.json)。トップバーの色など(2026-10-16 ありさん) ----
+UI_SETTINGS_FILE = DATA_DIR / "config" / "ui.json"
+
+
+def _load_ui_settings() -> dict:
+    try:
+        return json.loads(UI_SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.get("/api/ui")
+def api_ui_get():
+    cur = _load_ui_settings()
+    cur.setdefault("house_title", f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち")
+    return cur
+
+
+class UiSettings(BaseModel):
+    topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
+    house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
+
+
+@app.post("/api/ui")
+def api_ui_set(req: UiSettings):
+    import re
+    cur = _load_ui_settings()
+    if req.topbar_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_color):
+        return JSONResponse({"error": "color は #rrggbb"}, status_code=400)
+    if req.topbar_color is not None or "topbar_color" not in cur:
+        cur["topbar_color"] = req.topbar_color or None
+    if req.house_title:
+        cur["house_title"] = req.house_title.strip()[:30]
+    UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+    return cur
+
+
 @app.post("/api/{character_id}/settings")
 def api_save_settings(character_id: str, data: dict):
     save_settings(character_id, data)
@@ -4094,8 +4260,101 @@ def api_memories_today(character_id: str):
 
 @app.get("/api/{character_id}/chat/history")
 def api_chat_history(character_id: str, request: Request):
+    """その子との会話(みんな・だれか経由も出す。経由の印 via を付ける。古い記録は group_chat.json と同じ文なら via=group)"""
     username = _get_username(request) or "arisan"
-    return load_chat_log(character_id, username)[-100:]
+    group_types = {(m.get("role"), m.get("text")): (m.get("type") or "group") for m in load_group_log()}
+    log = []
+    for m in load_chat_log(character_id, username):
+        if not m.get("via"):
+            via = group_types.get((m.get("role"), m.get("text")))
+            if via:
+                m["via"] = "select" if via == "select" else "group"
+        if m.get("media"):
+            m["media_url"] = f"/api/chat-media/{username}/{m['media']}"
+            m["media_kind"] = _chat_media_kind(m["media"])
+        log.append(m)
+    return log[-100:]
+
+
+# ---- 話すで送る写真と声(2026-10-16 ありさん)。PETIT_DATA_DIR/chat_media/<username>/ に置く。アルバムに入れるかは選べる ----
+CHAT_MEDIA_DIR = DATA_DIR / "chat_media"
+_CHAT_PHOTO_EXTS = {".jpg"}
+_CHAT_AUDIO_EXTS = {".webm", ".wav", ".ogg", ".mp4", ".m4a"}
+
+
+def _chat_media_dir(username: str) -> Path:
+    d = CHAT_MEDIA_DIR / username
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _chat_media_kind(filename: str) -> str:
+    return "photo" if Path(filename).suffix.lower() in _CHAT_PHOTO_EXTS else "audio"
+
+
+def _transcribe_audio_file(path: Path) -> str | None:
+    """ffmpeg で 16kHz mono WAV にして ASR(/transcribe)へ。ASR が落ちていれば None"""
+    import subprocess
+    import tempfile
+
+    import requests as _rq
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        wav_path = Path(f.name)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(wav_path)],
+                       capture_output=True, check=True, timeout=60)
+        for url in [_ASR_URL, _ASR_FALLBACK_URL]:
+            try:
+                with open(wav_path, "rb") as wf:
+                    r = _rq.post(f"{url}/transcribe", files={"file": (path.stem + ".wav", wf, "audio/wav")}, timeout=60)
+                r.raise_for_status()
+                return (r.json().get("text") or "").strip()
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+@app.post("/api/chat-media/{username}/upload")
+async def api_chat_media_upload(username: str, request: Request, file: UploadFile = File(...), save_album: bool = Form(False)):
+    """話す用の写真/声を置く。写真は縮めて JPEG に。save_album=true なら自分のアルバムにも入れる"""
+    me = _get_username(request) or "arisan"
+    if username != me or username not in ALBUM_PERSONS:
+        return JSONResponse({"error": "自分の分だけ"}, status_code=403)
+    data = await file.read()
+    if len(data) > 20 * 1024 * 1024:
+        return JSONResponse({"error": "大きすぎます(20MB まで)"}, status_code=400)
+    ctype = (file.content_type or "").lower()
+    ext = Path(file.filename or "").suffix.lower()
+    from zoneinfo import ZoneInfo
+    stamp = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y%m%d_%H%M%S")
+    if ctype.startswith("image/") or ext in {".jpg", ".jpeg", ".png", ".heic", ".webp"}:
+        try:
+            data = _compress_image(data)
+        except Exception:
+            return JSONResponse({"error": "画像を読めませんでした"}, status_code=400)
+        fname = f"{stamp}_photo.jpg"
+        if save_album:
+            (_album_dir(username) / _album_filename(username, "chat")).write_bytes(data)
+            _prune_album(username)
+    else:
+        if ext not in _CHAT_AUDIO_EXTS:
+            ext = ".webm" if "webm" in ctype else ".mp4" if "mp4" in ctype else ".ogg" if "ogg" in ctype else ".wav"
+        fname = f"{stamp}_voice{ext}"
+    (_chat_media_dir(username) / fname).write_bytes(data)
+    return {"ok": True, "filename": fname, "url": f"/api/chat-media/{username}/{fname}", "kind": _chat_media_kind(fname)}
+
+
+@app.get("/api/chat-media/{username}/{filename}")
+def api_chat_media_file(username: str, filename: str):
+    path = _chat_media_dir(username) / Path(filename).name
+    if not path.exists():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    mt = {".jpg": "image/jpeg", ".webm": "audio/webm", ".ogg": "audio/ogg", ".mp4": "audio/mp4", ".m4a": "audio/mp4", ".wav": "audio/wav"}.get(path.suffix.lower(), "application/octet-stream")
+    return Response(content=path.read_bytes(), media_type=mt)
 
 
 class GroupChatRequest(BaseModel):
@@ -4142,8 +4401,8 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4169,8 +4428,8 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
                 prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
                 context = f"{message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
             reply = await call_claude(char["id"], context, username=username)
-            append_chat(char["id"], "user", message, username)
-            append_chat(char["id"], char["id"], reply, username)
+            append_chat(char["id"], "user", message, username, via="group")
+            append_chat(char["id"], char["id"], reply, username, via="group")
             r = {
                 "character_id": char["id"],
                 "name": char.get("name", char["id"]),
@@ -4246,8 +4505,8 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4641,8 +4900,8 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
             prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
             context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
         reply = await call_claude(char["id"], context, username=username)
-        append_chat(char["id"], "user", req.message, username)
-        append_chat(char["id"], char["id"], reply, username)
+        append_chat(char["id"], "user", req.message, username, via="group")
+        append_chat(char["id"], char["id"], reply, username, via="group")
         r = {
             "character_id": char["id"],
             "name": char.get("name", char["id"]),
@@ -4657,6 +4916,7 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
 class ChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
+    media: str | None = None        # 話すで送った写真/声(chat_media/<me>/ のファイル名。先に /api/chat-media/<me>/upload)
 
 
 class MailSendRequest(BaseModel):
@@ -4708,6 +4968,10 @@ def _activate_puchiru_cron() -> bool:
     return True
 
 
+def user_display_for(username: str) -> str:
+    return _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])["name"]
+
+
 @app.post("/api/{character_id}/chat")
 async def api_chat(character_id: str, req: ChatRequest, request: Request):
     username = _get_username(request) or "arisan"
@@ -4732,8 +4996,16 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
                 skip_user_append = True
         _chat_jobs[key] = {"state": "processing", "ts": time.time()}
 
+    # 写真/声つき(2026-10-16): chat_media にあるものだけ受け付ける
+    media_path = None
+    if req.media:
+        cand = _chat_media_dir(username) / Path(req.media).name
+        if cand.exists():
+            media_path = cand
+    media_kind = _chat_media_kind(media_path.name) if media_path else None
     if not skip_user_append:
-        append_chat(character_id, "user", req.message, username)
+        shown = req.message or ("📷 写真" if media_kind == "photo" else "🎤 声" if media_kind == "audio" else "")
+        append_chat(character_id, "user", shown, username, media=media_path.name if media_path else None)
 
     # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
@@ -4743,6 +5015,14 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     # @opus / @sonnet でモデル指定
     chat_model = None
     chat_message = req.message
+    if media_path and media_kind == "photo":
+        chat_message = (f"[{user_display_for(username)}が写真を送りました: {media_path}]\n"
+                        f"まず Read でこの写真を見てから、見えたものに触れて返事してください。\n{req.message}").rstrip()
+    elif media_path and media_kind == "audio":
+        transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
+        heard = f"聞こえた言葉: 「{transcript}」" if transcript else "(いま文字起こしができなかった。transcribe_audio で聞き直せる)"
+        chat_message = (f"[{user_display_for(username)}が声を送りました: {media_path}]\n{heard}\n"
+                        f"声で話しかけられたつもりで返事してください。\n{req.message}").rstrip()
     if req.message.startswith("@opus "):
         chat_model = "opus"
         chat_message = req.message[6:]
@@ -4855,16 +5135,26 @@ def api_photo_serve(character_id: str, filename: str):
     return Response(content=photo_path.read_bytes(), media_type="image/jpeg")
 
 
+_DISPLAY_NAME_CACHE: dict[str, tuple[float, str]] = {}   # char_id -> (config の mtime, 表示名)
+
+
 def _char_display_name(char_id: str) -> str:
-    """キャラクターIDから表示名を取得する。"""
+    """キャラクターIDから表示名を取得する(config.json の mtime で cache。メール 9,000 通で毎回読んでいた)。"""
     config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
-    if config_path.exists():
-        try:
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            return cfg.get("name", char_id)
-        except (json.JSONDecodeError, OSError):
-            pass
-    return char_id
+    try:
+        mtime = config_path.stat().st_mtime
+    except OSError:
+        return char_id
+    cached = _DISPLAY_NAME_CACHE.get(char_id)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    name = char_id
+    try:
+        name = json.loads(config_path.read_text(encoding="utf-8")).get("name", char_id)
+    except (json.JSONDecodeError, OSError):
+        pass
+    _DISPLAY_NAME_CACHE[char_id] = (mtime, name)
+    return name
 
 
 def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
@@ -4875,6 +5165,7 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
     parts = name.split("_")
     date_str = ""
     sender = ""
+    sender_id = ""
     if parts[0] == "from" and "to" in parts:
         ti = parts.index("to")
         sender_id = "_".join(parts[1:ti])
@@ -4888,7 +5179,7 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
             time_str = parts[3] if len(parts) > 3 else ""
             if len(date_str) == 8 and len(time_str) >= 4:
                 date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]} {time_str[:2]}:{time_str[2:4]}"
-    return {"_file": f, "filename": f.name, "date": date_str, "sender": sender}
+    return {"_file": f, "filename": f.name, "date": date_str, "sender": sender, "sender_id": sender_id}
 
 
 @app.get("/api/mailbox")
@@ -4898,7 +5189,8 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
         return {"total": 0, "items": []}
-    # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）
+    # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）。メタは 1 回だけ読む
+    all_meta = _load_mailbox_metadata()
     candidates = []
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
@@ -4906,7 +5198,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         info = _parse_mail_meta_from_file(f, username)
         if info is None:
             continue
-        meta = _get_mail_meta(f.name)
+        meta = _get_mail_meta(f.name, all_meta)
         if filter == "inbox" and meta["archived"]:
             continue
         if filter == "archived" and not meta["archived"]:
@@ -4922,7 +5214,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
     # Phase2: 該当ページ分だけコンテンツ読み込み
     items = []
     for c in candidates[offset:offset + limit]:
-        content = c["_file"].read_text(encoding="utf-8")
+        content = _read_mail_cached(c["_file"])
         sender = c["sender"]
         if not sender:
             lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
@@ -4933,6 +5225,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "content": content,
             "date": c["date"],
             "sender": sender,
+            "sender_id": c.get("sender_id", ""),
             "archived": c["archived"],
             "starred": c["starred"],
             "read_by": c["read_by"],
@@ -4947,17 +5240,18 @@ def api_mailbox_all(filter: str = "all"):
     if not mailbox_dir.exists():
         return []
     mails = []
+    all_meta = _load_mailbox_metadata()
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
             continue
-        meta = _get_mail_meta(f.name)
+        meta = _get_mail_meta(f.name, all_meta)
         if filter == "inbox" and meta["archived"]:
             continue
         if filter == "archived" and not meta["archived"]:
             continue
         if filter == "starred" and not meta["starred"]:
             continue
-        content = f.read_text(encoding="utf-8")
+        content = _read_mail_cached(f)
         name = f.stem
         parts = name.split("_")
         date_str = ""
@@ -5195,7 +5489,7 @@ HTML = """<!DOCTYPE html>
       --char-btn-text: white;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; }
+    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
@@ -5203,9 +5497,12 @@ HTML = """<!DOCTYPE html>
     .updated { font-size: 0.75rem; color: #aaa; margin-bottom: 16px; }
     section { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
     h2 { font-size: 0.85rem; color: var(--char-mid); font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .desire { margin-bottom: 12px; }
-    .desire-label { font-size: 0.9rem; margin-bottom: 4px; display: flex; justify-content: space-between; }
-    .desire-level { font-weight: 600; }
+    /* 欲求は 1 行: 名前 | バー | %(2026-10-16 ありさん) */
+    .desire { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .desire-label { display: contents; }
+    .desire-label > span:first-child { flex: 0 0 9rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
+    .desire-level { order: 3; flex: 0 0 2.8em; text-align: right; font-size: 0.8rem; color: #999; font-variant-numeric: tabular-nums; }
+    .desire .bar-bg { flex: 1 1 160px; max-width: 420px; order: 2; min-width: 0; }   /* 幅に合わせて伸びる(PC は最大 420px、スマホは縮む)。開始位置は名前の幅(9rem)で揃える */
     .bar-bg { background: var(--char-soft); border-radius: 6px; height: 10px; overflow: hidden; }
     .bar-fill { height: 100%; border-radius: 6px; transition: width 0.5s ease; }
     .two-col { display: flex; gap: 16px; align-items: flex-start; }
@@ -5241,21 +5538,52 @@ HTML = """<!DOCTYPE html>
     .mailbox-tab.active { background: var(--char, #cab8d9); color: var(--char-btn-text, #333); font-weight: 600; }
     .mail-actions { display: flex; gap: 6px; align-items: center; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
+    .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
+    .mail-reply textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; resize: vertical; }
+    .mail-reply-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.8rem; }
+    .mail-reply-send { padding: 6px 16px; border: none; border-radius: 8px; background: #e57373; color: #fff; cursor: pointer; font-size: 0.85rem; font-weight: bold; }
     .mail-action-btn:hover { opacity: 0.8; }
     .mail-action-btn.active { opacity: 1; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
     .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .msg { max-width: 85%; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .chat-messages { overflow-x: hidden; max-width: 100%; }
+    /* 話すのカードが横に広がらないように(スマホ Safari 対策 2026-10-16): 中身はカード幅まで、はみ出しは横だけ切る */
+    #chatBody > * { max-width: 100%; box-sizing: border-box; }
+    .chat-input { max-width: 100%; }
+    .msg { max-width: 85%; min-width: 0; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 16px; font-size: 0.875rem; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+    .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
+      margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
+    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--char-mid); letter-spacing: 0.02em; }
+    .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
+    /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
+    .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .char-tabs::-webkit-scrollbar { display: none; }
+    .char-tabs .char-tab { flex-shrink: 0; white-space: nowrap; }
+    .tool-row { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
     .msg.user { background: var(--char); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
+    .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
+    .msg-via { font-size: 0.62rem; opacity: 0.55; margin-bottom: 2px; letter-spacing: 0.04em; }
+    .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
-    .chat-input { display: flex; gap: 8px; }
-    .chat-input input { flex: 1; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
+    .chat-input { display: flex; gap: 6px; align-items: center; }
+    /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
+    .chat-input .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; min-height: 0; opacity: 0.7; color: inherit; }
+    .chat-input .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
+    @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
+    .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; cursor: pointer; }
+    .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
+    .chat-input #chatPlusBtn { font-size: 1.3rem; line-height: 1; padding: 0 4px; }
+    .chat-input #chatPlusBtn.recording { animation: pulse 1s infinite; }
+    .plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
+    .chat-input .plus-menu button { background: none; color: #333; border: none; border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; text-align: left; cursor: pointer; white-space: nowrap; min-height: 0; }
+    .chat-input .plus-menu button:hover { background: #f3f0f8; }
+    .chat-input input { flex: 1 1 0; width: 0; min-width: 0; padding: 10px 14px; border: 1px solid var(--char-border); border-radius: 20px; font-size: 0.875rem; outline: none; }
     .chat-input input:focus { border-color: var(--char); }
     .chat-input button { background: var(--char); color: var(--char-btn-text); border: none; border-radius: 20px; padding: 10px 18px; font-size: 0.875rem; cursor: pointer; }
     .chat-input button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -5289,7 +5617,12 @@ HTML = """<!DOCTYPE html>
       .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
       .setting-label { font-size: 1rem; }
       .popup-title { font-size: 1rem; }
-      .chat-messages { max-height: 50vh; }
+      .chat-messages { max-height: 40vh; }
+      /* スマホのスクロールを減らす(2026-10-16): 余白を詰める */
+      .desire .bar-bg { height: 8px; }
+      section { padding: 12px 14px; margin-bottom: 10px; }
+      section h2 { margin: 0 0 8px; font-size: 0.95rem; }
+      .tool-row { margin-bottom: 4px; }
     }
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
@@ -5365,17 +5698,20 @@ HTML = """<!DOCTYPE html>
     <span id="relayBannerText">会話リレー中...</span>
     <button onclick="cancelRelay()" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:4px 14px;cursor:pointer;font-weight:bold;">🛑 止める</button>
   </div>
-  <div class="header">
-    <h1><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></h1>
-    <div style="display:flex;gap:4px;">
+  <!-- トップバー(2026-10-16 ありさん): 名前(● ぷちこ)は出さず、タブ 1 行(横スクロール)+ 📬⚙️ を上に貼り付ける。h1 は JS が参照するので残す -->
+  <div class="topbar">
+    <span style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></span>
+    <h1 class="house-title" id="houseTitle">ありさんち</h1>
+    <div class="topbar-btns">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
-      <button class="gear-btn" id="logoutBtn" onclick="doLogout()" style="display:none" title="ログアウト">🚪</button>
     </div>
+    <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
   <div class="char-tabs" id="charTabs"></div>
-  <div style="display:flex;justify-content:space-between;align-items:center;">
-    <div class="updated" id="updated">読み込み中...</div>
+  <div class="tool-row" id="toolRow"></div>
+  <!-- 更新時刻は一番下へ、「M5 接続済」はタブの緑丸で分かるので未接続のときだけ(2026-10-16 ありさん) -->
+  <div style="display:flex;justify-content:flex-end;align-items:center;">
     <div style="display:flex;align-items:center;gap:8px;">
       <div id="m5status"></div>
       <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
@@ -5393,17 +5729,34 @@ HTML = """<!DOCTYPE html>
   <div class="two-col" id="twoColLayout">
     <div class="main-col">
       <section id="desiresSection">
-        <h2>欲求</h2>
-        <div id="dominant"></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <h2 style="margin:0">欲求</h2>
+          <div id="dominant" title="いちばん強い欲求"></div>
+        </div>
         <div id="desires"></div>
       </section>
 
 
       <section>
-        <h2 id="chatTitle">話す</h2>
+        <h2 style="cursor:pointer;user-select:none" onclick="toggleChat()"><span id="chatTitle">話す</span> <span id="chatToggle">▼</span></h2>
+        <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
-        <div class="chat-input">
+        <div id="mediaPreview" style="display:none;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
+          <img id="mediaPreviewImg" style="display:none;height:56px;border-radius:8px;" alt="">
+          <span id="mediaPreviewAudio" style="display:none;font-size:0.85rem;color:#666;"></span>
+          <span id="mediaAlbumLabel" style="display:none;font-size:0.78rem;color:#666;"></span>
+          <button onclick="clearMedia()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
+        </div>
+        <div class="chat-input" style="position:relative">
+          <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
+          <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
+          <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">📎</button>
+          <div id="plusMenu" class="plus-menu" style="display:none">
+            <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
+            <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
+            <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
+          </div>
           <input type="text" id="input" placeholder="話しかける..." />
           <button id="send">送信</button>
         </div>
@@ -5414,6 +5767,7 @@ HTML = """<!DOCTYPE html>
           <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
           <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
         </div>
+        </div><!-- /chatBody -->
       </section>
 
       <section id="memoriesSection">
@@ -5480,9 +5834,9 @@ HTML = """<!DOCTYPE html>
           <div class="setting-row">
             <span class="setting-label">⏱️ 自律行動の頻度</span>
             <select id="autonomousSkip" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-              <option value="0">20分に1回（毎回）</option>
-              <option value="1">40分に1回（1回スキップ）</option>
-              <option value="2">60分に1回（2回スキップ）</option>
+              <option value="0">30分に1回（毎回）</option>
+              <option value="1">60分に1回（1回スキップ）</option>
+              <option value="2">90分に1回（2回スキップ）</option>
             </select>
           </div>
           <div class="setting-row">
@@ -5496,6 +5850,13 @@ HTML = """<!DOCTYPE html>
           <div class="setting-row">
             <span class="setting-label">🎤 マイク</span>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">🎨 トップバーの色</span>
+            <span style="display:flex;align-items:center;gap:8px;">
+              <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveTopbarColor(this.value)" style="width:40px;height:28px;border:none;background:none;padding:0;cursor:pointer;">
+              <button onclick="saveTopbarColor(null)" style="font-size:0.75rem;padding:4px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;cursor:pointer;">ぷちの色に戻す</button>
+            </span>
           </div>
         </div>
         <div style="margin-top:16px;">
@@ -5587,6 +5948,26 @@ HTML = """<!DOCTYPE html>
       return brightness(hex) > 160 ? darken(hex, 0.45) : "white";
     }
 
+    // トップバーの色(家ぜんたいの設定 /api/ui)。未設定ならぷちの色(--char-bg)に合わせる
+    let _uiSettings = {};
+    function applyTopbarColor() {
+      const r = document.documentElement;
+      const c = _uiSettings.topbar_color;
+      if (c) r.style.setProperty("--topbar-bg", c); else r.style.removeProperty("--topbar-bg");
+      const h = document.getElementById("houseTitle");
+      if (h && _uiSettings.house_title) h.textContent = _uiSettings.house_title;
+      const inp = document.getElementById("topbarColor");
+      if (inp) inp.value = c || getComputedStyle(r).getPropertyValue("--char-bg").trim() || "#f6f3fa";
+    }
+    async function saveTopbarColor(color) {
+      try {
+        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({topbar_color: color})});
+        if (res.ok) _uiSettings = await res.json();
+      } catch {}
+      applyTopbarColor();
+    }
+    fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); }).catch(() => {});
+
     function applyTheme(color) {
       const r = document.documentElement;
       r.style.setProperty("--char", color);
@@ -5597,6 +5978,7 @@ HTML = """<!DOCTYPE html>
       r.style.setProperty("--char-border", lighten(color, 0.72));
       r.style.setProperty("--char-btn-text", btnTextColor(color));
       document.getElementById("charDot").style.background = color;
+      applyTopbarColor();
     }
 
     async function loadCharacters() {
@@ -5618,23 +6000,32 @@ HTML = """<!DOCTYPE html>
       // 「選んで話す」「みんなで」タブを末尾に追加
       const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
-      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
-        style="${isSelect?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('select')">だれかと 💬</button>`;
+      // 「みんな」「だれか」の順、文字だけ(2026-10-16 ありさん)
       tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
         style="${isGroup?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('group')">みんなで 🌟</button>`;
-      tabs.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
-      tabs.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
-      tabs.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
-      tabs.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
-      tabs.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
-      tabs.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
-      tabs.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
-      tabs.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
-      tabs.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
-      tabs.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
-      tabs.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
+        onclick="switchChar('group')">みんな</button>`;
+      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
+        style="${isSelect?"opacity:1":"opacity:0.8"}"
+        onclick="switchChar('select')">だれか</button>`;
+      // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
+      const tools = document.getElementById("toolRow");
+      tools.innerHTML = "";
+      tools.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
+      tools.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
+      tools.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
+      tools.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
+      tools.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
+      tools.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
+      tools.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
+      // あまり使わないもの(おかね・行動ログ・ターミナル・センサーモニター・ひみつ)は「…」を押したら出る(2026-10-16 ありさん)
+      tools.innerHTML += `<button onclick="toggleMoreTools()" id="moreToolsBtn" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="ほかの道具">…</button>`;
+      tools.innerHTML += `<span id="moreTools" style="display:none"></span>`;
+      const more = document.getElementById("moreTools");
+      more.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
+      more.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
+      more.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
+      more.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
+      more.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
 
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
@@ -5670,11 +6061,62 @@ HTML = """<!DOCTYPE html>
       }
     }
 
+    // LINE みたいに、タブを開いたら過去の会話を吹き出しで並べる(2026-10-16 ありさん)
+    const CHAT_HISTORY_SHOW = 60;
+    function _dateLabel(ts) {
+      const d = new Date(ts);
+      if (isNaN(d)) return "";
+      const today = new Date();
+      const same = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+      const y = new Date(today); y.setDate(today.getDate() - 1);
+      if (same(d, today)) return "今日";
+      if (same(d, y)) return "きのう";
+      return `${d.getMonth() + 1}/${d.getDate()}(${"日月火水木金土"[d.getDay()]})`;
+    }
+    async function loadChatHistoryInto(id) {
+      const chat = document.getElementById("chat");
+      let log = [];
+      try {
+        const url = (id === "select" || id === "group") ? "/api/group/history" : `/api/${id}/chat/history`;
+        log = await (await fetch(url)).json();
+      } catch { return; }
+      if (currentCharId !== id) return;          // 読んでいる間にタブが変わった
+      log = log.slice(-CHAT_HISTORY_SHOW);
+      chat.innerHTML = "";
+      let lastDay = "";
+      for (const m of log) {
+        const day = _dateLabel(m.timestamp);
+        if (day && day !== lastDay) {
+          const sep = document.createElement("div");
+          sep.className = "msg-date";
+          sep.textContent = day;
+          chat.appendChild(sep);
+          lastDay = day;
+        }
+        let el;
+        if (m.role === "user") el = addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
+        else if (id === "select" || id === "group") el = addMsg(m.text, "group", m.color, m.name);
+        else el = addMsg(m.text, "char");
+        if (m.via && el) {   // みんな・だれか経由の印(2026-10-16)
+          const tag = document.createElement("div");
+          tag.className = "msg-via";
+          tag.textContent = m.via === "select" ? "だれか" : "みんな";
+          el.prepend(tag);
+        }
+      }
+      scrollChatToBottom();
+    }
+
+    function toggleMoreTools() {
+      const m = document.getElementById("moreTools");
+      m.style.display = m.style.display === "none" ? "" : "none";
+    }
     function switchChar(id) {
       const chatEl = document.getElementById("chat");
       chatStates[currentCharId] = chatEl.innerHTML;
       currentCharId = id;
       chatEl.innerHTML = chatStates[id] || "";
+      if (!chatStates[id]) loadChatHistoryInto(id); else scrollChatToBottom();
       loadCharacters();
       const isGroupLike = id === "select" || id === "group";
       document.getElementById("gearBtn").style.display = isGroupLike ? "none" : "";
@@ -5734,7 +6176,7 @@ HTML = """<!DOCTYPE html>
         // ステータス表示
         const m5El = document.getElementById("m5status");
         if (m5El) m5El.innerHTML = m5_online
-          ? `<span style="color:#4caf50;font-size:0.75rem">● M5 接続済</span>`
+          ? ""
           : `<span style="color:#f44336;font-size:0.75rem">● M5 未接続（会話のみ）</span>`;
         document.getElementById("sleepBtn").style.display = (m5_online && !m5_sleeping) ? "" : "none";
         document.getElementById("wakeBtn").style.display  = (m5_online && m5_sleeping)  ? "" : "none";
@@ -5748,7 +6190,8 @@ HTML = """<!DOCTYPE html>
         }
         const domEl = document.getElementById("dominant");
         if (desires.dominant) {
-          domEl.innerHTML = `<span class="dominant">いちばん強い欲求: ${DESIRE_LABELS[desires.dominant]||desires.dominant}</span>`;
+          // 「いちばん強い欲求:」の文字は出さず、右側に名前だけ(2026-10-16 ありさん)
+          domEl.innerHTML = `<span class="dominant">${DESIRE_LABELS[desires.dominant]||desires.dominant}</span>`;
         }
         const desEl = document.getElementById("desires");
         if (desires.desires && Object.keys(desires.desires).length > 0) {
@@ -5779,7 +6222,7 @@ HTML = """<!DOCTYPE html>
       } catch(e) { document.getElementById("updated").textContent = "取得失敗"; }
     }
 
-    function addMsg(text, role, color, name) {
+    function addMsg(text, role, color, name, media) {   // media: {url, kind}
       const chat = document.getElementById("chat");
       if (role === "group") {
         // グループメッセージ：名前＋色付きバブル
@@ -5803,6 +6246,18 @@ HTML = """<!DOCTYPE html>
       const div = document.createElement("div");
       div.className = "msg " + role;
       div.textContent = text;
+      if (media && media.url) {
+        if (media.kind === "photo") {
+          const img = document.createElement("img");
+          img.className = "chat-photo"; img.src = media.url; img.alt = "写真";
+          img.onclick = () => window.open(media.url, "_blank");
+          div.appendChild(img);
+        } else {
+          const au = document.createElement("audio");
+          au.className = "chat-audio"; au.controls = true; au.src = media.url; au.preload = "none";
+          div.appendChild(au);
+        }
+      }
       chat.appendChild(div);
       chat.scrollTop = chat.scrollHeight;
       return div;
@@ -5813,14 +6268,99 @@ HTML = """<!DOCTYPE html>
     }
     const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+    // 写真と声(2026-10-16 ありさん): 選ぶ/録る → 送信で chat_media に上げてからぷちに渡す。アルバムに入れるかは選ぶ
+    let _pendingMedia = null, _myId = "arisan";
+    let _saveAlbum = false;
+    function togglePlusMenu() {
+      if (_chatRecorder) { _chatRecorder.stop(); return; }   // 録音中は ＋(⏹) で止める
+      const m = document.getElementById("plusMenu");
+      m.style.display = m.style.display === "none" ? "" : "none";
+    }
+    function closePlusMenu() { document.getElementById("plusMenu").style.display = "none"; }
+    function choosePhoto(saveAlbum) { _saveAlbum = saveAlbum; closePlusMenu(); document.getElementById("photoFile").click(); }
+    document.addEventListener("click", e => { if (!e.target.closest("#plusMenu") && !e.target.closest("#chatPlusBtn")) closePlusMenu(); });
+    function _showMediaPreview(kind, file) {
+      _pendingMedia = {kind, file};
+      const img = document.getElementById("mediaPreviewImg"), au = document.getElementById("mediaPreviewAudio");
+      img.style.display = kind === "photo" ? "" : "none";
+      au.style.display = kind === "audio" ? "" : "none";
+      const lab = document.getElementById("mediaAlbumLabel");
+      lab.style.display = kind === "photo" ? "" : "none";
+      lab.textContent = _saveAlbum ? "アルバムにも保存" : "アルバムには入れない";
+      if (kind === "photo") img.src = URL.createObjectURL(file);
+      else au.textContent = `🎤 声(${Math.round(file.size / 1024)} KB)`;
+      document.getElementById("mediaPreview").style.display = "flex";
+    }
+    function pickPhoto(inp) {
+      const f = inp.files && inp.files[0];
+      if (f) _showMediaPreview("photo", f);
+      inp.value = "";
+    }
+    function clearMedia() {
+      _pendingMedia = null;
+      document.getElementById("mediaPreview").style.display = "none";
+      _saveAlbum = false;
+    }
+    async function uploadPendingMedia() {
+      const fd = new FormData();
+      const f = _pendingMedia.file;
+      fd.append("file", f, f.name || (_pendingMedia.kind === "photo" ? "photo.jpg" : "voice.webm"));
+      fd.append("save_album", _saveAlbum ? "true" : "false");
+      const res = await fetch(`/api/chat-media/${_myId}/upload`, {method: "POST", body: fd});
+      if (!res.ok) throw new Error("upload " + res.status);
+      return await res.json();   // {filename, url, kind}
+    }
+    // 声はそのまま送る(録音 → 音声ファイル)。押して録音、もう一度押して止める。60 秒まで
+    let _chatRecorder = null, _chatChunks = [], _chatRecTimer = null;
+    async function chatMic() {
+      const btn = document.getElementById("chatPlusBtn");
+      if (_chatRecorder) { _chatRecorder.stop(); return; }
+      if (!navigator.mediaDevices || !window.MediaRecorder) { addMsg("このブラウザでは録音できません(https が要ります)", "system"); return; }
+      let stream;
+      try { stream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+      catch { addMsg("マイクの使用を許可してください", "system"); return; }
+      _chatChunks = [];
+      const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"].find(m => MediaRecorder.isTypeSupported(m)) || "";
+      _chatRecorder = new MediaRecorder(stream, mime ? {mimeType: mime} : undefined);
+      _chatRecorder.ondataavailable = e => { if (e.data.size > 0) _chatChunks.push(e.data); };
+      _chatRecorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearTimeout(_chatRecTimer);
+        btn.classList.remove("recording"); btn.textContent = "📎";
+        const type = _chatRecorder.mimeType || mime || "audio/webm";
+        _chatRecorder = null;
+        if (!_chatChunks.length) return;
+        const ext = type.includes("mp4") ? ".mp4" : type.includes("ogg") ? ".ogg" : type.includes("wav") ? ".wav" : ".webm";
+        const blob = new Blob(_chatChunks, {type});
+        _showMediaPreview("audio", new File([blob], "voice" + ext, {type}));
+      };
+      _chatRecorder.start(250);
+      btn.classList.add("recording"); btn.textContent = "🔴";
+      _chatRecTimer = setTimeout(() => { if (_chatRecorder) _chatRecorder.stop(); }, 60000);
+    }
+
     async function send() {
       const input = document.getElementById("input");
       const btn = document.getElementById("send");
       const text = input.value.trim();
-      if (!text) return;
+      if (!text && !_pendingMedia) return;
+      if (_pendingMedia && (currentCharId === "select" || currentCharId === "group")) {
+        addMsg("写真や声は、ひとりのぷちのタブから送ってね", "system"); return;
+      }
       input.value = "";
       btn.disabled = true;
-      addMsg(text, "user");
+      let mediaName = null;
+      if (_pendingMedia) {
+        const kind = _pendingMedia.kind;
+        let up;
+        try { up = await uploadPendingMedia(); }
+        catch { addMsg("写真/声を上げられませんでした", "system"); btn.disabled = false; input.value = text; return; }
+        mediaName = up.filename;
+        addMsg(text || (kind === "photo" ? "📷 写真" : "🎤 声"), "user", null, null, {url: up.url, kind});
+        clearMedia();
+      } else {
+        addMsg(text, "user");
+      }
       // 送信ごとにIDを付ける。切断→再送してもサーバー側で二重処理されない
       const msgId = genMsgId();
 
@@ -5840,7 +6380,7 @@ HTML = """<!DOCTYPE html>
         let attempts = 0;
         while (true) {
           try {
-            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId}) });
+            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, media:mediaName}) });
             if (!res.ok) throw new Error("http " + res.status);
             const data = await res.json();
             if (data.status === "processing") {
@@ -6123,10 +6663,19 @@ HTML = """<!DOCTYPE html>
       await fetch(`/api/${currentCharId}/m5/wake`, {method:"POST"});
     }
 
-    async function resetSession() {
+    // リセットは 2 回押し(2026-10-16 ありさん: 押しただけでセッションが消えるのをやめる)
+    let _resetArmed = null;
+    function resetSession() {
+      const btn = document.getElementById("resetBtn");
+      if (_resetArmed) { clearTimeout(_resetArmed); _resetArmed = null; btn.textContent = "リセット"; return _resetSessionNow(); }
+      btn.textContent = "もう一度押すとリセット";
+      _resetArmed = setTimeout(() => { _resetArmed = null; btn.textContent = "リセット"; }, 4000);
+    }
+    async function _resetSessionNow() {
       await fetch(`/api/${currentCharId}/chat/session`, {method:"DELETE"});
-      document.getElementById("chat").innerHTML = "";
       chatStates[currentCharId] = "";
+      await loadChatHistoryInto(currentCharId);
+      addMsg("セッションをリセットしました(ここから新しい会話)", "system");
     }
 
     async function openHistory() {
@@ -6197,6 +6746,20 @@ HTML = """<!DOCTYPE html>
     }
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    function scrollChatToBottom() {
+      const chat = document.getElementById("chat");
+      requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+    }
+    // 話す欄を畳む(2026-10-16 ありさん)。状態はこの端末に覚える
+    function toggleChat(force) {
+      const body = document.getElementById("chatBody");
+      const hide = force !== undefined ? force : body.style.display !== "none";
+      body.style.display = hide ? "none" : "";
+      document.getElementById("chatToggle").textContent = hide ? "▶" : "▼";
+      if (!hide) scrollChatToBottom();   // 開いたら一番下(最新)へ(2026-10-16 ありさん)
+      try { localStorage.setItem("chatCollapsed", hide ? "1" : "0"); } catch {}
+    }
+    try { if (localStorage.getItem("chatCollapsed") === "1") toggleChat(true); } catch {}
     function toggleMemories() {
       const el = document.getElementById("memories");
       const toggle = document.getElementById("memoriesToggle");
@@ -6270,6 +6833,11 @@ HTML = """<!DOCTYPE html>
 
     let currentMailTab = "inbox";
 
+    window.addEventListener("load", () => {
+      // #mailbox / #settings で開く(スマホのブックマーク用。2026-10-16)
+      if (location.hash === "#mailbox") openMailbox();
+      else if (location.hash === "#settings") openSettings();
+    });
     function openMailbox() {
       currentMailTab = "inbox";
       document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
@@ -6295,17 +6863,62 @@ HTML = """<!DOCTYPE html>
       const archiveIcon = m.archived ? "📤" : "📥";
       const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
       const fn = m.filename.replace(/'/g,"\\'");
-      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}">
+      // 差出人のぷちの色を背景に(2026-10-16 ありさん)
+      const sc = (characters.find(c => c.id === m.sender_id) || {}).color;
+      const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
+      const senderStyle = sc ? `color:${readableText(sc)}` : "";
+      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
         <div class="mail-header">
-          <span class="mail-sender">${m.sender.replace(/</g,"&lt;")}</span>
+          <span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span>
           <div class="mail-actions">
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
             <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
+            ${m.sender_id ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
           </div>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
         <div class="mail-body">${bodyText}</div>
+        ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
+          <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
+          <div class="mail-reply-row">
+            <span class="mail-reply-result"></span>
+            <button class="mail-reply-send" onclick="sendReply(this)">送る</button>
+          </div>
+        </div>` : ""}
       </div>`;
+    }
+
+    // その場で返信(2026-10-16 ありさん): ↩️ で本文の下に返事欄を開き、差出人ひとりに /api/mail/send
+    function toggleReply(btn) {
+      const box = btn.closest(".mail-item").querySelector(".mail-reply");
+      if (!box) return;
+      const open = box.style.display === "none";
+      box.style.display = open ? "" : "none";
+      if (open) box.querySelector("textarea").focus();
+    }
+    async function sendReply(btn) {
+      const box = btn.closest(".mail-reply");
+      const ta = box.querySelector("textarea");
+      const result = box.querySelector(".mail-reply-result");
+      const body = ta.value.trim();
+      if (!body) { result.textContent = "本文を書いてね"; result.style.color = "#e57373"; return; }
+      btn.disabled = true; btn.textContent = "送信中…";
+      try {
+        const res = await fetch("/api/mail/send", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({to_ids: [box.dataset.to], subject: "", body})
+        });
+        const data = await res.json();
+        if (res.ok) {
+          result.textContent = "✓ 送った！"; result.style.color = "#4caf50";
+          ta.value = "";
+          setTimeout(() => { box.style.display = "none"; result.textContent = ""; }, 1200);
+        } else {
+          result.textContent = "エラー: " + (data.error || "不明"); result.style.color = "#e57373";
+        }
+      } catch (e) {
+        result.textContent = "通信エラー"; result.style.color = "#e57373";
+      } finally { btn.disabled = false; btn.textContent = "送る"; }
     }
 
     function _renderLoadMoreBtn() {
@@ -6466,9 +7079,10 @@ HTML = """<!DOCTYPE html>
     document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
 
     checkAuth();
-    fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん";}).catch(()=>{});
+    fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
     loadCharacters();
     update();
+    loadChatHistoryInto(currentCharId);
     setInterval(update, 30000);
 
     // 会話リレーバナー
@@ -6539,6 +7153,7 @@ HTML = """<!DOCTYPE html>
       if (e.target === document.getElementById("mailModal")) closeMailModal();
     });
   </script>
+<div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
 </body>
 </html>
 """
