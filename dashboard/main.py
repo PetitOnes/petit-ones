@@ -6181,7 +6181,7 @@ HTML = """<!DOCTYPE html>
       document.getElementById("groupStatusPanel").style.display = id === "group" ? "" : "none";
       if (!isGroupLike) { update(); updateDiary(); }
       else {
-        document.getElementById("updated").textContent = "";
+        const upd = document.getElementById("updated"); if (upd) upd.textContent = "";
         document.getElementById("diaryContent").innerHTML = "";
         if (id === "group") updateGroupStatus();
       }
@@ -7131,7 +7131,8 @@ HTML = """<!DOCTYPE html>
 
     checkAuth();
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
-    switchChar(currentCharId);   // 一覧・表示するまとまり・会話の読み込みをまとめて
+    // 一覧・表示するまとまり・会話の読み込みをまとめて。下にある #updated ができてから
+    document.addEventListener("DOMContentLoaded", () => switchChar(currentCharId));
     setInterval(update, 30000);
 
     // 会話リレーバナー
