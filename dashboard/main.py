@@ -5667,7 +5667,11 @@ HTML = """<!DOCTYPE html>
     @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.25); } }
     .msg img.chat-photo { display: block; max-width: 220px; max-height: 220px; border-radius: 10px; margin-top: 4px; cursor: pointer; }
     .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
-    .chat-input #chatPlusBtn { font-size: 1.3rem; line-height: 1; padding: 0 4px; }
+    /* ＋ は薄い丸の中(2026-11-10 ありさん) */
+    .chat-input #chatPlusBtn { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1.35rem; font-weight: 700; line-height: 1; color: #8a7f78; background: #f3e9d8; border-radius: 50%; opacity: 1; }
+    /* 送信はトップバーの色。文字(か写真・声)が入っているときだけ押せる */
+    .chat-input #send { background: var(--topbar-bg, var(--char)); color: var(--topbar-fg, var(--char-btn-text)); font-weight: 700; transition: opacity 0.15s; }
+    .chat-input #send.is-empty { opacity: 0.35; pointer-events: none; }
     .chat-input #chatPlusBtn.recording { animation: pulse 1s infinite; }
     .plus-menu { position: absolute; left: 0; bottom: calc(100% + 6px); background: #fff; border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); padding: 6px; display: flex; flex-direction: column; gap: 2px; z-index: 20; }
     .chat-input .plus-menu button { background: none; color: #333; border: none; border-radius: 8px; padding: 10px 14px; font-size: 0.9rem; text-align: left; cursor: pointer; white-space: nowrap; min-height: 0; }
@@ -5825,7 +5829,7 @@ HTML = """<!DOCTYPE html>
     <div class="chat-input" style="position:relative">
       <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
       <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
-      <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">📎</button>
+      <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">＋</button>
       <div id="plusMenu" class="plus-menu" style="display:none">
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
@@ -6446,6 +6450,7 @@ HTML = """<!DOCTYPE html>
     document.addEventListener("click", e => { if (!e.target.closest("#plusMenu") && !e.target.closest("#chatPlusBtn")) closePlusMenu(); });
     function _showMediaPreview(kind, file) {
       _pendingMedia = {kind, file};
+      refreshSend();
       const img = document.getElementById("mediaPreviewImg"), au = document.getElementById("mediaPreviewAudio");
       img.style.display = kind === "photo" ? "" : "none";
       au.style.display = kind === "audio" ? "" : "none";
@@ -6463,6 +6468,7 @@ HTML = """<!DOCTYPE html>
     }
     function clearMedia() {
       _pendingMedia = null;
+      refreshSend();
       document.getElementById("mediaPreview").style.display = "none";
       _saveAlbum = false;
     }
@@ -6491,7 +6497,7 @@ HTML = """<!DOCTYPE html>
       _chatRecorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearTimeout(_chatRecTimer);
-        btn.classList.remove("recording"); btn.textContent = "📎";
+        btn.classList.remove("recording"); btn.textContent = "＋";
         const type = _chatRecorder.mimeType || mime || "audio/webm";
         _chatRecorder = null;
         if (!_chatChunks.length) return;
@@ -6513,13 +6519,14 @@ HTML = """<!DOCTYPE html>
         addMsg("写真や声は、ひとりのぷちのタブから送ってね", "system"); return;
       }
       input.value = "";
+      refreshSend();
       btn.disabled = true;
       let mediaName = null;
       if (_pendingMedia) {
         const kind = _pendingMedia.kind;
         let up;
         try { up = await uploadPendingMedia(); }
-        catch { addMsg("写真/声を上げられませんでした", "system"); btn.disabled = false; input.value = text; return; }
+        catch { addMsg("写真/声を上げられませんでした", "system"); btn.disabled = false; input.value = text; refreshSend(); return; }
         mediaName = up.filename;
         addMsg(text || (kind === "photo" ? "📷 写真" : "🎤 声"), "user", null, null, {url: up.url, kind});
         clearMedia();
@@ -7243,6 +7250,15 @@ HTML = """<!DOCTYPE html>
     }
 
     document.getElementById("send").addEventListener("click", send);
+    // 送信は、文字か写真・声が入っているときだけ押せる
+    function refreshSend() {
+      const empty = !document.getElementById("input").value.trim() && !_pendingMedia;
+      const b = document.getElementById("send");
+      b.classList.toggle("is-empty", empty);
+      b.setAttribute("aria-disabled", empty ? "true" : "false");
+    }
+    document.getElementById("input").addEventListener("input", refreshSend);
+    refreshSend();
     document.getElementById("input").addEventListener("keydown", e => { if (e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();} });
 
     checkAuth();
