@@ -18,7 +18,7 @@
 
     <div class="o-bar">
       <label><select class="a-input" id="charSelect"></select> の日記</label>
-      <span class="o-bar-end" id="barEnd"></span>
+      <select class="a-input o-bar-end" id="monthSelect" title="月へ飛ぶ"></select>
     </div>
 
     <!-- 一覧 -->
@@ -48,7 +48,7 @@
   </div>
 
   <script>
-    const { q, esc, dayLabel, charSelect } = PetitPage;
+    const { q, esc, dayLabel, charSelect, monthSelect } = PetitPage;
     let charId = "", nextBefore = null, busy = false, lastMonth = "", openDate = null;
 
     function itemHtml(it) {
@@ -79,6 +79,7 @@
         nextBefore = res.next_before;
         btn.style.display = res.more ? "" : "none";
         document.getElementById("empty").style.display = box.children.length ? "none" : "";
+        monthSelect(document.getElementById("monthSelect"), res.earliest, jump);
       } catch (e) {
         document.getElementById("empty").style.display = "";
         document.getElementById("empty").textContent = "読み込めませんでした";
@@ -89,10 +90,17 @@
     }
 
     function start(id) {
-      charId = id; nextBefore = null; lastMonth = "";
+      charId = id;
+      document.getElementById("monthSelect").value = "";
+      jump(null);
+    }
+    // その月の終わりから一覧を読み直す(null なら今日から)
+    function jump(before) {
+      nextBefore = before; lastMonth = "";
       document.getElementById("list").textContent = "";
       document.getElementById("empty").textContent = "まだ日記がありません";
       showList();
+      window.scrollTo(0, 0);
       loadMore();
     }
 
@@ -100,7 +108,6 @@
       openDate = null;
       document.getElementById("dayView").style.display = "none";
       document.getElementById("listView").style.display = "";
-      document.getElementById("barEnd").textContent = "";
     }
 
     function renderSummary(summary, count) {

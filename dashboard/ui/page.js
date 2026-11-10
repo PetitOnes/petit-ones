@@ -47,6 +47,31 @@ window.PetitPage = (() => {
     return cur;
   }
 
+  // 月へ飛ぶ一覧: 今月から、いちばん古い日の月まで。選ぶと onPick(その月の次の月の 1 日 = その月の終わりから読む)。
+  // 先頭の「いま」は onPick(null)
+  function monthSelect(sel, earliestIso, onPick) {
+    const keep = sel.value;
+    sel.textContent = "";
+    const add = (value, text) => { const o = document.createElement("option"); o.value = value; o.textContent = text; sel.appendChild(o); };
+    add("", "いま");
+    if (earliestIso) {
+      const [ey, em] = earliestIso.split("-").map(Number);
+      const now = new Date();
+      let y = now.getFullYear(), m = now.getMonth() + 1;
+      for (let i = 0; i < 240 && (y > ey || (y === ey && m >= em)); i++) {
+        add(`${y}-${String(m).padStart(2, "0")}`, `${y}年 ${m}月`);
+        if (--m === 0) { m = 12; y--; }
+      }
+    }
+    if ([...sel.options].some(o => o.value === keep)) sel.value = keep;
+    sel.onchange = () => {
+      if (!sel.value) return onPick(null);
+      const [y, m] = sel.value.split("-").map(Number);
+      const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+      onPick(`${ny}-${String(nm).padStart(2, "0")}-01`);
+    };
+  }
+
   // 同じ並びのページへ移るときの行き先(embed・accent・char を引き継ぐ)
   function link(path, extra) {
     const n = new URLSearchParams(q);
@@ -54,5 +79,5 @@ window.PetitPage = (() => {
     return path + "?" + n.toString();
   }
 
-  return { q, esc, dayLabel, charSelect, link };
+  return { q, esc, dayLabel, charSelect, monthSelect, link };
 })();

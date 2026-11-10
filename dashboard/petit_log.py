@@ -289,7 +289,8 @@ class _Index:
 def build(src: Sources, before: str | None = None, days: int = 3, today: Date | None = None) -> dict:
     """before(YYYY-MM-DD、その日は含まない。無ければあしたより前 = 今日から)より前の、行のある日を days 日ぶん。
 
-    返すもの: {"days": [{"date", "weekday", "has_diary", "items": [...]}], "next_before": 続きを読むときの before、"more": まだ前があるか}
+    返すもの: {"days": [{"date", "weekday", "has_diary", "items": [...]}], "next_before": 続きを読むときの before、"more": まだ前があるか、
+    "earliest": いちばん古い日(月へ飛ぶ一覧用)}
     """
     today = today or Date.today()
     days = max(1, min(days, DAYS_MAX))
@@ -307,13 +308,14 @@ def build(src: Sources, before: str | None = None, days: int = 3, today: Date | 
         items = index.day(cursor)
         if items:
             out.append({"date": cursor.isoformat(), "weekday": _WEEKDAYS[cursor.weekday()], "has_diary": index.has_diary(cursor), "items": items})
-    return {"days": out, "next_before": cursor.isoformat(), "more": bool(earliest and cursor > earliest)}
+    return {"days": out, "next_before": cursor.isoformat(), "more": bool(earliest and cursor > earliest),
+            "earliest": earliest.isoformat() if earliest else None}
 
 
 def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit: int = 30) -> dict:
     """日記の一覧(新しい順)。記憶のある日と、まとめのある日。まとめはここでは作らない(あるものだけ)。
 
-    返すもの: {"items": [{"date", "weekday", "has_summary", "head", "count"}], "next_before", "more"}
+    返すもの: {"items": [{"date", "weekday", "has_summary", "head", "count"}], "next_before", "more", "earliest"}
     """
     counts: dict[str, int] = {}
     try:
@@ -332,6 +334,7 @@ def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit
         except ValueError:
             continue
     dates.sort(reverse=True)
+    earliest = dates[-1].isoformat() if dates else None
     if before:
         try:
             cut = Date.fromisoformat(before)
@@ -351,7 +354,7 @@ def diary_list(char_dir: Path, memory_db: Path, before: str | None = None, limit
             except OSError:
                 head = ""
         items.append({"date": key, "weekday": _WEEKDAYS[d.weekday()], "has_summary": bool(f and head), "head": head, "count": counts.get(key, 0)})
-    return {"items": items, "next_before": page[-1].isoformat() if page else None, "more": len(dates) > limit}
+    return {"items": items, "next_before": page[-1].isoformat() if page else None, "more": len(dates) > limit, "earliest": earliest}
 
 
 def diary_summary(char_dir: Path, date: str) -> str | None:

@@ -11,10 +11,12 @@ body { margin: 0; padding: 0 12px 96px; font-family: var(--ui-font); color: var(
 html.embed .p-head { display: none; }
 
 /* 1 行目: 「○○ ▾ の…」と、右に件数など */
-.o-bar { display: flex; align-items: center; gap: 8px; padding: 10px 0; }
+/* スクロールしても上に残る(2026-11-10 ありさん)。左右は本文の余白ぶんはみ出して、下の文字が透けないように */
+.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 -12px; padding: 10px 12px; background: var(--ui-bg); border-bottom: 1px solid var(--ui-line-soft); }
 .o-bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--ui-text-sub); white-space: nowrap; min-width: 0; }
 .o-bar .a-input { min-height: 36px; font-size: 0.9rem; border-radius: var(--ui-radius-s); }
 .o-bar .o-bar-end { margin-left: auto; font-size: 0.8rem; color: var(--ui-text-sub); white-space: nowrap; }
+.o-bar select.o-bar-end { width: auto; }
 
 /* 日・月の見出し */
 .o-day { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; font-family: var(--ui-font-head); font-weight: var(--ui-weight-head); font-size: 0.95rem; color: var(--ui-text); }

@@ -18,6 +18,7 @@
 
     <div class="o-bar">
       <label><select class="a-input" id="charSelect"></select> のぷちログ</label>
+      <select class="a-input o-bar-end" id="monthSelect" title="月へ飛ぶ"></select>
     </div>
     <!-- 出すものを選ぶ。選び方はこの端末に覚える -->
     <div class="m-pills" id="kinds"></div>
@@ -28,11 +29,11 @@
   </div>
 
   <script>
-    const { esc, dayLabel, charSelect, link } = PetitPage;
+    const { esc, dayLabel, charSelect, monthSelect, link } = PetitPage;
     // 行の種類: 絵文字と、絞り込みの粒の名前
     const KINDS = {
       talk:   { icon: "💬", chip: "会話" },
-      memory: { icon: "🧠", chip: "記憶" },
+      memory: { icon: "🤍", chip: "記憶" },
       note:   { icon: "📓", chip: "ノート" },
       photo:  { icon: "🖼️", chip: "写真" },
       voice:  { icon: "🎤", chip: "声" },
@@ -109,6 +110,7 @@
         nextBefore = res.next_before;
         btn.style.display = res.more ? "" : "none";
         document.getElementById("empty").style.display = box.children.length ? "none" : "";
+        monthSelect(document.getElementById("monthSelect"), res.earliest, jump);
         applyKinds();
       } catch (e) {
         document.getElementById("empty").style.display = "";
@@ -120,9 +122,16 @@
     }
 
     function start(id) {
-      charId = id; nextBefore = null;
+      charId = id;
+      document.getElementById("monthSelect").value = "";
+      jump(null);
+    }
+    // その月の終わりから読み直す(null なら今日から)
+    function jump(before) {
+      nextBefore = before;
       document.getElementById("days").textContent = "";
       document.getElementById("empty").textContent = "まだ何もありません";
+      window.scrollTo(0, 0);
       loadMore();
     }
 
