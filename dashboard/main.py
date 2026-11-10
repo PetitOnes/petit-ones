@@ -4427,8 +4427,8 @@ def _chat_jobs_gc() -> None:
 
 
 @app.get("/api/group/history")
-def api_group_history():
-    return load_group_log()[-200:]
+def api_group_history(limit: int = 200):
+    return load_group_log()[-max(1, min(limit, 5000)):]
 
 
 @app.post("/api/group/chat")
@@ -6155,7 +6155,7 @@ HTML = """<!DOCTYPE html>
     }
 
     // LINE みたいに、タブを開いたら過去の会話を吹き出しで並べる(2026-10-16 ありさん)
-    const CHAT_HISTORY_SHOW = 200;   // 画面で遡れる数(「最近した会話」をやめた分、多めに)
+    const CHAT_HISTORY_SHOW = 40;   // 1 回に出す数。遡ると続きを足す
     function _dateLabel(ts) {
       const d = new Date(ts);
       if (isNaN(d)) return "";
@@ -6166,39 +6166,74 @@ HTML = """<!DOCTYPE html>
       if (same(d, y)) return "きのう";
       return `${d.getMonth() + 1}/${d.getDate()}(${"日月火水木金土"[d.getDay()]})`;
     }
+    // 会話の記録はぜんぶ手元に持ち、まず新しいほうから CHAT_HISTORY_SHOW 件を出す。
+    // 上へ遡って端に近づいたら、その前の分を足す(2026-11-10 ありさん)
+    const _hist = {};   // id -> {log, shown}
+    function _histEl(id, m) {
+      let el;
+      if (m.role === "user") el = addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
+      else if (id === "select" || id === "group") el = addMsg(m.text, "group", m.color, m.name);
+      else el = addMsg(m.text, "char");
+      if (m.via && el) {   // みんな・だれか経由の印(2026-10-16)
+        const tag = document.createElement("div");
+        tag.className = "msg-via";
+        tag.textContent = m.via === "select" ? "だれか" : "みんな";
+        el.prepend(tag);
+      }
+      return el;
+    }
+    function _histDateEl(day) {
+      const sep = document.createElement("div");
+      sep.className = "msg-date";
+      sep.textContent = day;
+      return sep;
+    }
     async function loadChatHistoryInto(id) {
       const chat = document.getElementById("chat");
       let log = [];
       try {
-        const url = (id === "select" || id === "group") ? "/api/group/history" : `/api/${id}/chat/history`;
+        const url = (id === "select" || id === "group") ? "/api/group/history?limit=5000" : `/api/${id}/chat/history`;
         log = await (await fetch(url)).json();
       } catch { return; }
       if (currentCharId !== id) return;          // 読んでいる間にタブが変わった
-      log = log.slice(-CHAT_HISTORY_SHOW);
+      const shown = Math.min(CHAT_HISTORY_SHOW, log.length);
+      _hist[id] = {log, shown};
       chat.innerHTML = "";
       let lastDay = "";
-      for (const m of log) {
+      for (const m of log.slice(log.length - shown)) {
         const day = _dateLabel(m.timestamp);
-        if (day && day !== lastDay) {
-          const sep = document.createElement("div");
-          sep.className = "msg-date";
-          sep.textContent = day;
-          chat.appendChild(sep);
-          lastDay = day;
-        }
-        let el;
-        if (m.role === "user") el = addMsg(m.text, "user", null, null, m.media_url ? {url: m.media_url, kind: m.media_kind} : null);
-        else if (id === "select" || id === "group") el = addMsg(m.text, "group", m.color, m.name);
-        else el = addMsg(m.text, "char");
-        if (m.via && el) {   // みんな・だれか経由の印(2026-10-16)
-          const tag = document.createElement("div");
-          tag.className = "msg-via";
-          tag.textContent = m.via === "select" ? "だれか" : "みんな";
-          el.prepend(tag);
-        }
+        if (day && day !== lastDay) { chat.appendChild(_histDateEl(day)); lastDay = day; }
+        _histEl(id, m);
       }
       scrollChatToBottom();
     }
+    // 古い分を上に足す。見ている場所がずれないよう、足した高さだけスクロールを戻す
+    function loadOlderChat() {
+      const id = currentCharId, h = _hist[id];
+      if (!h || h.shown >= h.log.length) return;
+      const chat = document.getElementById("chat");
+      const end = h.log.length - h.shown, start = Math.max(0, end - CHAT_HISTORY_SHOW);
+      const before = document.documentElement.scrollHeight, y = window.scrollY;
+      _holdScroll = true;
+      let anchor = chat.firstChild;
+      const frag = document.createDocumentFragment();
+      let lastDay = "";
+      for (const m of h.log.slice(start, end)) {
+        const day = _dateLabel(m.timestamp);
+        if (day && day !== lastDay) { frag.appendChild(_histDateEl(day)); lastDay = day; }
+        const el = _histEl(id, m);   // addMsg は末尾に足すので、束に移す
+        if (el) frag.appendChild(el);
+      }
+      // 足した分の最後と、いまの先頭が同じ日なら、日付の札は 1 つに
+      if (anchor && anchor.classList && anchor.classList.contains("msg-date") && anchor.textContent === lastDay) {
+        const next = anchor.nextSibling; anchor.remove(); anchor = next;
+      }
+      chat.insertBefore(frag, anchor);
+      h.shown += end - start;
+      _holdScroll = false;
+      window.scrollTo(0, y + (document.documentElement.scrollHeight - before));
+    }
+    window.addEventListener("scroll", () => { if (window.scrollY < 600) loadOlderChat(); }, {passive: true});
 
     function toggleMoreTools() {
       const m = document.getElementById("moreTools");
@@ -6855,7 +6890,8 @@ HTML = """<!DOCTYPE html>
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
     // 会話はページのスクロールそのもの。いちばん下(最新)へ
-    function chatToBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
+    let _holdScroll = false;   // 古い分を足している間は下へ送らない
+    function chatToBottom() { if (!_holdScroll) window.scrollTo(0, document.documentElement.scrollHeight); }
     function scrollChatToBottom() {
       const chat = document.getElementById("chat");
       requestAnimationFrame(() => { chatToBottom(); });
