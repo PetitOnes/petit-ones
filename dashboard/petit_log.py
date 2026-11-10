@@ -29,6 +29,8 @@ MAIL_TEXT_MAX = 120
 MEMORY_TEXT_MAX = 400
 DIARY_HEAD_MAX = 120
 
+BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
+BODY_CONTACT = {"picked_up", "put_down", "touch"}
 BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起きた"}
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
@@ -214,23 +216,55 @@ class _Index:
         return out
 
     def _body(self, day: Date) -> list[dict]:
-        """体に起きたこと。同じ出来事が 10 分以内に続いたら 1 件にまとめて回数を付ける"""
+        """体に起きたこと。
+
+        連れ歩くと、持ち上げ・置く・触るが入れ替わりながら何十回も続く。ぷちログは体に起きたことの一覧ではなく
+        どんな日だったかなので、10 分より詰まって BUSY_MIN 件以上続いた時間は 1 行にまとめ、中身は出さない
+        (里親さん側のぷちろぐと同じ決まり)。それ以外は、同じ出来事が 10 分以内に続いたら 1 件にして回数を付ける
+        """
         f = self.src.char_dir / "state" / "experience" / f"{day.strftime('%Y%m%d')}.jsonl"
         try:
             lines = f.read_text(encoding="utf-8").splitlines()
         except OSError:
             return []
-        out: list[dict] = []
-        last: dict[str, dict] = {}
+        events: list[tuple[datetime, str]] = []
         for line in lines:
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            word = BODY_WORDS.get(ev.get("type"))
-            ts = _local(ev.get("ts", ""))
-            if not word or ts is None or ts.date() != day:
+            ts = _local(ev.get("ts", "")) if isinstance(ev, dict) else None
+            if ts is not None and ts.date() == day and ev.get("type") in BODY_WORDS:
+                events.append((ts, ev["type"]))
+        events.sort()
+
+        # 触れ合い(持ち上げ・置く・触る)が詰まって続いた時間
+        stretches: list[list[tuple[datetime, str]]] = []
+        for ts, kind in events:
+            if kind not in BODY_CONTACT:
                 continue
+            if stretches and (ts - stretches[-1][-1][0]).total_seconds() <= BODY_GROUP_S:
+                stretches[-1].append((ts, kind))
+            else:
+                stretches.append([(ts, kind)])
+        out: list[dict] = []
+        busy: set[tuple[datetime, str]] = set()
+        for st in stretches:
+            if len(st) < BUSY_MIN:
+                continue
+            kinds = {k for _, k in st}
+            if "touch" in kinds:
+                text = "抱っこされて、たくさん触れてもらった" if "picked_up" in kinds else "たくさん触られた"
+            else:
+                text = "持ち上げられたり、置かれたりした"
+            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": text, "count": 1})
+            busy.update(st)
+
+        last: dict[str, dict] = {}
+        for ts, kind in events:
+            if (ts, kind) in busy:
+                continue
+            word = BODY_WORDS[kind]
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1
@@ -263,7 +297,7 @@ class _Index:
                     body = ""
                 row["text"] = body[:MAIL_TEXT_MAX]
                 row["more"] = len(body) > MAIL_TEXT_MAX
-            elif it["kind"] == "alone":
+            elif "_end" in it:   # ひとりの時間、続いた体の出来事
                 row["end"] = it["_end"].strftime("%H:%M")
             if it["kind"] != "alone" and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
