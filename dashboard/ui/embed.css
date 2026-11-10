@@ -3,7 +3,7 @@
    アクセントはトップページから ?accent=rrggbb で渡る(--embed-accent)。 */
 html.embed body { background: var(--ui-cream); color: #3A322D; }
 html.embed h1, html.embed .back-link { display: none; }
-html.embed .tabs { padding-top: 14px; }
+html.embed .bar label, html.embed .bar .count { color: #6E625A; }
 html.embed .tab-btn { background: #fff; border: 1.5px solid var(--ui-cream-line); color: #6E625A; font-family: var(--ui-font-maru-head); font-weight: 700; }
 html.embed .tab-btn.active { background: var(--embed-accent, #E0674C); border-color: var(--embed-accent, #E0674C); color: #fff; }
 html.embed .viewer-bar, html.embed .rec-timer, html.embed .rec-status { color: #6E625A; }

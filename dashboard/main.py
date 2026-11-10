@@ -2003,7 +2003,8 @@ async def api_notebook_add(entry: NotebookEntry, request: Request):
 
 @app.get("/album", response_class=HTMLResponse)
 def album_page():
-    return HTMLResponse(ALBUM_HTML)
+    # 保存できる数は画面に渡す(「いま何枚 / 何枚まで」の表示用)
+    return HTMLResponse(ALBUM_HTML.replace("__ALBUM_MAX_HUMAN__", str(ALBUM_MAX_PHOTOS_HUMAN)).replace("__ALBUM_MAX__", str(ALBUM_MAX_PHOTOS)))
 
 
 @app.get("/api/album/{person_id}")
@@ -2209,7 +2210,7 @@ def _save_listens(person_id: str, listens: dict):
 
 @app.get("/voice_memo", response_class=HTMLResponse)
 def voice_memo_page():
-    return HTMLResponse(VOICE_MEMO_HTML)
+    return HTMLResponse(VOICE_MEMO_HTML.replace("__VOICE_MAX__", str(VOICE_MEMO_MAX)))
 
 
 @app.get("/api/voice_memo/{person_id}")
@@ -9057,6 +9058,11 @@ ALBUM_HTML = """<!DOCTYPE html>
     .lightbox .lb-caption { color:#ccc; margin-top:10px; font-size:0.85rem; }
     .lightbox .lb-close { position:absolute; top:16px; right:20px; font-size:1.8rem;
       cursor:pointer; color:#fff; background:none; border:none; }
+    /* だれの分か・件数を 1 行に(2026-11-10 ありさん): タブをやめてドロップダウン */
+    .bar { display:flex; align-items:center; gap:8px; padding:10px 12px; flex-wrap:nowrap; }
+    .bar label { display:flex; align-items:center; gap:4px; font-size:0.78rem; color:#aaa; white-space:nowrap; min-width:0; }
+    .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
+    .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
     .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
       text-decoration:none; font-size:0.9rem; }
     .viewer-bar { text-align:center; padding:4px 12px 12px; font-size:0.85rem; color:#aaa; }
@@ -9082,17 +9088,16 @@ ALBUM_HTML = """<!DOCTYPE html>
   <h1>🖼️ アルバム</h1>
   <a href="/" class="back-link">← ダッシュボードに戻る</a>
 
-  <div class="tabs" id="personTabs"></div>
-
-  <div class="viewer-bar">
-    見ているのは：
-    <select id="viewerSelect" onchange="onViewerChange()">
-      <option value="puchiteya">ぷちてゃ</option>
-      <option value="puchiko">ぷちこ</option>
-      <option value="puchiru">ぷちる</option>
-      <option value="arisan" selected>ありさん</option>
-      <option value="kazahaya">かぜお</option>
-    </select>
+  <div class="bar">
+    <label>だれの <select id="personSelect"></select></label>
+    <label>見る人 <select id="viewerSelect" onchange="onViewerChange()">
+        <option value="puchiteya">ぷちてゃ</option>
+        <option value="puchiko">ぷちこ</option>
+        <option value="puchiru">ぷちる</option>
+        <option value="arisan" selected>ありさん</option>
+        <option value="kazahaya">かぜお</option>
+      </select></label>
+    <span class="count" id="countLabel"></span>
   </div>
 
   <div class="upload-area" id="uploadArea" style="display:none">
@@ -9133,22 +9138,21 @@ ALBUM_HTML = """<!DOCTYPE html>
         (isHuman && PERSONS.find(p=>p.id===currentPerson)?.human) ? "block" : "none";
     }
 
-    function buildTabs() {
-      const c = document.getElementById("personTabs");
+    function buildTabs() {   // だれの分かはドロップダウンで選ぶ
+      const sel = document.getElementById("personSelect");
       PERSONS.forEach(p => {
-        const b = document.createElement("button");
-        b.className = "tab-btn" + (p.id === currentPerson ? " active" : "");
-        b.textContent = p.label;
-        b.onclick = () => switchPerson(p.id);
-        c.appendChild(b);
+        const o = document.createElement("option");
+        o.value = p.id; o.textContent = p.label; o.selected = p.id === currentPerson;
+        sel.appendChild(o);
       });
+      sel.onchange = () => switchPerson(sel.value);
+    }
+    function showCount(n, max, unit) {
+      document.getElementById("countLabel").textContent = `${n} / ${max} ${unit}`;
     }
 
     function switchPerson(id) {
       currentPerson = id;
-      document.querySelectorAll(".tab-btn").forEach((b,i) => {
-        b.classList.toggle("active", PERSONS[i].id === id);
-      });
       const isHuman = PERSONS.find(p=>p.id===id)?.human;
       const viewerIsHuman = PERSONS.find(p=>p.id===currentViewer)?.human;
       document.getElementById("uploadArea").style.display = (isHuman && viewerIsHuman) ? "block" : "none";
@@ -9161,6 +9165,7 @@ ALBUM_HTML = """<!DOCTYPE html>
       grid.innerHTML = "";
       const res = await fetch(`/api/album/${currentPerson}`);
       const photos = await res.json();
+      showCount(photos.length, PERSONS.find(p=>p.id===currentPerson)?.human ? __ALBUM_MAX_HUMAN__ : __ALBUM_MAX__, "枚");
       if (!photos.length) { empty.style.display="block"; return; }
       empty.style.display="none";
       photos.forEach(p => {
@@ -9340,6 +9345,15 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       cursor:pointer; background:#3a5a8a; color:#cce; white-space:nowrap; flex-shrink:0; }
     .reg-btn:disabled { background:#333; color:#666; cursor:default; }
     .empty { text-align:center; color:#666; padding:40px; }
+    /* だれの分か・件数を 1 行に(2026-11-10 ありさん): タブをやめてドロップダウン */
+    .bar { display:flex; align-items:center; gap:8px; padding:10px 12px; flex-wrap:nowrap; }
+    .bar label { display:flex; align-items:center; gap:4px; font-size:0.78rem; color:#aaa; white-space:nowrap; min-width:0; }
+    .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
+    .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    /* スマホ幅: 1 段目に名前と日時、2 段目に再生とボタン */
+    .memo-card { flex-wrap:wrap; }
+    .memo-card .memo-info { flex:1 1 100% !important; }
+    .memo-card audio { flex:1 1 120px; min-width:0; max-width:none; }
     .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
       text-decoration:none; font-size:0.9rem; }
   </style>
@@ -9359,7 +9373,10 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
   <h1>🎤 ボイスメモ</h1>
   <a href="/" class="back-link">← ダッシュボードに戻る</a>
 
-  <div class="tabs" id="personTabs"></div>
+  <div class="bar">
+    <label>だれの <select id="personSelect"></select></label>
+    <span class="count" id="countLabel"></span>
+  </div>
 
   <div class="rec-area" id="recArea">
     <div class="rec-status" id="recStatus">タップして録音開始（最大30秒）</div>
@@ -9394,22 +9411,21 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     let recSeconds = 0;
     const MAX_SEC = 30;
 
-    function buildTabs() {
-      const c = document.getElementById("personTabs");
+    function buildTabs() {   // だれの分かはドロップダウンで選ぶ
+      const sel = document.getElementById("personSelect");
       PERSONS.forEach(p => {
-        const b = document.createElement("button");
-        b.className = "tab-btn" + (p.id === currentPerson ? " active" : "");
-        b.textContent = p.label;
-        b.onclick = () => switchPerson(p.id);
-        c.appendChild(b);
+        const o = document.createElement("option");
+        o.value = p.id; o.textContent = p.label; o.selected = p.id === currentPerson;
+        sel.appendChild(o);
       });
+      sel.onchange = () => switchPerson(sel.value);
+    }
+    function showCount(n, max, unit) {
+      document.getElementById("countLabel").textContent = `${n} / ${max} ${unit}`;
     }
 
     function switchPerson(id) {
       currentPerson = id;
-      document.querySelectorAll(".tab-btn").forEach((b,i) => {
-        b.classList.toggle("active", PERSONS[i].id === id);
-      });
       const isHuman = PERSONS.find(p=>p.id===id)?.human;
       document.getElementById("recArea").style.display = isHuman ? "" : "none";
       document.querySelector(".upload-area").style.display = isHuman ? "" : "none";
@@ -9500,6 +9516,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       list.innerHTML = "";
       const res = await fetch(`/api/voice_memo/${currentPerson}`);
       const memos = await res.json();
+      showCount(memos.length, __VOICE_MAX__, "件");
       if (!memos.length) { empty.style.display="block"; return; }
       empty.style.display="none";
       memos.forEach(m => {
