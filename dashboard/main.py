@@ -5645,6 +5645,9 @@ HTML = """<!DOCTYPE html>
     .msg-date { align-self: center; font-size: 0.7rem; color: #999; background: #f0f0f0; border-radius: 10px; padding: 2px 10px; margin: 4px 0; }
     .msg.thinking { background: var(--char-soft); color: #aaa; font-style: italic; align-self: flex-start; }
     .chat-input { display: flex; gap: 6px; align-items: center; }
+    /* 話しかける欄は画面の下に固定。中身は本文の幅(最大 900px)に合わせる */
+    .chat-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 8px max(12px, calc(50vw - 434px)) calc(8px + env(safe-area-inset-bottom)); background: var(--ui-paper); border-top: 1px solid var(--ui-cream-line); }
+    body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
     /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
     .chat-input .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; min-height: 0; opacity: 0.7; color: inherit; }
     .chat-input .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
@@ -5819,24 +5822,6 @@ HTML = """<!DOCTYPE html>
         <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
-        <div id="mediaPreview" style="display:none;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
-          <img id="mediaPreviewImg" style="display:none;height:56px;border-radius:8px;" alt="">
-          <span id="mediaPreviewAudio" style="display:none;font-size:0.85rem;color:#666;"></span>
-          <span id="mediaAlbumLabel" style="display:none;font-size:0.78rem;color:#666;"></span>
-          <button onclick="clearMedia()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
-        </div>
-        <div class="chat-input" style="position:relative">
-          <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
-          <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
-          <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">📎</button>
-          <div id="plusMenu" class="plus-menu" style="display:none">
-            <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
-            <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
-            <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
-          </div>
-          <input type="text" id="input" placeholder="話しかける..." />
-          <button id="send">送信</button>
-        </div>
         <div>
           <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
           <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
@@ -5867,6 +5852,28 @@ HTML = """<!DOCTYPE html>
         <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
         <div id="diaryContent"><div class="empty">読み込み中...</div></div>
       </div>
+    </div>
+  </div>
+
+  <!-- 話しかける欄は画面の下に固定(2026-11-10 ありさん) -->
+  <div class="chat-dock" id="chatDock">
+    <div id="mediaPreview" style="display:none;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
+      <img id="mediaPreviewImg" style="display:none;height:56px;border-radius:8px;" alt="">
+      <span id="mediaPreviewAudio" style="display:none;font-size:0.85rem;color:#666;"></span>
+      <span id="mediaAlbumLabel" style="display:none;font-size:0.78rem;color:#666;"></span>
+      <button onclick="clearMedia()" style="border:none;background:none;cursor:pointer;color:#999;font-size:1rem;">✕</button>
+    </div>
+    <div class="chat-input" style="position:relative">
+      <input type="file" id="photoFile" accept="image/*" style="display:none" onchange="pickPhoto(this)">
+      <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
+      <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">📎</button>
+      <div id="plusMenu" class="plus-menu" style="display:none">
+        <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
+        <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
+        <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
+      </div>
+      <input type="text" id="input" placeholder="話しかける..." />
+      <button id="send">送信</button>
     </div>
   </div>
 
