@@ -6614,13 +6614,24 @@ HTML = """<!DOCTYPE html>
       if (!allChars.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
       const rows = await Promise.all(allChars.map(async c => {
         try {
-          const res = await fetch(`/api/${c.id}/status`);
+          // 体につながっているか と、電池(体の /sensors にある battery % と voltage mV)を同時に聞く
+          const [res, sens] = await Promise.all([
+            fetch(`/api/${c.id}/status`),
+            fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({})),
+          ]);
           const { m5_online } = await res.json();
           const color = c.color || "#cab8d9";
+          let batt = "";
+          if (m5_online && typeof sens.battery === "number") {
+            const pct = Math.round(sens.battery);
+            const volt = typeof sens.voltage === "number" ? ` ${(sens.voltage / 1000).toFixed(2)}V` : "";
+            batt = `<span style="font-size:0.75rem;color:${pct <= 20 ? "#f44336" : "#888"};white-space:nowrap;font-variant-numeric:tabular-nums;" title="電池">${pct <= 20 ? "🪫" : "🔋"} ${pct}%${volt}</span>`;
+          }
           return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             <span style="font-weight:700;flex:1;color:${readableText(color)};">${c.name||c.id}</span>
-            <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
+            ${batt}
+            <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};white-space:nowrap;">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
           </div>`;
         } catch {
           return `<div style="padding:8px 0;">${c.name||c.id} — 確認失敗</div>`;
