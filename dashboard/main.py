@@ -5752,6 +5752,12 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* ぷち 1 人の帯と、開いたときの中身 */
+    .char-bar { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px max(16px, calc(50vw - 434px)); border: none; border-bottom: 1px solid var(--ui-cream-line); background: var(--ui-cream); color: #6E625A; font: inherit; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.9rem; text-align: left; cursor: pointer; }
+    .char-bar .char-pick-dot { box-shadow: none; }
+    .char-bar-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--ui-font-maru); font-weight: 400; font-size: 0.8rem; color: #9a8d82; }
+    .char-bar .caret { font-size: 0.6rem; opacity: 0.7; }
+    .char-panel { max-height: 62vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px max(16px, calc(50vw - 434px)) 4px; background: var(--ui-cream); border-bottom: 1px solid var(--ui-cream-line); box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
     /* 家の設定: 押せるものの色はトップバーの色に */
     .house-settings { --ui-accent: var(--topbar-bg, var(--char)); --ui-accent-ink: var(--topbar-fg, #fff); --ui-accent-text: #8a5a4c; --ui-accent-line: var(--ui-cream-line); --ui-accent-soft: #f6ebe4; --ui-heading: #8a7f78; }
     .tool-set-row { padding: 4px 0; }
@@ -5942,6 +5948,51 @@ HTML = """<!DOCTYPE html>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
   <div class="tool-row" id="toolRow"></div>
+  <!-- ぷちを 1 人選んでいるときだけ出る帯(2026-11-10 ありさん)。開くと、その子の欲求・今日の記憶・日記 -->
+  <button class="char-bar" id="charBar" style="display:none" onclick="toggleCharPanel()" aria-expanded="false">
+    <span class="char-pick-dot" id="charBarDot"></span>
+    <span id="charBarName"></span>
+    <span class="char-bar-sum" id="charBarSum"></span>
+    <span class="caret" id="charBarCaret">▼</span>
+  </button>
+  <div class="char-panel" id="charPanel" style="display:none">
+  <div style="display:flex;justify-content:flex-end;align-items:center;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div id="m5status"></div>
+      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
+      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
+    </div>
+  </div>
+        <div id="twoColLayout">
+      <section id="desiresSection">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <h2 style="margin:0">欲求</h2>
+          <div id="dominant" title="いちばん強い欲求"></div>
+        </div>
+        <div id="desires"></div>
+      </section>
+      <section id="memoriesSection">
+        <h2 style="cursor:pointer;user-select:none" onclick="toggleMemories()">今日の記憶 <span id="memoriesCount"></span> <span id="memoriesToggle">▼</span></h2>
+        <div id="memories" style="max-height:400px;overflow-y:auto"></div>
+      </section>
+          <div id="diaryCol">
+      <div class="diary-panel" style="position:static;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">📖 日記</h3>
+          <button class="diary-nav-btn" id="diaryDetailBtn" onclick="toggleDiaryDetail()">詳細</button>
+        </div>
+        <div class="diary-nav">
+          <button class="diary-nav-btn" id="diaryPrev" onclick="diaryNav(-1)">◀</button>
+          <span class="diary-date-label" id="diaryDateLabel">—</span>
+          <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
+        </div>
+        <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
+        <div id="diaryContent"><div class="empty">読み込み中...</div></div>
+      </div>
+          </div>
+        </div>
+        <div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
+  </div>
   </div><!-- /sticky-head -->
 
   <!-- 会話は画面いっぱい(ページのスクロールがそのまま会話。2026-11-10 ありさん)。見出しは出さない -->
@@ -5983,7 +6034,7 @@ HTML = """<!DOCTYPE html>
     </div>
   </div>
 
-  <!-- ようす(2026-11-10): 体につながっているか・欲求・今日の記憶・日記。道具の列の「ようす」から開く -->
+  <!-- ようす(2026-11-10): ぷちたちが体につながっているか。道具の列の「ようす」から開く。欲求・記憶・日記は、ぷちを選んだときの帯の中 -->
   <div class="overlay" id="yousuOverlay" onclick="closeIfOverlay(event,'yousuOverlay')">
     <div class="popup">
       <div class="popup-header">
@@ -5991,48 +6042,12 @@ HTML = """<!DOCTYPE html>
         <button class="popup-close" onclick="closePopup('yousuOverlay')">✕</button>
       </div>
       <div class="popup-body yousu-body">
-  <div style="display:flex;justify-content:flex-end;align-items:center;">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <div id="m5status"></div>
-      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
-      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
-    </div>
-  </div>
         <div id="groupStatusPanel">
           <section>
             <h2>ぷちたちの状態</h2>
             <div id="groupCharStatus"></div>
           </section>
         </div>
-        <div id="twoColLayout">
-      <section id="desiresSection">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-          <h2 style="margin:0">欲求</h2>
-          <div id="dominant" title="いちばん強い欲求"></div>
-        </div>
-        <div id="desires"></div>
-      </section>
-      <section id="memoriesSection">
-        <h2 style="cursor:pointer;user-select:none" onclick="toggleMemories()">今日の記憶 <span id="memoriesCount"></span> <span id="memoriesToggle">▼</span></h2>
-        <div id="memories" style="max-height:400px;overflow-y:auto"></div>
-      </section>
-          <div id="diaryCol">
-      <div class="diary-panel" style="position:static;margin-bottom:16px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <h3 style="margin:0">📖 日記</h3>
-          <button class="diary-nav-btn" id="diaryDetailBtn" onclick="toggleDiaryDetail()">詳細</button>
-        </div>
-        <div class="diary-nav">
-          <button class="diary-nav-btn" id="diaryPrev" onclick="diaryNav(-1)">◀</button>
-          <span class="diary-date-label" id="diaryDateLabel">—</span>
-          <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
-        </div>
-        <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
-        <div id="diaryContent"><div class="empty">読み込み中...</div></div>
-      </div>
-          </div>
-        </div>
-        <div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
       </div>
     </div>
   </div>
@@ -6522,6 +6537,15 @@ HTML = """<!DOCTYPE html>
       document.getElementById("wakeBtn").style.display = "none";
       document.getElementById("m5status").innerHTML = "";
       document.getElementById("twoColLayout").style.display = isGroupLike ? "block" : "";
+      // ぷち 1 人の帯: みんな・だれかでは出さない。選び直したら閉じる
+      toggleCharPanel(false);
+      document.getElementById("charBar").style.display = isGroupLike ? "none" : "";
+      const barChar = characters.find(c => c.id === id);
+      if (barChar) {
+        document.getElementById("charBarDot").style.background = barChar.color || "#cab8d9";
+        document.getElementById("charBarName").textContent = barChar.name || barChar.id;
+      }
+      document.getElementById("charBarSum").textContent = "";
       document.getElementById("diaryCol").style.display = isGroupLike ? "none" : "";
       document.getElementById("desiresSection").style.display = isGroupLike ? "none" : "";
       document.getElementById("memoriesSection").style.display = isGroupLike ? "none" : "";
@@ -6558,6 +6582,19 @@ HTML = """<!DOCTYPE html>
       document.querySelectorAll("#toolRow .tool").forEach(t => t.removeAttribute("data-on"));
       if (name) { const t = document.querySelector(`#toolRow .tool[onclick="showPane('${name}')"]`); if (t) t.setAttribute("data-on", "1"); }
     }
+    function toggleCharPanel(force) {
+      const pnl = document.getElementById("charPanel");
+      const open = force !== undefined ? force : pnl.style.display === "none";
+      pnl.style.display = open ? "" : "none";
+      document.getElementById("charBar").setAttribute("aria-expanded", open ? "true" : "false");
+      document.getElementById("charBarCaret").textContent = open ? "▲" : "▼";
+      if (open) { update(); updateDiary(); }   // 開いたそのときに新しくする
+    }
+    // 帯の右に、いちばん強い欲求を小さく出す(欲求の欄の札を写す)
+    new MutationObserver(() => {
+      const t = document.getElementById("dominant").textContent.trim();
+      document.getElementById("charBarSum").textContent = t ? "いま: " + t : "";
+    }).observe(document.getElementById("dominant"), {childList: true, characterData: true, subtree: true});
     function openYousu() {
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
