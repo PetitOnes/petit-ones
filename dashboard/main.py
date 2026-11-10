@@ -5785,9 +5785,9 @@ HTML = """<!DOCTYPE html>
     .char-tabs .char-tab { flex-shrink: 0; white-space: nowrap; }
     /* 道具の列: 絵文字の下に名前。折り返さず横スクロール */
     /* 帯は端から端まで。下に薄い線、その下(本文)はクリーム色(2026-11-10 ありさん) */
-    .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; margin: 0 calc(50% - 50vw) 12px; padding: 8px calc(50vw - 50%) 6px; background: var(--ui-paper); border-bottom: 1px solid var(--ui-cream-line); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 0; margin: 0 calc(50% - 50vw) 12px; padding: 8px calc(50vw - 50%) 6px; background: var(--ui-paper); border-bottom: 1px solid var(--ui-cream-line); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .tool-row::-webkit-scrollbar { display: none; }
-    .tool { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; padding: 4px 3px; border: none; background: none; color: #777; font: inherit; text-decoration: none; cursor: pointer; }
+    .tool { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 40px; padding: 4px 1px; border: none; background: none; color: #777; font: inherit; text-decoration: none; cursor: pointer; }
     .tool-icon { font-size: 1.2rem; line-height: 1.2; opacity: 0.75; }
     .tool-name { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
