@@ -12,6 +12,9 @@ window.PetitPage = (() => {
     root.style.setProperty("--ui-accent", "#" + accent);
     root.style.setProperty("--ui-accent-ink", "#fff");
     root.style.setProperty("--ui-accent-text", "#" + accent);
+    // 薄い色と枠の色も、同じ色から作る(作らないと、ぷちの色の薄紫が残る)
+    root.style.setProperty("--ui-accent-soft", `color-mix(in srgb, #${accent} 14%, white)`);
+    root.style.setProperty("--ui-accent-line", `color-mix(in srgb, #${accent} 40%, white)`);
   }
 
   const esc = t => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
