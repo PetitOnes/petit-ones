@@ -5599,7 +5599,8 @@ HTML = """<!DOCTYPE html>
     .mail-action-btn.active { opacity: 1; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
-    .chat-messages { max-height: 320px; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+    section.chat-flat { background: none; box-shadow: none; padding: 0 2px; }
+    .chat-messages { max-height: 56vh; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
     .chat-messages { overflow-x: hidden; max-width: 100%; }
     /* 話すのカードが横に広がらないように(スマホ Safari 対策 2026-10-16): 中身はカード幅まで、はみ出しは横だけ切る */
     #chatBody > * { max-width: 100%; box-sizing: border-box; }
@@ -5693,7 +5694,8 @@ HTML = """<!DOCTYPE html>
       .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
       .setting-label { font-size: 1rem; }
       .popup-title { font-size: 1rem; }
-      .chat-messages { max-height: 40vh; }
+      .chat-messages { max-height: 52vh; }
+      section.chat-flat { padding: 0 2px; }
       /* スマホのスクロールを減らす(2026-10-16): 余白を詰める */
       .desire .bar-bg { height: 8px; }
       section { padding: 12px 14px; margin-bottom: 10px; }
@@ -5817,8 +5819,9 @@ HTML = """<!DOCTYPE html>
       </section>
 
 
-      <section>
-        <h2 style="cursor:pointer;user-select:none" onclick="toggleChat()"><span id="chatTitle">話す</span> <span id="chatToggle">▼</span></h2>
+      <!-- 会話はカードに入れず、背景にそのまま出す。畳まない(2026-11-10 ありさん) -->
+      <section class="chat-flat">
+        <h2><span id="chatTitle">話す</span><span id="chatToggle" style="display:none"></span></h2>
         <div id="chatBody">
         <div id="selectToggles"></div>
         <div class="chat-messages" id="chat"></div>
@@ -6855,7 +6858,6 @@ HTML = """<!DOCTYPE html>
       if (!hide) scrollChatToBottom();   // 開いたら一番下(最新)へ(2026-10-16 ありさん)
       try { localStorage.setItem("chatCollapsed", hide ? "1" : "0"); } catch {}
     }
-    try { if (localStorage.getItem("chatCollapsed") === "1") toggleChat(true); } catch {}
     function toggleMemories() {
       const el = document.getElementById("memories");
       const toggle = document.getElementById("memoriesToggle");
