@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>日記</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📖 日記</h1></div>
+
+    <div class="o-bar">
+      <label><select class="a-input" id="charSelect"></select> の日記</label>
+      <span class="o-bar-end" id="barEnd"></span>
+    </div>
+
+    <!-- 一覧 -->
+    <div id="listView">
+      <div id="list"></div>
+      <div class="p-empty" id="empty" style="display:none">まだ日記がありません</div>
+      <div class="p-more"><button class="a-btn a-btn--sub" id="moreBtn" style="display:none" onclick="loadMore()">もっと前を読む</button></div>
+    </div>
+
+    <!-- 1 日ぶん -->
+    <div id="dayView" style="display:none">
+      <button class="a-btn a-btn--sub a-btn--s" onclick="showList()">← 一覧</button>
+      <h2 class="o-day" id="dayTitle"></h2>
+      <div class="m-card">
+        <span class="a-heading">まとめ</span>
+        <div class="o-diary-summary" id="daySummary"></div>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="a-btn a-btn--sub a-btn--s" id="sumBtn" onclick="summarize()"></button>
+          <span class="a-hint" id="sumNote"></span>
+        </div>
+      </div>
+      <div class="m-card">
+        <span class="a-heading" id="memTitle">その日の記憶</span>
+        <div id="dayMemories"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { q, esc, dayLabel, charSelect } = PetitPage;
+    let charId = "", nextBefore = null, busy = false, lastMonth = "", openDate = null;
+
+    function itemHtml(it) {
+      const head = it.has_summary ? `<div class="o-diary-head">${esc(it.head)}</div>` : `<div class="o-diary-head is-none">まとめはまだありません</div>`;
+      return `<button class="o-diary-item" data-date="${it.date}">
+        <div class="o-diary-top"><b>${esc(dayLabel(it.date, it.weekday))}</b><span class="a-time">記憶 ${it.count} 件</span></div>${head}</button>`;
+    }
+
+    async function loadMore() {
+      if (busy || !charId) return;
+      busy = true;
+      const btn = document.getElementById("moreBtn");
+      btn.disabled = true;
+      try {
+        const res = await (await fetch(`/api/${charId}/diary_list?limit=30` + (nextBefore ? `&before=${nextBefore}` : ""))).json();
+        const box = document.getElementById("list");
+        let html = "";
+        for (const it of res.items || []) {
+          const month = it.date.slice(0, 7);
+          if (month !== lastMonth) {   // 月ごとに区切る
+            const [y, m] = month.split("-").map(Number);
+            html += `<h2 class="o-day">${y}年 ${m}月</h2>`;
+            lastMonth = month;
+          }
+          html += itemHtml(it);
+        }
+        box.insertAdjacentHTML("beforeend", html);
+        nextBefore = res.next_before;
+        btn.style.display = res.more ? "" : "none";
+        document.getElementById("empty").style.display = box.children.length ? "none" : "";
+      } catch (e) {
+        document.getElementById("empty").style.display = "";
+        document.getElementById("empty").textContent = "読み込めませんでした";
+      } finally {
+        busy = false;
+        btn.disabled = false;
+      }
+    }
+
+    function start(id) {
+      charId = id; nextBefore = null; lastMonth = "";
+      document.getElementById("list").textContent = "";
+      document.getElementById("empty").textContent = "まだ日記がありません";
+      showList();
+      loadMore();
+    }
+
+    function showList() {
+      openDate = null;
+      document.getElementById("dayView").style.display = "none";
+      document.getElementById("listView").style.display = "";
+      document.getElementById("barEnd").textContent = "";
+    }
+
+    function renderSummary(summary, count) {
+      const el = document.getElementById("daySummary");
+      el.textContent = summary || "まとめはまだありません。";
+      el.style.color = summary ? "" : "var(--ui-text-mute)";
+      document.getElementById("sumBtn").textContent = summary ? "まとめを作り直す" : "まとめを作る";
+      document.getElementById("sumBtn").style.display = count ? "" : "none";   // 記憶が無い日は作れない
+      document.getElementById("sumNote").textContent = count ? "ぷちに書いてもらうので、少し時間と API 代がかかります" : "";
+    }
+
+    async function openDay(date) {
+      openDate = date;
+      document.getElementById("listView").style.display = "none";
+      document.getElementById("dayView").style.display = "";
+      document.getElementById("dayTitle").textContent = dayLabel(date);
+      document.getElementById("daySummary").textContent = "読み込み中…";
+      document.getElementById("dayMemories").textContent = "";
+      window.scrollTo(0, 0);
+      try {
+        const res = await (await fetch(`/api/${charId}/diary_day/${date}`)).json();
+        if (openDate !== date) return;
+        renderSummary(res.summary, res.count);
+        document.getElementById("memTitle").textContent = `その日の記憶(${res.count} 件)`;
+        document.getElementById("dayMemories").innerHTML = (res.memories || []).map(m => {
+          const ts = (m.metadata && m.metadata.timestamp) || "";
+          return `<div class="m-entry"><span class="a-time">${esc(ts.slice(11, 16))}</span><p>${esc(m.content)}</p></div>`;
+        }).join("") || `<div class="p-empty">この日の記憶はありません</div>`;
+      } catch (e) {
+        document.getElementById("daySummary").textContent = "読み込めませんでした";
+      }
+    }
+
+    // まとめは、押したときだけ作る(一覧や開いただけでは作らない)
+    async function summarize() {
+      const date = openDate, btn = document.getElementById("sumBtn");
+      if (!date) return;
+      btn.disabled = true;
+      const before = btn.textContent;
+      btn.textContent = "書いています…";
+      try {
+        const res = await (await fetch(`/api/${charId}/diary/${date}/summarize`, { method: "POST" })).json();
+        if (openDate === date && res.summary) {
+          renderSummary(res.summary, 1);
+          const item = document.querySelector(`.o-diary-item[data-date="${date}"] .o-diary-head`);
+          if (item) { item.classList.remove("is-none"); item.textContent = res.summary.replace(/\s+/g, " ").slice(0, 120); }
+        } else if (openDate === date) {
+          btn.textContent = before;
+          document.getElementById("sumNote").textContent = "作れませんでした";
+        }
+      } catch (e) {
+        btn.textContent = before;
+        document.getElementById("sumNote").textContent = "作れませんでした";
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById("list").addEventListener("click", e => {
+      const b = e.target.closest("[data-date]");
+      if (b) openDay(b.dataset.date);
+    });
+    window.addEventListener("scroll", () => {
+      if (!openDate && document.getElementById("moreBtn").style.display !== "none" && window.innerHeight + window.scrollY > document.documentElement.scrollHeight - 400) loadMore();
+    }, { passive: true });
+
+    charSelect(document.getElementById("charSelect"), start).then(id => {
+      start(id);
+      const date = q.get("date");   // ぷちログの「📖 日記」から来たとき
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date || "")) openDay(date);
+    });
+  </script>
+</body>
+</html>

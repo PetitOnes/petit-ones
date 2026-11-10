@@ -1830,8 +1830,8 @@ def api_relations(request: Request):
 
 # ---- 部品(トークン・原子・分子)の CSS と見本ページ。中身は dashboard/ui/ ----
 UI_DIR = Path(__file__).parent / "ui"
-_UI_CSS = ("tokens.css", "atoms.css", "molecules.css", "embed.css")
-_UI_JS = ("md.js",)
+_UI_CSS = ("tokens.css", "atoms.css", "molecules.css", "embed.css", "pages.css")
+_UI_JS = ("md.js", "page.js")
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -1845,6 +1845,64 @@ def ui_css(name: str):
         return JSONResponse({"error": "not found"}, status_code=404)
     media_type = "text/css" if name in _UI_CSS else "text/javascript"
     return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type=media_type, headers={"Cache-Control": "no-cache"})
+
+
+# ---- ぷちログ(1 日のタイムライン)と日記の一覧。組み立ては petit_log.py、ページは dashboard/ui/ ----
+def _petit_log_sources(character_id: str):
+    import petit_log
+    return petit_log.Sources(
+        char_id=character_id, char_dir=char_dir(character_id),
+        album_dir=ALBUM_DIR / character_id, voice_dir=VOICE_MEMO_DIR / character_id,
+        mailbox_dir=DATA_DIR / "mailbox", auto_log_dir=_STREAM_LOG_ROOT / character_id,
+        memory_db=memory_db_path(character_id),
+        user_label=_user_label,
+        name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
+    )
+
+
+def _is_petit(character_id: str) -> bool:
+    return (char_dir(character_id) / "config" / "config.json").exists()
+
+
+@app.get("/api/{character_id}/petit_log")
+def api_petit_log(character_id: str, before: str | None = None, days: int = 3):
+    """その子の 1 日のタイムライン(新しい日から days 日ぶん)。読むだけ"""
+    import petit_log
+    if not _is_petit(character_id):
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    return petit_log.build(_petit_log_sources(character_id), before=before, days=days)
+
+
+@app.get("/api/{character_id}/diary_list")
+def api_diary_list(character_id: str, before: str | None = None, limit: int = 30):
+    """日記の一覧(記憶かまとめのある日、新しい順)。まとめは作らない"""
+    import petit_log
+    if not _is_petit(character_id):
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    return petit_log.diary_list(char_dir(character_id), memory_db_path(character_id), before=before, limit=limit)
+
+
+@app.get("/api/{character_id}/diary_day/{date}")
+def api_diary_day(character_id: str, date: str):
+    """その日のまとめ(あれば)と記憶。/diary/{date} と違って、まとめが無くても作らない(API 代がかからない)"""
+    import petit_log
+    if not _is_petit(character_id):
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    memories = _query_memories(character_id, 200, date_filter=date)
+    return {"date": date, "summary": petit_log.diary_summary(char_dir(character_id), date), "count": len(memories), "memories": memories}
+
+
+_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html"}
+
+
+@app.get("/petitlog", response_class=HTMLResponse)
+def petitlog_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["petitlog"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/diary", response_class=HTMLResponse)
+def diary_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["diary"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/terminal", response_class=HTMLResponse)
@@ -5752,6 +5810,8 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* メールボックスの「＋」(メールを書く) */
+    .mail-new-btn { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%; background: var(--topbar-bg, var(--char)); color: var(--topbar-fg, var(--char-btn-text)); font-size: 1.3rem; font-weight: 700; line-height: 1; cursor: pointer; }
     /* 「起こす」ボタンは出さない(2026-11-10 ありさん)。JS が表示を切り替えるので、ここで止める */
     #wakeBtn { display: none !important; }
     /* ぷち 1 人の帯と、開いたときの中身 */
@@ -6157,7 +6217,10 @@ HTML = """<!DOCTYPE html>
     <div class="popup">
       <div class="popup-header">
         <span class="popup-title">📬 メールボックス</span>
-        <button class="popup-close" onclick="closePopup('mailboxOverlay')">✕</button>
+        <span style="display:flex;align-items:center;gap:4px">
+          <button class="mail-new-btn" onclick="openMailCompose()" title="メールを書く">＋</button>
+          <button class="popup-close" onclick="closePopup('mailboxOverlay')">✕</button>
+        </span>
       </div>
       <div class="popup-body">
         <div class="mailbox-tabs">
@@ -6430,7 +6493,8 @@ HTML = """<!DOCTYPE html>
     // 道具の一覧。並びと、列に出すか「ほか」に入れるかは家の設定(⚙️ → 道具の列)で変えられる
     const TOOLS = {
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
-      mail:      {icon: "✉️", name: "メール",     attr: 'onclick="openMailCompose()"'},
+      petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
+      diary:     {icon: "📔", name: "日記",       pane: "diary"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
@@ -6443,7 +6507,7 @@ HTML = """<!DOCTYPE html>
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
       costs:     {icon: "💰", name: "おかね",     attr: 'href="/costs"'},
     };
-    const TOOLS_DEFAULT_SHOWN = ["yousu", "mail", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
+    const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
     // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す
     function toolOrder() {
       const saved = Array.isArray(_uiSettings.tools) ? _uiSettings.tools.filter(t => t && TOOLS[t.id]) : [];
@@ -6559,10 +6623,10 @@ HTML = """<!DOCTYPE html>
       }
     }
 
-    // アルバム・ボイスメモ・ノート・交換日記は別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
+    // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記は別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -6575,7 +6639,9 @@ HTML = """<!DOCTYPE html>
         const top = Math.round(document.querySelector(".sticky-head").getBoundingClientRect().bottom);
         f.style.top = top + "px";
         f.style.height = `calc(100dvh - ${top}px)`;   // iframe は top と bottom だけでは伸びない
-        f.src = PANES[name] + "?embed=1" + (accent ? "&accent=" + accent : "");
+        // ぷちを 1 人選んでいるときは、その子から開く(ぷちログ・日記・ノート)
+        const one = characters.some(c => c.id === currentCharId) ? "&char=" + currentCharId : "";
+        f.src = PANES[name] + "?embed=1" + (accent ? "&accent=" + accent : "") + one;
         f.style.display = "block";
       } else {
         f.style.display = "none";
