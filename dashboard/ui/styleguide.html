@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>部品の見本</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <style>
+    /* この見本ページだけの枠組み(部品ではない) */
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 0 16px 64px; font-family: var(--ui-font); color: var(--ui-text); background: var(--ui-bg); transition: background 0.3s; }
+    .sg-wrap { max-width: 720px; margin: 0 auto; }
+    .sg-switch { position: sticky; top: 0; z-index: 10; margin: 0 -16px 16px; padding: 10px 16px; background: var(--ui-surface); border-bottom: 1px solid var(--ui-line); }
+    .sg-switch-row { display: flex; align-items: center; gap: 8px; max-width: 720px; margin: 0 auto 6px; }
+    .sg-switch-row:last-child { margin-bottom: 0; }
+    .sg-switch-row > span { flex: 0 0 6em; font-size: 0.75rem; color: var(--ui-text-sub); }
+    h1 { margin: 20px 0 4px; font-family: var(--ui-font-head); font-size: 1.3rem; color: var(--ui-text); }
+    h2 { margin: 28px 0 10px; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-text); }
+    .sg-lead { margin: 0 0 8px; font-size: 0.85rem; line-height: 1.6; color: var(--ui-text-sub); }
+    .sg-item { margin-bottom: 14px; }
+    .sg-name { display: block; margin-bottom: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; color: var(--ui-text-mute); }
+    .sg-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .sg-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+    .sg-swatch { font-size: 0.68rem; color: var(--ui-text-sub); font-family: ui-monospace, Menlo, monospace; overflow-wrap: anywhere; }
+    .sg-swatch i { display: block; height: 40px; margin-bottom: 4px; border: 1px solid rgba(0, 0, 0, 0.1); border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="sg-switch">
+    <div class="sg-switch-row"><span>土台</span>
+      <div class="m-pills">
+        <button class="a-pill" data-set="ui" data-val="">いまのローカル</button>
+        <button class="a-pill" data-set="ui" data-val="foster">里親さん寄り</button>
+      </div>
+    </div>
+    <div class="sg-switch-row"><span>アクセント</span>
+      <div class="m-pills">
+        <button class="a-pill" data-set="accent" data-val="">ぷちの色</button>
+        <button class="a-pill" data-set="accent" data-val="coral">コーラル</button>
+      </div>
+    </div>
+    <div class="sg-switch-row"><span>ぷち</span>
+      <div class="m-pills" id="charPills"></div>
+    </div>
+  </div>
+
+  <div class="sg-wrap">
+    <h1>部品の見本</h1>
+    <p class="sg-lead">ダッシュボードの部品を、小さいものから順に並べた見本。上の切り替えで、いまの見た目と里親さん寄りの見た目を比べられる。灰色の小さな文字は、その部品のクラス名。</p>
+
+    <h2>トークン(色)</h2>
+    <p class="sg-lead"><code>ui/tokens.css</code>。部品はこの名前だけを使う。</p>
+    <div class="sg-swatches" id="swatches"></div>
+
+    <h2>原子</h2>
+    <p class="sg-lead"><code>ui/atoms.css</code>。これ以上分けない部品。</p>
+
+    <div class="m-card">
+      <div class="sg-item"><span class="sg-name">.a-btn / --sub / --ghost / --danger / --add</span>
+        <div class="sg-line">
+          <button class="a-btn">送信</button>
+          <button class="a-btn a-btn--sub">最近した会話</button>
+          <button class="a-btn a-btn--ghost">リセット</button>
+          <button class="a-btn a-btn--danger">止める</button>
+          <button class="a-btn a-btn--add">＋ 追加</button>
+          <button class="a-btn" disabled>送信中</button>
+        </div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-btn--s</span>
+        <div class="sg-line">
+          <button class="a-btn a-btn--s">詳細</button>
+          <button class="a-btn a-btn--sub a-btn--s">◀</button>
+          <button class="a-btn a-btn--sub a-btn--s">▶</button>
+        </div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-btn--block</span>
+        <button class="a-btn a-btn--block">保存</button>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-icon-btn</span>
+        <div class="sg-line">
+          <button class="a-icon-btn" title="メールボックス">📬</button>
+          <button class="a-icon-btn" title="設定">⚙️</button>
+          <button class="a-icon-btn" title="添付">📎</button>
+          <button class="a-icon-btn" title="閉じる">✕</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="m-card">
+      <div class="sg-item"><span class="sg-name">.a-input</span>
+        <input class="a-input" type="text" placeholder="話しかける...">
+      </div>
+      <div class="sg-item"><span class="sg-name">textarea.a-input</span>
+        <textarea class="a-input" rows="3" placeholder="メールの内容..."></textarea>
+      </div>
+      <div class="sg-item"><span class="sg-name">select.a-input / .a-input--s</span>
+        <div class="sg-line">
+          <select class="a-input"><option>30分に1回</option><option>60分に1回</option></select>
+          <input class="a-input a-input--s" type="number" value="7" style="width:52px">
+        </div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-toggle</span>
+        <div class="sg-line">
+          <label class="a-toggle"><input type="checkbox" checked><span></span></label>
+          <label class="a-toggle"><input type="checkbox"><span></span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="m-card">
+      <div class="sg-item"><span class="sg-name">.a-pill / .is-on</span>
+        <div class="sg-line">
+          <button class="a-pill is-on">受信</button>
+          <button class="a-pill">⭐</button>
+          <button class="a-pill">📦</button>
+        </div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-badge / --soft / --danger</span>
+        <div class="sg-line">
+          <span class="a-badge">好奇心</span>
+          <span class="a-badge a-badge--soft">みんな</span>
+          <span class="a-badge a-badge--danger">3</span>
+        </div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-bar</span>
+        <div class="a-bar"><i style="width:62%"></i></div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-dot / --ok / --off</span>
+        <div class="sg-line"><span class="a-dot"></span><span class="a-dot a-dot--ok"></span><span class="a-dot a-dot--off"></span></div>
+      </div>
+      <div class="sg-item"><span class="sg-name">.a-heading / .a-label / .a-hint / .a-time</span>
+        <div class="a-heading">欲求</div>
+        <div class="a-label">宛先（複数可）</div>
+        <div class="a-hint">上から順に試します。</div>
+        <div class="a-time">14:05</div>
+      </div>
+    </div>
+
+    <h2>分子</h2>
+    <p class="sg-lead"><code>ui/molecules.css</code>。原子を組んだ部品。</p>
+
+    <span class="sg-name">.m-card + .m-meter</span>
+    <div class="m-card">
+      <span class="a-heading">欲求</span>
+      <div class="m-meter"><span>だれかと話したい</span><div class="a-bar"><i style="width:78%"></i></div><span class="a-time">78%</span></div>
+      <div class="m-meter"><span>外を見たい</span><div class="a-bar"><i style="width:41%"></i></div><span class="a-time">41%</span></div>
+      <div class="m-meter"><span>思い出したい</span><div class="a-bar"><i style="width:15%"></i></div><span class="a-time">15%</span></div>
+    </div>
+
+    <span class="sg-name">.m-bubbles + .m-bubble / --me / --note、.m-compose</span>
+    <div class="m-card">
+      <span class="a-heading">話す</span>
+      <div class="m-bubbles" style="margin-bottom:12px">
+        <div class="m-bubble m-bubble--note">11月10日</div>
+        <div class="m-bubble m-bubble--me">おはよう。よく眠れた?</div>
+        <div class="m-bubble">おはよう。窓の光がきれいだったよ。</div>
+      </div>
+      <div class="m-compose">
+        <button class="a-icon-btn" title="添付">📎</button>
+        <input class="a-input" type="text" placeholder="話しかける...">
+        <button class="a-btn">送信</button>
+      </div>
+    </div>
+
+    <span class="sg-name">.m-row、.m-field</span>
+    <div class="m-card">
+      <span class="a-heading">設定</span>
+      <div class="m-row"><span>📷 カメラ</span><label class="a-toggle"><input type="checkbox" checked><span></span></label></div>
+      <div class="m-row"><span>🔊 音</span><label class="a-toggle"><input type="checkbox"><span></span></label></div>
+      <div class="m-row"><span>⏱️ 自律行動の頻度</span><select class="a-input a-input--s"><option>30分に1回</option></select></div>
+      <label class="m-field" style="margin-top:12px"><span class="a-label">件名（省略可）</span><input class="a-input" type="text" placeholder="件名..."></label>
+      <button class="a-btn a-btn--block">保存</button>
+    </div>
+
+    <span class="sg-name">.m-pills、.m-mail</span>
+    <div class="m-card">
+      <span class="a-heading">メールボックス</span>
+      <div class="m-pills" style="margin-bottom:12px">
+        <button class="a-pill is-on">受信</button><button class="a-pill">⭐</button><button class="a-pill">📦</button>
+      </div>
+      <div class="m-mail">
+        <div class="m-mail-head"><b>差出人</b><span class="a-time">11/10 09:12</span></div>
+        <div class="m-mail-body">今日の空はうすい水色でした。</div>
+      </div>
+    </div>
+
+    <span class="sg-name">.m-entry、.m-notice / --danger</span>
+    <div class="m-card">
+      <span class="a-heading">今日の記憶</span>
+      <div class="m-entry"><span class="a-time">08:30</span><p>朝の光で机が明るくなった。</p></div>
+      <div class="m-entry"><span class="a-time">12:10</span><p>お昼に声をかけてもらった。</p></div>
+      <div class="m-notice">保存しました。</div>
+      <div class="m-notice m-notice--danger">体につながっていません。</div>
+    </div>
+  </div>
+
+  <script>
+    // ぷちの色から濃淡を作る式は、トップページの applyTheme と同じ
+    function brightness(hex) {
+      const r = parseInt(hex.slice(1, 3), 16), g = parseInt(hex.slice(3, 5), 16), b = parseInt(hex.slice(5, 7), 16);
+      return (r * 299 + g * 587 + b * 114) / 1000;
+    }
+    function mix(hex, f, to) {
+      const c = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+      return "rgb(" + c.map(v => Math.round(v + (to - v) * f)).join(",") + ")";
+    }
+    const lighten = (hex, f) => mix(hex, f, 255);
+    const darken = (hex, f) => mix(hex, f, 0);
+    function applyTheme(color) {
+      const s = document.documentElement.style;
+      const bright = brightness(color) > 160;
+      s.setProperty("--char", color);
+      s.setProperty("--char-dark", bright ? darken(color, 0.42) : color);
+      s.setProperty("--char-mid", darken(color, bright ? 0.28 : 0.1));
+      s.setProperty("--char-bg", lighten(color, 0.92));
+      s.setProperty("--char-soft", lighten(color, 0.86));
+      s.setProperty("--char-border", lighten(color, 0.72));
+      s.setProperty("--char-btn-text", bright ? darken(color, 0.45) : "white");
+    }
+
+    const state = { ui: "", accent: "", char: "" };
+    function load() {
+      try { Object.assign(state, JSON.parse(localStorage.getItem("uiStyleguide") || "{}")); } catch (e) {}
+    }
+    function save() {
+      try { localStorage.setItem("uiStyleguide", JSON.stringify(state)); } catch (e) {}
+    }
+    function render() {
+      const root = document.documentElement;
+      for (const k of ["ui", "accent"]) {
+        if (state[k]) root.setAttribute("data-" + k, state[k]); else root.removeAttribute("data-" + k);
+      }
+      if (state.char) applyTheme(state.char);
+      document.querySelectorAll("[data-set]").forEach(b => {
+        b.classList.toggle("is-on", (state[b.dataset.set] || "") === b.dataset.val);
+      });
+      renderSwatches();
+    }
+    document.addEventListener("click", e => {
+      const b = e.target.closest("[data-set]");
+      if (!b) return;
+      state[b.dataset.set] = b.dataset.val;
+      save();
+      render();
+    });
+
+    const TOKENS = ["--ui-bg", "--ui-surface", "--ui-surface-soft", "--ui-text", "--ui-text-sub", "--ui-text-mute",
+      "--ui-line", "--ui-line-soft", "--ui-accent", "--ui-accent-ink", "--ui-accent-soft", "--ui-accent-line",
+      "--ui-accent-text", "--ui-danger", "--ui-ok", "--ui-off"];
+    function renderSwatches() {
+      document.getElementById("swatches").innerHTML = TOKENS.map(t =>
+        `<div class="sg-swatch"><i style="background:var(${t})"></i>${t}</div>`).join("");
+    }
+
+    async function loadChars() {
+      let chars = [];
+      try { chars = await (await fetch("/api/characters")).json(); } catch (e) {}
+      chars = (Array.isArray(chars) ? chars : []).filter(c => /^#[0-9a-fA-F]{6}$/.test(c.color || ""));
+      if (!chars.length) chars = [{ name: "ぷち", color: "#cab8d9" }];
+      const el = document.getElementById("charPills");
+      el.textContent = "";
+      for (const c of chars) {
+        const b = document.createElement("button");
+        b.className = "a-pill";
+        b.dataset.set = "char";
+        b.dataset.val = c.color;
+        const dot = document.createElement("span");
+        dot.className = "a-dot";
+        dot.style.background = c.color;
+        b.append(dot, c.name || c.id || "");
+        el.append(b);
+      }
+      if (!chars.some(c => c.color === state.char)) state.char = chars[0].color;
+      render();
+    }
+
+    load();
+    render();
+    loadChars();
+  </script>
+</body>
+</html>

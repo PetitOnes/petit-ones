@@ -1,0 +1,54 @@
+/* dashboard/ui/ のページ(ぷちログ・日記)の枠組み。有機体(o-)とページの土台。
+   色・大きさは tokens.css、部品は atoms.css・molecules.css。 */
+
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 12px 96px; overflow-x: hidden; font-family: var(--ui-font); color: var(--ui-text); background: var(--ui-bg); line-height: 1.6; }
+.p-wrap { max-width: 720px; margin: 0 auto; }
+
+/* 直接開いたときだけ出る頭(埋めて出しているときは、トップページの頭があるので出さない) */
+.p-head { display: flex; align-items: center; gap: 12px; padding: 14px 0 4px; }
+.p-head h1 { margin: 0; font-family: var(--ui-font-head); font-size: 1.15rem; }
+html.embed .p-head { display: none; }
+
+/* 1 行目: 「○○ ▾ の…」と、右に件数など */
+/* スクロールしても上に残る(2026-11-10 ありさん)。帯は画面の端から端まで(本文は最大 720px なので、はみ出して伸ばす)。中身は本文の幅に合わせる */
+.o-bar { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; margin: 0 calc(50% - 50vw); padding: 10px max(12px, calc(50vw - 360px)); background: var(--p-char, var(--ui-surface)); border-bottom: 1px solid var(--ui-line); transition: background 0.3s; }
+.o-bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 700; color: var(--p-char-ink, var(--ui-text-sub)); white-space: nowrap; min-width: 0; }
+.o-bar .a-input { min-height: 36px; font-size: 0.9rem; border-radius: var(--ui-radius-s); }
+.o-bar .o-bar-end { margin-left: auto; font-size: 0.8rem; color: var(--ui-text-sub); white-space: nowrap; }
+.o-bar select.o-bar-end { width: auto; }
+
+/* 日・月の見出し */
+.o-day { display: flex; align-items: center; gap: 8px; margin: 18px 0 8px; font-family: var(--ui-font-head); font-weight: var(--ui-weight-head); font-size: 0.95rem; color: var(--ui-text); }
+.o-day::after { content: ""; flex: 1; height: 1px; background: var(--ui-line); }
+.o-day .a-btn { order: 2; }
+
+/* タイムラインの 1 行: 時刻 | 絵文字 | 中身 */
+.o-log { background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); padding: 2px 12px; }
+.o-log-row { display: flex; align-items: flex-start; gap: 8px; padding: 9px 0; border-bottom: 1px solid var(--ui-line-soft); font-size: var(--ui-fs-m); }
+.o-log-row:last-child { border-bottom: none; }
+.o-log-row > .a-time { flex: 0 0 2.9em; padding-top: 2px; }
+.o-log-row > .o-log-icon { flex: 0 0 1.4em; text-align: center; }
+.o-log-row > .o-log-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.o-log-row .o-log-sub { font-size: var(--ui-fs-s); color: var(--ui-text-mute); }
+.o-log-row .o-log-text { white-space: pre-wrap; color: var(--ui-text); }
+.o-log-row .o-log-text.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.o-log-row img.o-log-photo { display: block; width: 96px; height: 96px; object-fit: cover; margin-top: 4px; border-radius: var(--ui-radius-s); border: 1px solid var(--ui-line); cursor: pointer; }
+/* ひとりの時間: 細い区切りとして出す。その幅に入る行は左に印 */
+.o-log-row.is-alone-run { color: var(--ui-text-mute); font-size: var(--ui-fs-s); padding: 5px 0; }
+.o-log-row.in-alone > .o-log-icon { position: relative; }
+.o-log-row.in-alone > .o-log-icon::before { content: ""; position: absolute; left: -6px; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--ui-accent-soft); }
+
+/* 日記の一覧の 1 件 */
+.o-diary-item { display: block; width: 100%; padding: 12px 14px; margin-bottom: 8px; text-align: left; font: inherit; color: inherit; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); cursor: pointer; }
+.o-diary-item:hover { border-color: var(--ui-accent); }
+.o-diary-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.o-diary-top b { font-family: var(--ui-font-head); font-size: 0.95rem; }
+.o-diary-head { margin-top: 2px; font-size: var(--ui-fs-m); color: var(--ui-text-sub); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.o-diary-head.is-none { color: var(--ui-text-mute); }
+.o-day-nav { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
+.o-day-nav-end { margin-left: auto; display: flex; gap: 6px; }
+.o-diary-summary { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.8; }
+
+.p-empty { padding: 40px 0; text-align: center; color: var(--ui-text-mute); font-size: var(--ui-fs-m); }
+.p-more { display: flex; justify-content: center; margin: 16px 0; }

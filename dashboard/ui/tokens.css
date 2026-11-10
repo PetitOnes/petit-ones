@@ -1,0 +1,135 @@
+/* ダッシュボードのデザイントークン(色・角丸・余白・文字)。
+   部品(atoms.css / molecules.css)はここの名前だけを使い、色や大きさを直書きしない。
+
+   土台は 2 つ:
+     既定            … いまのローカルの見た目(ぷちの色で染まる)
+     data-ui="foster" … 里親さん側(ぷち設定ページ・きせかえ)のクリーム + 丸ゴシック
+   アクセントは 2 つ:
+     既定                 … ぷちの色(--char。各ページの applyTheme が入れる)
+     data-accent="coral"  … 里親さん側のコーラル
+   どちらも <html> の属性で切り替える。 */
+
+:root {
+  /* ぷちの色(ページが applyTheme で上書きする。ここは未設定のときの値) */
+  --char: #cab8d9;
+  --char-dark: #7a5fa8;
+  --char-mid: #9b8ec4;
+  --char-bg: #f5f0fa;
+  --char-soft: #f0eaf8;
+  --char-border: #e0d8f0;
+  --char-btn-text: #fff;
+
+  /* 里親さん側の紙の色(ぷち設定ページ・きせかえ) */
+  --ui-cream: #FBF4E8;
+  --ui-paper: #FFFDF8;
+  --ui-cream-line: #E3D6C2;
+
+  /* 面 */
+  --ui-bg: var(--char-bg);
+  --ui-surface: #fff;
+  --ui-surface-soft: #fafafa;
+
+  /* 文字 */
+  --ui-text: #444;
+  --ui-text-sub: #666;
+  --ui-text-mute: #aaa;
+  --ui-heading: var(--char-mid);
+
+  /* 線 */
+  --ui-line: #e0e0e0;
+  --ui-line-soft: var(--char-soft);
+
+  /* アクセント(押せるもの・選ばれているもの) */
+  --ui-accent: var(--char);
+  --ui-accent-ink: var(--char-btn-text);
+  --ui-accent-soft: var(--char-soft);
+  --ui-accent-line: var(--char-border);
+  --ui-accent-text: var(--char-mid);
+
+  /* 意味のある色 */
+  --ui-danger: #c0392b;
+  --ui-danger-soft: #fbe2dc;
+  --ui-ok: #4caf50;
+  --ui-off: #ddd;
+
+  /* 角丸 */
+  --ui-radius-s: 8px;
+  --ui-radius-card: 12px;
+  --ui-radius-l: 16px;
+  --ui-radius-ctl: 20px;   /* ボタン・入力欄 */
+  --ui-radius-pill: 999px;
+
+  /* 余白 */
+  --ui-space-1: 4px;
+  --ui-space-2: 8px;
+  --ui-space-3: 12px;
+  --ui-space-4: 16px;
+  --ui-space-5: 24px;
+
+  /* 文字の大きさ */
+  --ui-fs-xs: 0.7rem;
+  --ui-fs-s: 0.8rem;
+  --ui-fs-m: 0.875rem;
+  --ui-fs-l: 1rem;
+  --ui-fs-xl: 1.2rem;
+  --ui-fs-ctl: 0.875rem;   /* ボタン・入力欄の文字 */
+
+  /* 押すものの高さ */
+  --ui-ctl-h: 40px;
+  --ui-ctl-h-s: 30px;
+
+  --ui-line-w: 1px;
+  --ui-shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
+  --ui-shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.15);
+
+  /* 里親さん側の丸ゴシック(Google Fonts。届かないときは端末の丸ゴシックへ) */
+  --ui-font-maru: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic UI", system-ui, sans-serif;
+  --ui-font-maru-head: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", sans-serif;
+  --ui-font: -apple-system, sans-serif;
+  --ui-font-head: var(--ui-font);
+  --ui-weight-head: 600;
+}
+
+/* 里親さん側の土台(ぷち設定ページ・きせかえの値) */
+:root[data-ui="foster"] {
+  --ui-bg: var(--ui-cream);
+  --ui-surface: #fff;
+  --ui-surface-soft: var(--ui-paper);
+
+  --ui-text: #3A322D;
+  --ui-text-sub: #6E625A;
+  --ui-text-mute: #9a8d82;   /* 里親さん側に無い段。文字色と線の間をこちらで決めた */
+  --ui-heading: var(--ui-accent-text);
+
+  --ui-line: var(--ui-cream-line);
+  --ui-line-soft: #eee1cf;
+
+  --ui-danger: #B84E33;
+  --ui-danger-soft: #fbe2dc;
+  --ui-off: #d9cdbf;
+
+  --ui-radius-s: 10px;
+  --ui-radius-card: 12px;
+  --ui-radius-l: 20px;
+  --ui-radius-ctl: 12px;
+
+  --ui-fs-ctl: 1rem;
+  --ui-ctl-h: 48px;
+  --ui-ctl-h-s: 36px;
+
+  --ui-line-w: 1.5px;
+  --ui-shadow-card: none;
+
+  --ui-font: var(--ui-font-maru);
+  --ui-font-head: var(--ui-font-maru-head);
+  --ui-weight-head: 700;
+}
+
+/* アクセントを里親さん側のコーラルに(土台がどちらでも使える) */
+:root[data-accent="coral"] {
+  --ui-accent: #E0674C;
+  --ui-accent-ink: #fff;
+  --ui-accent-soft: #F6D8CF;
+  --ui-accent-line: #eab8a8;
+  --ui-accent-text: #B84E33;
+}

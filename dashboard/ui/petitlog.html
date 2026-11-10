@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ぷちログ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📜 ぷちログ</h1></div>
+
+    <div class="o-bar">
+      <label><select class="a-input" id="charSelect"></select> のぷちログ</label>
+      <select class="a-input o-bar-end" id="monthSelect" title="月へ飛ぶ"></select>
+    </div>
+    <!-- 出すものを選ぶ。選び方はこの端末に覚える -->
+    <div class="m-pills" id="kinds"></div>
+
+    <div id="days"></div>
+    <div class="p-empty" id="empty" style="display:none">まだ何もありません</div>
+    <div class="p-more"><button class="a-btn a-btn--sub" id="moreBtn" style="display:none" onclick="loadMore()">もっと前を読む</button></div>
+  </div>
+
+  <script>
+    const { esc, dayLabel, charSelect, monthSelect, link } = PetitPage;
+    // 行の種類: 絵文字と、絞り込みの粒の名前
+    const KINDS = {
+      talk:   { icon: "💬", chip: "会話" },
+      memory: { icon: "🤍", chip: "記憶" },
+      note:   { icon: "📓", chip: "ノート" },
+      photo:  { icon: "🖼️", chip: "写真" },
+      voice:  { icon: "🎤", chip: "声" },
+      mail:   { icon: "✉️", chip: "メール" },
+      body:   { icon: "🤲", chip: "体" },
+      alone:  { icon: "🌙", chip: "ひとり" },
+    };
+    let charId = "", nextBefore = null, busy = false;
+    let off = new Set();   // 出さない種類
+    try { off = new Set(JSON.parse(localStorage.getItem("petitLogOff") || "[]")); } catch (e) {}
+
+    function renderKinds() {
+      document.getElementById("kinds").innerHTML = Object.entries(KINDS).map(([k, d]) =>
+        `<button class="a-pill${off.has(k) ? "" : " is-on"}" data-kind="${k}">${d.icon} ${d.chip}</button>`).join("");
+    }
+    document.getElementById("kinds").addEventListener("click", e => {
+      const b = e.target.closest("[data-kind]");
+      if (!b) return;
+      const k = b.dataset.kind;
+      if (off.has(k)) off.delete(k); else off.add(k);
+      try { localStorage.setItem("petitLogOff", JSON.stringify([...off])); } catch (e2) {}
+      renderKinds();
+      applyKinds();
+    });
+    // 選んでいない種類の行を隠す。行が 1 つも残らない日は、日ごと隠す
+    function applyKinds() {
+      document.querySelectorAll(".o-log-row").forEach(r => { r.style.display = off.has(r.dataset.kind) ? "none" : ""; });
+      document.querySelectorAll(".p-day").forEach(d => {
+        d.style.display = [...d.querySelectorAll(".o-log-row")].some(r => r.style.display !== "none") ? "" : "none";
+      });
+    }
+
+    function rowHtml(it) {
+      const d = KINDS[it.kind] || { icon: "・" };
+      const span = it.end && it.end !== it.time ? `${it.time}<br>${it.end}` : it.time;
+      let body = "";
+      if (it.kind === "talk") {
+        body = it.group ? `みんなで話した <span class="o-log-sub">(${esc(it.who)}から ${it.count} 回)</span>`
+                        : `${esc(it.who)}と話した <span class="o-log-sub">(${it.count} 回)</span>`;
+      } else if (it.kind === "memory") {
+        body = `<div class="o-log-text clamp">${esc(it.text)}${it.more ? "…" : ""}</div>`;
+      } else if (it.kind === "note") {
+        body = `ノート「${esc(it.name)}」を書いた`;
+      } else if (it.kind === "photo") {
+        body = `写真を残した${it.title ? `「${esc(it.title)}」` : ""}<img class="o-log-photo" loading="lazy" src="${esc(it.url)}" alt="">`;
+      } else if (it.kind === "voice") {
+        body = `ボイスメモを残した${it.title ? `「${esc(it.title)}」` : ""} <button class="a-btn a-btn--sub a-btn--s" data-play="${esc(it.url)}">▶ 聞く</button>`;
+      } else if (it.kind === "mail") {
+        body = `${esc(it.to)}へメールを書いた<div class="o-log-text clamp o-log-sub">${esc(it.text)}${it.more ? "…" : ""}</div>`;
+      } else if (it.kind === "body") {
+        body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
+      } else if (it.kind === "alone") {
+        body = "ひとりの時間";
+      }
+      const cls = "o-log-row" + (it.kind === "alone" ? " is-alone-run" : "") + (it.alone ? " in-alone" : "");
+      return `<div class="${cls}" data-kind="${it.kind}"><span class="a-time">${span}</span><span class="o-log-icon">${d.icon}</span><div class="o-log-body">${body}</div></div>`;
+    }
+
+    function dayHtml(day) {
+      const diary = day.has_diary ? `<a class="a-btn a-btn--sub a-btn--s" href="${esc(link("/diary", { char: charId, date: day.date }))}">📖 日記</a>` : "";
+      return `<section class="p-day"><h2 class="o-day">${esc(dayLabel(day.date, day.weekday))}${diary}</h2><div class="o-log">${day.items.map(rowHtml).join("")}</div></section>`;
+    }
+
+    async function loadMore() {
+      if (busy || !charId) return;
+      busy = true;
+      const btn = document.getElementById("moreBtn");
+      btn.disabled = true;
+      try {
+        const url = `/api/${charId}/petit_log?days=3` + (nextBefore ? `&before=${nextBefore}` : "");
+        const res = await (await fetch(url)).json();
+        const box = document.getElementById("days");
+        box.insertAdjacentHTML("beforeend", (res.days || []).map(dayHtml).join(""));
+        nextBefore = res.next_before;
+        btn.style.display = res.more ? "" : "none";
+        document.getElementById("empty").style.display = box.children.length ? "none" : "";
+        monthSelect(document.getElementById("monthSelect"), res.earliest, jump);
+        applyKinds();
+      } catch (e) {
+        document.getElementById("empty").style.display = "";
+        document.getElementById("empty").textContent = "読み込めませんでした";
+      } finally {
+        busy = false;
+        btn.disabled = false;
+      }
+    }
+
+    function start(id) {
+      charId = id;
+      document.getElementById("monthSelect").value = "";
+      jump(null);
+    }
+    // その月の終わりから読み直す(null なら今日から)
+    function jump(before) {
+      nextBefore = before;
+      document.getElementById("days").textContent = "";
+      document.getElementById("empty").textContent = "まだ何もありません";
+      window.scrollTo(0, 0);
+      loadMore();
+    }
+
+    // 行の中の操作: 記憶・メールは押すと全部見える、写真は大きく開く、声はその場で鳴らす
+    let audio = null;
+    document.getElementById("days").addEventListener("click", e => {
+      const clamp = e.target.closest(".o-log-text.clamp");
+      if (clamp) { clamp.classList.remove("clamp"); return; }
+      const photo = e.target.closest(".o-log-photo");
+      if (photo) { window.open(photo.src, "_blank"); return; }
+      const play = e.target.closest("[data-play]");
+      if (play) {
+        if (audio) audio.pause();
+        audio = new Audio(play.dataset.play);
+        audio.play();
+      }
+    });
+    // いちばん下に近づいたら続きを読む
+    window.addEventListener("scroll", () => {
+      if (document.getElementById("moreBtn").style.display !== "none" && window.innerHeight + window.scrollY > document.documentElement.scrollHeight - 400) loadMore();
+    }, { passive: true });
+
+    renderKinds();
+    charSelect(document.getElementById("charSelect"), start).then(start);
+  </script>
+</body>
+</html>

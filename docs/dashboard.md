@@ -117,3 +117,30 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 - `characters: ["puchiko"]` → puchiko のみ見える（タブ・チャット・記憶・日記すべて）
 - `admin` ロールは `characters` 設定を無視して常に全キャラ見える
 - グループチャットも許可キャラのみに送信される
+
+## 家の設定（`config/ui.json`）
+
+家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの ⚙️（「みんな」「だれか」のとき）から変えられる。
+
+| 項目 | 中身 |
+|---|---|
+| `topbar_color` | トップバーの色（`#rrggbb`）。無ければ、選んでいるぷちの色 |
+| `house_title` | トップバーの題。無ければ「`<COMPANION_NAME>`ち」 |
+| `tools` | 道具の列の並び。`[{"id": "album", "show": true}, …]` の順。`show: false` は「ほか」の中 |
+| `send_key` | 話しかける欄の送り方。`enter`（Enter で送信）か `ctrl_enter`（Ctrl+Enter で送信、Enter は改行） |
+
+## 部品とページ（`dashboard/ui/`）
+
+見た目の部品は `dashboard/ui/` に分けて置く。新しいページはここに 1 ページ 1 ファイルで足し、`main.py` には経路だけを書く。
+
+| ファイル | 中身 |
+|---|---|
+| `tokens.css` | 色・角丸・余白・文字（デザイントークン）。部品はこの名前だけを使う |
+| `atoms.css` / `molecules.css` | 原子（ボタン・入力欄・スイッチなど、`a-`）と分子（カード・設定の行など、`m-`） |
+| `pages.css` / `page.js` | `ui/` のページの枠組みと共通の下ごしらえ |
+| `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
+| `md.js` | markdown を HTML にしたあとの後始末 |
+| `petitlog.html` / `diary.html` | ぷちログ（1 日のタイムライン）と日記の一覧。データの組み立ては `dashboard/petit_log.py`（読むだけ） |
+| `styleguide.html` | 部品の見本（`/ui`） |
+
+Web フォント・markdown の変換・会話の画像化は、外の CDN（Google Fonts・jsDelivr）から部品を読む。届かないときは、端末のフォントと素の文字で出る。
