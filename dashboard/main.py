@@ -1831,6 +1831,7 @@ def api_relations(request: Request):
 # ---- 部品(トークン・原子・分子)の CSS と見本ページ。中身は dashboard/ui/ ----
 UI_DIR = Path(__file__).parent / "ui"
 _UI_CSS = ("tokens.css", "atoms.css", "molecules.css", "embed.css")
+_UI_JS = ("md.js",)
 
 
 @app.get("/ui", response_class=HTMLResponse)
@@ -1840,9 +1841,10 @@ def ui_styleguide_page():
 
 @app.get("/ui/{name}")
 def ui_css(name: str):
-    if name not in _UI_CSS:
+    if name not in _UI_CSS and name not in _UI_JS:
         return JSONResponse({"error": "not found"}, status_code=404)
-    return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type="text/css", headers={"Cache-Control": "no-cache"})
+    media_type = "text/css" if name in _UI_CSS else "text/javascript"
+    return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/terminal", response_class=HTMLResponse)
@@ -5614,6 +5616,7 @@ HTML = """<!DOCTYPE html>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>プチたち</title>
+  <script src="/ui/md.js"></script>
   <script async src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" onload="window._mdReady && window._mdReady()"></script>
   <style>
     :root {
@@ -6558,7 +6561,7 @@ HTML = """<!DOCTYPE html>
       renderer.link = (href, title, t) => okUrl(href)
         ? '<a href="' + esc(href) + '"' + (title ? ' title="' + esc(title) + '"' : "") + ' target="_blank" rel="noopener noreferrer">' + t + "</a>"
         : t;
-      try { return marked.parse(String(text), { renderer: renderer, breaks: true, gfm: true }); }
+      try { return fixCjkBold(marked.parse(String(text), { renderer: renderer, breaks: true, gfm: true })); }
       catch (e) { return null; }
     }
 
@@ -8342,7 +8345,8 @@ NOTES_HTML = """<!DOCTYPE html>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
   <title>📓 ノート</title>
-  <script async src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/ui/md.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" onload="window._mdReady && window._mdReady()"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
@@ -8609,9 +8613,14 @@ NOTES_HTML = """<!DOCTYPE html>
       const toolbar = isEditable() ? `<div class="edit-toolbar"><button onclick="startEdit()">✏️ 編集</button></div>` : '';
       const md = data.content.replace(/\\r\\n/g,'\\n').replace(/\\n{3,}/g, m=>'\\n\\n'+'&nbsp;\\n\\n'.repeat(m.length-2));
       if (typeof marked!=='undefined'&&!marked._breaksSet){marked.use({breaks:true});marked._breaksSet=true;}
-      const html = typeof marked!=='undefined' ? marked.parse(md) : md.split('\\n').join('<br>');
+      const html = typeof marked!=='undefined' ? fixCjkBold(marked.parse(md)) : md.split('\\n').join('<br>');
       content.innerHTML = toolbar + '<div class="md-body">' + html + '</div>';
     }
+
+    // markdown の部品があとから届いたら、いま開いているノートを整った形に作り直す(スマホで素の文字のままになっていた)
+    window._mdReady = () => {
+      if (currentNote && currentNoteContent != null && document.querySelector(".md-body")) showViewMode({content: currentNoteContent});
+    };
 
     function startEdit() {
       document.getElementById("mainContent").innerHTML = `
