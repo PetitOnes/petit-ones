@@ -1,0 +1,88 @@
+/* 原子: これ以上分けない部品。名前は a-。色・大きさは tokens.css の名前だけを使う。
+   状態は .is-on / .is-busy、または :disabled・aria-pressed。 */
+
+/* ボタン */
+.a-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: var(--ui-ctl-h); padding: 0 18px;
+  font: inherit; font-family: var(--ui-font); font-size: var(--ui-fs-ctl); line-height: 1.2; white-space: nowrap;
+  color: var(--ui-accent-ink); background: var(--ui-accent);
+  border: var(--ui-line-w) solid var(--ui-accent); border-radius: var(--ui-radius-ctl);
+  cursor: pointer; text-decoration: none; transition: opacity 0.15s, background 0.15s;
+}
+.a-btn:hover { opacity: 0.88; }
+.a-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.a-btn:focus-visible, .a-icon-btn:focus-visible, .a-pill:focus-visible { outline: 3px solid var(--ui-accent-soft); outline-offset: 2px; }
+/* 控えめ(枠だけ) */
+.a-btn--sub { color: var(--ui-accent-text); background: var(--ui-surface); border-color: var(--ui-accent-line); }
+.a-btn--sub:hover { opacity: 1; background: var(--ui-accent-soft); }
+/* 文字だけ */
+.a-btn--ghost { color: var(--ui-text-mute); background: none; border-color: transparent; padding: 0 8px; }
+/* 消す・止める */
+.a-btn--danger { color: #fff; background: var(--ui-danger); border-color: var(--ui-danger); }
+/* 足す(点線) */
+.a-btn--add { color: var(--ui-accent-text); background: none; border: var(--ui-line-w) dashed var(--ui-accent); }
+/* 小さい / 横いっぱい */
+.a-btn--s { min-height: var(--ui-ctl-h-s); padding: 0 12px; font-size: var(--ui-fs-s); }
+.a-btn--block { display: flex; width: 100%; font-size: var(--ui-fs-l); font-weight: var(--ui-weight-head); }
+
+/* 絵文字ひとつのボタン(📬 ⚙️ ✕) */
+.a-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: var(--ui-ctl-h); min-height: var(--ui-ctl-h); padding: 0;
+  font-size: var(--ui-fs-xl); line-height: 1; color: var(--ui-text-mute);
+  background: none; border: none; border-radius: var(--ui-radius-s); cursor: pointer;
+}
+.a-icon-btn:hover { background: var(--ui-accent-soft); }
+
+/* 入力欄(input / textarea / select) */
+.a-input {
+  width: 100%; min-width: 0; min-height: var(--ui-ctl-h); padding: 0 14px;
+  font: inherit; font-family: var(--ui-font); font-size: var(--ui-fs-ctl);
+  color: var(--ui-text); background: var(--ui-surface);
+  border: var(--ui-line-w) solid var(--ui-line); border-radius: var(--ui-radius-ctl); outline: none;
+}
+.a-input:focus { border-color: var(--ui-accent); box-shadow: 0 0 0 3px var(--ui-accent-soft); }
+.a-input::placeholder { color: var(--ui-text-mute); }
+textarea.a-input { padding: 10px 14px; line-height: 1.6; resize: vertical; border-radius: var(--ui-radius-card); }
+select.a-input { width: auto; padding: 0 10px; }
+.a-input--s { min-height: var(--ui-ctl-h-s); padding: 0 8px; font-size: var(--ui-fs-s); border-radius: var(--ui-radius-s); }
+
+/* 入・切のスイッチ: <label class="a-toggle"><input type="checkbox"><span></span></label> */
+.a-toggle { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+.a-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.a-toggle span { position: absolute; inset: 0; background: var(--ui-off); border-radius: var(--ui-radius-pill); cursor: pointer; transition: background 0.2s; }
+.a-toggle span::before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; background: #fff; border-radius: 50%; transition: transform 0.2s; }
+.a-toggle input:checked + span { background: var(--ui-accent); }
+.a-toggle input:checked + span::before { transform: translateX(20px); }
+.a-toggle input:focus-visible + span { outline: 3px solid var(--ui-accent-soft); outline-offset: 2px; }
+
+/* 選ぶ粒(タブ・絞り込み)。選ばれている = .is-on か aria-pressed="true" */
+.a-pill {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  min-height: var(--ui-ctl-h-s); padding: 0 14px;
+  font: inherit; font-family: var(--ui-font-head); font-size: var(--ui-fs-s); font-weight: var(--ui-weight-head); white-space: nowrap;
+  color: var(--ui-text-sub); background: var(--ui-surface);
+  border: var(--ui-line-w) solid var(--ui-line); border-radius: var(--ui-radius-pill); cursor: pointer; transition: all 0.2s;
+}
+.a-pill.is-on, .a-pill[aria-pressed="true"] { color: var(--ui-accent-ink); background: var(--ui-accent); border-color: var(--ui-accent); }
+
+/* 数や印の小さな札 */
+.a-badge { display: inline-block; padding: 2px 8px; font-size: var(--ui-fs-xs); font-weight: 600; line-height: 1.4; color: var(--ui-accent-ink); background: var(--ui-accent); border-radius: var(--ui-radius-pill); }
+.a-badge--soft { color: var(--ui-text-sub); background: var(--ui-accent-soft); }
+.a-badge--danger { color: #fff; background: var(--ui-danger); }
+
+/* 量のバー: <div class="a-bar"><i style="width:60%"></i></div> */
+.a-bar { height: 10px; overflow: hidden; background: var(--ui-accent-soft); border-radius: var(--ui-radius-pill); }
+.a-bar > i { display: block; height: 100%; background: var(--ui-accent); border-radius: var(--ui-radius-pill); transition: width 0.5s ease; }
+
+/* 色の点(ぷちの色・つながっている印) */
+.a-dot { display: inline-block; width: 10px; height: 10px; flex-shrink: 0; background: var(--ui-accent); border-radius: 50%; vertical-align: middle; }
+.a-dot--ok { background: var(--ui-ok); }
+.a-dot--off { background: var(--ui-off); }
+
+/* 文字 */
+.a-heading { font-family: var(--ui-font-head); font-size: var(--ui-fs-m); font-weight: var(--ui-weight-head); color: var(--ui-heading); letter-spacing: 0.05em; }
+.a-label { font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+.a-hint { font-size: var(--ui-fs-s); color: var(--ui-text-mute); line-height: 1.5; }
+.a-time { font-size: var(--ui-fs-xs); color: var(--ui-text-mute); font-variant-numeric: tabular-nums; }

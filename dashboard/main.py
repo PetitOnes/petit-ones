@@ -1803,6 +1803,23 @@ def api_relations(request: Request):
     return {"nodes": nodes, "edges": edges}
 
 
+# ---- 部品(トークン・原子・分子)の CSS と見本ページ。中身は dashboard/ui/ ----
+UI_DIR = Path(__file__).parent / "ui"
+_UI_CSS = ("tokens.css", "atoms.css", "molecules.css")
+
+
+@app.get("/ui", response_class=HTMLResponse)
+def ui_styleguide_page():
+    return HTMLResponse((UI_DIR / "styleguide.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/ui/{name}")
+def ui_css(name: str):
+    if name not in _UI_CSS:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type="text/css", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/terminal", response_class=HTMLResponse)
 def terminal_page():
     return HTMLResponse(TERMINAL_HTML)
