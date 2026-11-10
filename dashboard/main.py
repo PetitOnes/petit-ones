@@ -9086,6 +9086,16 @@ ALBUM_HTML = """<!DOCTYPE html>
     .bar label { display:flex; align-items:center; gap:4px; font-size:0.78rem; color:#aaa; white-space:nowrap; min-width:0; }
     .bar select { background:#2a2a3e; color:#eee; border:1px solid #555; border-radius:8px; padding:5px 6px; font:inherit; font-size:0.9rem; min-width:0; }
     .bar .count { margin-left:auto; font-size:0.8rem; color:#aaa; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    /* 上げる行は 1 行: 📁 | 題 | 送信(2026-11-10 ありさん) */
+    .upload-area { display:flex; align-items:center; gap:8px; padding:4px 12px 10px; text-align:left; }
+    .upload-area label.pick { flex:0 0 auto; padding:6px 10px; font-size:1.2rem; line-height:1; border:2px solid transparent; }
+    .upload-area label.pick.has-file { border-color:#667eea; }
+    .upload-area #titleInput { flex:1 1 0; min-width:0; width:auto; margin:0; }
+    .upload-area #uploadBtn { flex:0 0 auto; white-space:nowrap; }
+    /* まだ見ていない写真の印 */
+    .photo-card.unread::after { content:""; position:absolute; top:6px; right:6px; width:12px; height:12px; border-radius:50%;
+      background:#ff6b5e; box-shadow:0 0 0 2px #fff; pointer-events:none; }
+    .seen-all { background:none; border:1px solid #555; color:#aaa; border-radius:999px; padding:3px 10px; font:inherit; font-size:0.72rem; cursor:pointer; white-space:nowrap; }
     .back-link { display:block; text-align:center; color:#667eea; margin-top:8px;
       text-decoration:none; font-size:0.9rem; }
     .viewer-bar { text-align:center; padding:4px 12px 12px; font-size:0.85rem; color:#aaa; }
@@ -9113,23 +9123,14 @@ ALBUM_HTML = """<!DOCTYPE html>
 
   <div class="bar">
     <label>だれの <select id="personSelect"></select></label>
-    <label>見る人 <select id="viewerSelect" onchange="onViewerChange()">
-        <option value="puchiteya">ぷちてゃ</option>
-        <option value="puchiko">ぷちこ</option>
-        <option value="puchiru">ぷちる</option>
-        <option value="arisan" selected>ありさん</option>
-        <option value="kazahaya">かぜお</option>
-      </select></label>
+    <button class="seen-all" id="seenAllBtn" style="display:none" onclick="markAllSeen()">ぜんぶ見た</button>
     <span class="count" id="countLabel"></span>
   </div>
 
   <div class="upload-area" id="uploadArea" style="display:none">
+    <label class="pick" id="pickLabel" title="写真を選ぶ">📁<input type="file" id="fileInput" accept="image/*"></label>
     <input type="text" id="titleInput" placeholder="タイトル（例: お散歩）">
-    <label>
-      📁 写真を選ぶ
-      <input type="file" id="fileInput" accept="image/*">
-    </label>
-    <button id="uploadBtn" onclick="doUpload()">アップロード</button>
+    <button id="uploadBtn" onclick="doUpload()">送信</button>
   </div>
 
   <div class="grid" id="photoGrid"></div>
@@ -9150,16 +9151,10 @@ ALBUM_HTML = """<!DOCTYPE html>
       {id:"kazahaya",  label:"かぜお",   human:true},
     ];
     const PERSON_LABELS = Object.fromEntries(PERSONS.map(p => [p.id, p.label]));
-    let currentPerson = PERSONS[0].id;
-    let currentViewer = "arisan";
+    let currentPerson = "arisan";    // 開いたときは自分のアルバム(init でログイン中の人に合わせる)
+    let currentViewer = "arisan";    // 見ている人 = ログイン中の人
+    const unread = {};               // ぷちのアルバムごとの、まだ見ていない枚数
     let selectedFile = null;
-
-    function onViewerChange() {
-      currentViewer = document.getElementById("viewerSelect").value;
-      const isHuman = PERSONS.find(p=>p.id===currentViewer)?.human;
-      document.getElementById("uploadArea").style.display =
-        (isHuman && PERSONS.find(p=>p.id===currentPerson)?.human) ? "block" : "none";
-    }
 
     function buildTabs() {   // だれの分かはドロップダウンで選ぶ
       const sel = document.getElementById("personSelect");
@@ -9176,10 +9171,44 @@ ALBUM_HTML = """<!DOCTYPE html>
 
     function switchPerson(id) {
       currentPerson = id;
-      const isHuman = PERSONS.find(p=>p.id===id)?.human;
-      const viewerIsHuman = PERSONS.find(p=>p.id===currentViewer)?.human;
-      document.getElementById("uploadArea").style.display = (isHuman && viewerIsHuman) ? "block" : "none";
+      showUploadArea();
       loadPhotos();
+    }
+
+    function showUploadArea() {
+      const isHuman = PERSONS.find(p=>p.id===currentPerson)?.human;
+      document.getElementById("uploadArea").style.display = isHuman ? "flex" : "none";
+    }
+    // ぷちのアルバムに、まだ見ていない写真があれば名前の前に ● と枚数を出す
+    function showUnread() {
+      const sel = document.getElementById("personSelect");
+      [...sel.options].forEach(o => {
+        const n = unread[o.value] || 0;
+        o.textContent = (n ? "● " : "") + PERSON_LABELS[o.value] + (n ? ` (${n})` : "");
+      });
+      document.getElementById("seenAllBtn").style.display = (unread[currentPerson] || 0) ? "" : "none";
+    }
+    async function refreshUnread() {
+      await Promise.all(PERSONS.filter(p => !p.human).map(async p => {
+        try {
+          const photos = await fetch(`/api/album/${p.id}`).then(r => r.json());
+          unread[p.id] = photos.filter(x => !(x.read_by || []).includes(currentViewer)).length;
+        } catch (e) {}
+      }));
+      showUnread();
+    }
+    async function markAllSeen() {
+      const person = currentPerson;
+      const btn = document.getElementById("seenAllBtn");
+      btn.disabled = true;
+      try {
+        const photos = await fetch(`/api/album/${person}`).then(r => r.json());
+        for (const x of photos.filter(x => !(x.read_by || []).includes(currentViewer))) {
+          await fetch(`/api/album/${person}/${x.filename}/read?viewer=${currentViewer}`, {method:"POST"});
+        }
+      } finally { btn.disabled = false; }
+      await refreshUnread();
+      if (currentPerson === person) loadPhotos();
     }
 
     async function loadPhotos() {
@@ -9188,6 +9217,7 @@ ALBUM_HTML = """<!DOCTYPE html>
       grid.innerHTML = "";
       const res = await fetch(`/api/album/${currentPerson}`);
       const photos = await res.json();
+      document.getElementById("seenAllBtn").style.display = (unread[currentPerson] || 0) ? "" : "none";
       showCount(photos.length, PERSONS.find(p=>p.id===currentPerson)?.human ? __ALBUM_MAX_HUMAN__ : __ALBUM_MAX__, "枚");
       if (!photos.length) { empty.style.display="block"; return; }
       empty.style.display="none";
@@ -9201,6 +9231,7 @@ ALBUM_HTML = """<!DOCTYPE html>
           `<span class="read-dot">${PERSON_LABELS[v]||v}</span>`).join("");
         const lockIcon = p.locked ? "🔒" : "🔓";
         if (p.locked) card.classList.add("locked");
+        if (!PERSONS.find(x=>x.id===currentPerson)?.human && !(p.read_by||[]).includes(currentViewer)) card.classList.add("unread");
         card.innerHTML = `
           <img src="/api/album/${currentPerson}/${p.filename}" loading="lazy">
           <button class="del-btn" title="削除">✕</button>
@@ -9231,6 +9262,10 @@ ALBUM_HTML = """<!DOCTYPE html>
       // カードのread-byを更新
       const card = [...document.querySelectorAll(".photo-card")].find(c =>
         c.querySelector("img")?.src.endsWith(filename));
+      if (card && card.classList.contains("unread")) {
+        card.classList.remove("unread");
+        if (unread[personId]) { unread[personId]--; showUnread(); }
+      }
       if (card) {
         let rb = card.querySelector(".read-by");
         const already = rb && [...rb.querySelectorAll(".read-dot")].some(d => d.textContent === (PERSON_LABELS[currentViewer]||currentViewer));
@@ -9273,6 +9308,7 @@ ALBUM_HTML = """<!DOCTYPE html>
 
     document.getElementById("fileInput").addEventListener("change", e => {
       selectedFile = e.target.files[0] || null;
+      document.getElementById("pickLabel").classList.toggle("has-file", !!selectedFile);
     });
 
     async function doUpload() {
@@ -9290,25 +9326,25 @@ ALBUM_HTML = """<!DOCTYPE html>
           document.getElementById("titleInput").value = "";
           document.getElementById("fileInput").value = "";
           selectedFile = null;
+          document.getElementById("pickLabel").classList.remove("has-file");
           loadPhotos();
         } else { alert("エラー: " + JSON.stringify(j)); }
       } finally {
-        btn.disabled = false; btn.textContent = "アップロード";
+        btn.disabled = false; btn.textContent = "送信";
       }
     }
 
     async function init() {
-      // ログインユーザーをデフォルトviewerに
+      // 見ている人 = ログイン中の人。開いたときはその人のアルバム
       try {
         const me = await fetch("/api/me").then(r=>r.json());
-        const sel = document.getElementById("viewerSelect");
-        if (me.username && [...sel.options].some(o=>o.value===me.username)) {
-          sel.value = me.username;
-          currentViewer = me.username;
-        }
+        if (me.username && PERSONS.some(p => p.id === me.username)) currentViewer = me.username;
       } catch(e) {}
+      currentPerson = currentViewer;
       buildTabs();
+      showUploadArea();
       loadPhotos();
+      refreshUnread();
     }
     init();
   </script>
