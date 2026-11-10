@@ -5585,8 +5585,21 @@ HTML = """<!DOCTYPE html>
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
       /* 画面が広くても端から端まで(body は最大 900px なので、はみ出して伸ばす)。中身は本文の幅に合わせる */
       margin: -16px calc(50% - 50vw) 8px; padding: 10px calc(50vw - 50% - 4px) 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
-    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; font-family: var(--ui-font-maru-head); color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
-    .topbar-btns { display: flex; gap: 8px; flex-shrink: 0; }
+    .topbar .house-title { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; font-size: 1.05rem; font-weight: 700; font-family: var(--ui-font-maru-head); color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
+    .topbar-btns { display: flex; gap: 8px; flex-shrink: 0; margin-left: auto; }
+    /* ぷちを選ぶ(題の右。2026-11-10 ありさん): 押すと下に一覧が出る */
+    .char-pick { position: relative; flex-shrink: 0; margin-left: 6px; }
+    .char-pick-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 12px 0 14px; border: none; border-radius: 999px; background: rgba(255,255,255,0.4); color: var(--topbar-fg, var(--char-mid)); font: inherit; font-family: var(--ui-font-maru-head); font-size: 0.95rem; font-weight: 700; cursor: pointer; white-space: nowrap; }
+    .char-pick-btn .caret { font-size: 0.6rem; opacity: 0.8; }
+    .char-pick-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px rgba(255,255,255,0.7); }
+    .char-pick-dot.all { background: linear-gradient(135deg, #cab8d9, #fff262); }
+    .char-menu { position: absolute; left: 0; top: calc(100% + 8px); min-width: 190px; padding: 6px; background: #fff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 2px; z-index: 60; }
+    .char-opt { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; border: none; border-radius: 10px; background: none; color: #444; font: inherit; font-size: 1rem; font-weight: 700; text-align: left; cursor: pointer; white-space: nowrap; }
+    .char-opt:hover { background: #f5f2f0; }
+    .char-opt.active { background: #f5f2f0; }
+    .char-opt .name { flex: 1; }
+    .char-opt .m5-dot { width: 7px; height: 7px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+    .char-opt.sep { margin-top: 4px; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .char-tabs::-webkit-scrollbar { display: none; }
@@ -5731,13 +5744,16 @@ HTML = """<!DOCTYPE html>
   <div class="topbar">
     <span style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></span>
     <h1 class="house-title" id="houseTitle">ありさんち</h1>
+    <div class="char-pick" id="charPick">
+      <button class="char-pick-btn" id="charPickBtn" onclick="toggleCharMenu(event)" aria-haspopup="true" aria-expanded="false" title="ぷちを選ぶ"><span class="char-pick-dot all"></span><span>みんな</span><span class="caret">▼</span></button>
+      <div class="char-menu" id="charTabs" style="display:none"></div>
+    </div>
     <div class="topbar-btns">
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
     </div>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
-  <div class="char-tabs" id="charTabs"></div>
   <div class="tool-row" id="toolRow"></div>
   <!-- 更新時刻は一番下へ、「M5 接続済」はタブの緑丸で分かるので未接続のときだけ(2026-10-16 ありさん) -->
   <div style="display:flex;justify-content:flex-end;align-items:center;">
@@ -5932,7 +5948,7 @@ HTML = """<!DOCTYPE html>
     let DESIRE_LABELS = {};
     let DESIRE_COLORS = {};
 
-    let currentCharId = "puchiko";
+    let currentCharId = "group";   // 開いたときは「みんな」(2026-11-10 ありさん)
     let characters = [];
     const chatStates = {};
     let selectedCharIds = new Set();
@@ -6015,29 +6031,18 @@ HTML = """<!DOCTYPE html>
     async function loadCharacters() {
       const res = await fetch("/api/characters");
       characters = await res.json();
+      // トップバーの「ぷちを選ぶ」: みんな・ぷちたち・だれか(2026-11-10 ありさん)
       const tabs = document.getElementById("charTabs");
-      tabs.innerHTML = characters.map(c => {
-        const isActive = c.id === currentCharId;
-        const col = c.color || "#cab8d9";
-        const activeTxt = btnTextColor(col);
-        const inactiveTxt = readableText(col);
-        return `<button class="char-tab${isActive?" active":""}" data-char-id="${c.id}"
-          style="${isActive
-            ? `background:${col};border-color:${col};color:${activeTxt}`
-            : `border-color:${col};color:${inactiveTxt};background:white`}"
-          onclick="switchChar('${c.id}')">
-          <span class="m5-dot" style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#ccc;vertical-align:middle;margin-right:4px;"></span>${c.name||c.id}</button>`;
-      }).join("");
-      // 「選んで話す」「みんなで」タブを末尾に追加
-      const isSelect = currentCharId === "select";
-      const isGroup = currentCharId === "group";
-      // 「みんな」「だれか」の順、文字だけ(2026-10-16 ありさん)
-      tabs.innerHTML += `<button class="char-tab group-tab${isGroup?" active":""}"
-        style="${isGroup?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('group')">みんな</button>`;
-      tabs.innerHTML += `<button class="char-tab group-tab${isSelect?" active":""}"
-        style="${isSelect?"opacity:1":"opacity:0.8"}"
-        onclick="switchChar('select')">だれか</button>`;
+      const opt = (id, dot, name, extra) => `<button class="char-opt${id === currentCharId ? " active" : ""}${extra || ""}" data-char-id="${id}" onclick="switchChar('${id}')">${dot}<span class="name">${name}</span>${id === "group" || id === "select" ? "" : '<span class="m5-dot"></span>'}</button>`;
+      const allDot = '<span class="char-pick-dot all"></span>';
+      tabs.innerHTML = opt("group", allDot, "みんな")
+        + characters.map(c => opt(c.id, `<span class="char-pick-dot" style="background:${c.color || "#cab8d9"}"></span>`, c.name || c.id)).join("")
+        + opt("select", allDot, "だれか", " sep");
+      const curChar = characters.find(c => c.id === currentCharId);
+      const btn = document.getElementById("charPickBtn");
+      const label = curChar ? (curChar.name || curChar.id) : (currentCharId === "select" ? "だれか" : "みんな");
+      btn.innerHTML = (curChar ? `<span class="char-pick-dot" style="background:${curChar.color || "#cab8d9"}"></span>` : allDot)
+        + `<span>${label}</span><span class="caret">▼</span>`;
       // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
       const tools = document.getElementById("toolRow");
       tools.innerHTML = "";
@@ -6058,6 +6063,8 @@ HTML = """<!DOCTYPE html>
       more.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
       more.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
 
+      const isSelect = currentCharId === "select";
+      const isGroup = currentCharId === "group";
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
         applyTheme(cur.color || "#cab8d9");
@@ -6142,7 +6149,20 @@ HTML = """<!DOCTYPE html>
       const m = document.getElementById("moreTools");
       m.style.display = m.style.display === "none" ? "" : "none";
     }
+    function toggleCharMenu(ev) {
+      if (ev) ev.stopPropagation();
+      const m = document.getElementById("charTabs");
+      const open = m.style.display === "none";
+      m.style.display = open ? "" : "none";
+      document.getElementById("charPickBtn").setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    function closeCharMenu() {
+      document.getElementById("charTabs").style.display = "none";
+      document.getElementById("charPickBtn").setAttribute("aria-expanded", "false");
+    }
+    document.addEventListener("click", e => { if (!e.target.closest("#charPick")) closeCharMenu(); });
     function switchChar(id) {
+      closeCharMenu();
       const chatEl = document.getElementById("chat");
       chatStates[currentCharId] = chatEl.innerHTML;
       currentCharId = id;
@@ -6197,7 +6217,7 @@ HTML = """<!DOCTYPE html>
         const { desires, memories, m5_online, m5_sleeping } = await res.json();
 
         // M5オンライン状態をタブに反映
-        const tabs = document.querySelectorAll(".char-tab");
+        const tabs = document.querySelectorAll(".char-opt");
         tabs.forEach(tab => {
           if (tab.dataset.charId === currentCharId) {
             const dot = tab.querySelector(".m5-dot");
@@ -7111,9 +7131,7 @@ HTML = """<!DOCTYPE html>
 
     checkAuth();
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
-    loadCharacters();
-    update();
-    loadChatHistoryInto(currentCharId);
+    switchChar(currentCharId);   // 一覧・表示するまとまり・会話の読み込みをまとめて
     setInterval(update, 30000);
 
     // 会話リレーバナー
