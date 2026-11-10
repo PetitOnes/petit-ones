@@ -5604,7 +5604,12 @@ HTML = """<!DOCTYPE html>
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .char-tabs::-webkit-scrollbar { display: none; }
     .char-tabs .char-tab { flex-shrink: 0; white-space: nowrap; }
-    .tool-row { display: flex; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    /* 道具の列: 絵文字の下に名前。折り返さず横スクロール */
+    .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 2px; margin-bottom: 8px; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .tool-row::-webkit-scrollbar { display: none; }
+    .tool { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; padding: 4px 3px; border: none; background: none; color: #777; font: inherit; text-decoration: none; cursor: pointer; }
+    .tool-icon { font-size: 1.2rem; line-height: 1.2; opacity: 0.75; }
+    .tool-name { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
@@ -6044,24 +6049,25 @@ HTML = """<!DOCTYPE html>
       btn.innerHTML = (curChar ? `<span class="char-pick-dot" style="background:${curChar.color || "#cab8d9"}"></span>` : allDot)
         + `<span>${label}</span><span class="caret">▼</span>`;
       // 道具の列はトップバーの下の別の行(2026-10-16 ありさん)
-      const tools = document.getElementById("toolRow");
-      tools.innerHTML = "";
-      tools.innerHTML += `<button onclick="openMailCompose()" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="メールを書く">✉️</button>`;
-      tools.innerHTML += `<a href="/notes" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ノート">📓</a>`;
-      tools.innerHTML += `<a href="/kairanban" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="回覧板">📋</a>`;
-      tools.innerHTML += `<a href="/library" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ライブラリ">📚</a>`;
-      tools.innerHTML += `<a href="/notebook" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="交換ノート">📖</a>`;
-      tools.innerHTML += `<a href="/album" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="アルバム">🖼️</a>`;
-      tools.innerHTML += `<a href="/voice_memo" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ボイスメモ">🎤</a>`;
-      // あまり使わないもの(おかね・行動ログ・ターミナル・センサーモニター・ひみつ)は「…」を押したら出る(2026-10-16 ありさん)
-      tools.innerHTML += `<button onclick="toggleMoreTools()" id="moreToolsBtn" style="background:none;border:none;font-size:1.1rem;padding:4px 8px;opacity:0.5;cursor:pointer" title="ほかの道具">…</button>`;
-      tools.innerHTML += `<span id="moreTools" style="display:none"></span>`;
-      const more = document.getElementById("moreTools");
-      more.innerHTML += `<a href="/kankei" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ひみつ">🔒</a>`;
-      more.innerHTML += `<a href="/display" target="_blank" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="センサーモニター">📡</a>`;
-      more.innerHTML += `<a href="/terminal" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="ターミナル">🖥️</a>`;
-      more.innerHTML += `<a href="/stream-logs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="行動ログ">🔍</a>`;
-      more.innerHTML += `<a href="/costs" style="text-decoration:none;font-size:1.1rem;padding:4px 8px;opacity:0.5" title="コスト管理">💰</a>`;
+      // 道具は 絵文字 + 名前(2026-11-10 ありさん)。あまり使わないものは「ほか」を押したら出る
+      const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
+      const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
+      document.getElementById("toolRow").innerHTML =
+          tool("✉️", "メール", 'onclick="openMailCompose()"')
+        + tool("🖼️", "アルバム", 'href="/album"')
+        + tool("🎤", "ボイスメモ", 'href="/voice_memo"')
+        + tool("📓", "ノート", 'href="/notes"')
+        + tool("📖", "交換日記", 'href="/notebook"')
+        + tool("📋", "回覧板", 'href="/kairanban"')
+        + tool("📚", "ライブラリ", 'href="/library"')
+        + tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
+        + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">`
+        + tool("🔒", "ひみつ", 'href="/kankei"')
+        + tool("📡", "モニタ", 'href="/display" target="_blank"')
+        + tool("🖥️", "ターミナル", 'href="/terminal"')
+        + tool("🔍", "行動ログ", 'href="/stream-logs"')
+        + tool("💰", "おかね", 'href="/costs"')
+        + `</span>`;
 
       const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
@@ -6147,7 +6153,7 @@ HTML = """<!DOCTYPE html>
 
     function toggleMoreTools() {
       const m = document.getElementById("moreTools");
-      m.style.display = m.style.display === "none" ? "" : "none";
+      m.style.display = m.style.display === "none" ? "contents" : "none";
     }
     function toggleCharMenu(ev) {
       if (ev) ev.stopPropagation();
