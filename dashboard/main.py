@@ -5583,7 +5583,8 @@ HTML = """<!DOCTYPE html>
     /* キャラクター選択 */
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
-      margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
+      /* 画面が広くても端から端まで(body は最大 900px なので、はみ出して伸ばす)。中身は本文の幅に合わせる */
+      margin: -16px calc(50% - 50vw) 8px; padding: 10px calc(50vw - 50% - 4px) 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
     .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; font-family: var(--ui-font-maru-head); color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
     .topbar-btns { display: flex; gap: 8px; flex-shrink: 0; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
