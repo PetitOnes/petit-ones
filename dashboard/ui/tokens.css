@@ -77,6 +77,9 @@
   --ui-shadow-card: 0 1px 4px rgba(0, 0, 0, 0.06);
   --ui-shadow-pop: 0 4px 16px rgba(0, 0, 0, 0.15);
 
+  /* 里親さん側の丸ゴシック(Google Fonts。届かないときは端末の丸ゴシックへ) */
+  --ui-font-maru: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic UI", system-ui, sans-serif;
+  --ui-font-maru-head: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", sans-serif;
   --ui-font: -apple-system, sans-serif;
   --ui-font-head: var(--ui-font);
   --ui-weight-head: 600;
@@ -112,8 +115,8 @@
   --ui-line-w: 1.5px;
   --ui-shadow-card: none;
 
-  --ui-font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", "Yu Gothic UI", system-ui, sans-serif;
-  --ui-font-head: "Zen Maru Gothic", "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", sans-serif;
+  --ui-font: var(--ui-font-maru);
+  --ui-font-head: var(--ui-font-maru-head);
   --ui-weight-head: 700;
 }
 

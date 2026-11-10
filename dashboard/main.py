@@ -1874,10 +1874,13 @@ KAIRANBAN_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>回覧板</title>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <style>
-    body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; background: #f6f3fa; color: #333; margin: 0; padding: 16px; }
+    body { font-family: var(--ui-font-maru); background: #f6f3fa; color: #333; margin: 0; padding: 16px; }
     .wrap { max-width: 720px; margin: 0 auto; }
     h1 { font-size: 1.2rem; margin: 0 0 12px; }
     h1 a { text-decoration: none; color: #999; font-size: 0.9rem; margin-right: 8px; }
@@ -4670,10 +4673,13 @@ TERMINAL3_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>個別チャット</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; background: #0d1117; color: #e0e0e0; font-family: -apple-system, sans-serif; display: flex; flex-direction: column; }
+    html, body { height: 100%; background: #0d1117; color: #e0e0e0; font-family: var(--ui-font-maru); display: flex; flex-direction: column; }
     .topbar {
       display: flex; align-items: center; gap: 8px;
       background: #16213e; padding: 6px 14px;
@@ -5494,6 +5500,9 @@ HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>プチたち</title>
   <style>
     :root {
@@ -5506,14 +5515,16 @@ HTML = """<!DOCTYPE html>
       --char-btn-text: white;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
+    body { font-family: var(--ui-font-maru); background: var(--char-bg); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
     .gear-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #bbb; }
+    /* トップバーの絵文字の後ろに、薄い丸(2026-11-10 ありさん) */
+    .topbar .gear-btn { width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; border-radius: 50%; background: rgba(255,255,255,0.4); }
     .updated { font-size: 0.75rem; color: #aaa; margin-bottom: 16px; }
     section { background: white; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
-    h2 { font-size: 0.85rem; color: var(--char-mid); font-weight: 600; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    h2 { font-size: 0.85rem; color: var(--char-mid); font-weight: 700; font-family: var(--ui-font-maru-head); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
     /* 欲求は 1 行: 名前 | バー | %(2026-10-16 ありさん) */
     .desire { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
     .desire-label { display: contents; }
@@ -5573,8 +5584,8 @@ HTML = """<!DOCTYPE html>
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
       margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
-    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
-    .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
+    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; font-family: var(--ui-font-maru-head); color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
+    .topbar-btns { display: flex; gap: 8px; flex-shrink: 0; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .char-tabs::-webkit-scrollbar { display: none; }
@@ -7183,10 +7194,13 @@ TERMINAL_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>ターミナル</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; height: 100dvh; font-family: -apple-system, sans-serif; color: #e0e0e0; padding-bottom: env(safe-area-inset-bottom); }
+    body { background: #1a1a2e; display: flex; flex-direction: column; height: 100vh; height: 100dvh; font-family: var(--ui-font-maru); color: #e0e0e0; padding-bottom: env(safe-area-inset-bottom); }
 
     /* 上段：ナビ */
     .topbar {
@@ -7545,10 +7559,13 @@ KANKEI_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>秘密の相関図</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+    body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
     .top-bar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 16px 20px 0; }
     .top-bar h1 { font-size: 1.2rem; color: white; }
     .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
@@ -7949,11 +7966,14 @@ NOTES_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>📓 ノート</title>
   <script async src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
+    body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; }
     .top-bar { display: flex; align-items: center; gap: 16px; padding: 14px 20px 0; }
     .top-bar h1 { font-size: 1.2rem; color: white; }
     .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
@@ -8246,11 +8266,14 @@ LIBRARY_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>📚 ライブラリ</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100dvh; height: 100vh; overflow: hidden; }
-    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; flex-direction: column; }
+    body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; display: flex; flex-direction: column; }
     .top-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; flex-shrink: 0; }
     .top-bar h1 { font-size: 1.2rem; color: white; }
     .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
@@ -8512,10 +8535,13 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>📖 交換ノート</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100dvh; }
+    body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; min-height: 100dvh; }
     .top-bar { display: flex; align-items: center; gap: 16px; padding: 12px 20px; }
     .top-bar h1 { font-size: 1.2rem; color: white; }
     .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
@@ -8640,9 +8666,12 @@ ALBUM_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>🖼️ アルバム</title>
   <style>
-    body { margin:0; font-family:sans-serif; background:#1a1a2e; color:#eee; }
+    body { margin:0; font-family: var(--ui-font-maru); background:#1a1a2e; color:#eee; }
     h1 { text-align:center; padding:20px 0 8px; font-size:1.4rem; }
     .tabs { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; padding:0 12px 16px; }
     .tab-btn { padding:6px 16px; border-radius:20px; border:2px solid #555; background:transparent;
@@ -8908,9 +8937,12 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+  <link rel="stylesheet" href="/ui/tokens.css">
   <title>🎤 ボイスメモ</title>
   <style>
-    body { margin:0; font-family:sans-serif; background:#1a1a2e; color:#eee; }
+    body { margin:0; font-family: var(--ui-font-maru); background:#1a1a2e; color:#eee; }
     h1 { text-align:center; padding:20px 0 8px; font-size:1.4rem; }
     .tabs { display:flex; justify-content:center; flex-wrap:wrap; gap:8px; padding:0 12px 16px; }
     .tab-btn { padding:6px 16px; border-radius:20px; border:2px solid #555; background:transparent;
@@ -10346,10 +10378,13 @@ COSTS_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700;900&family=M+PLUS+Rounded+1c:wght@400;700&display=swap">
+<link rel="stylesheet" href="/ui/tokens.css">
 <title>コスト管理</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #0f0f13; color: #e8e0f0; min-height: 100vh; padding: 16px; }
+body { font-family: var(--ui-font-maru); background: #0f0f13; color: #e8e0f0; min-height: 100vh; padding: 16px; }
 h1 { font-size: 1.2rem; font-weight: 600; margin-bottom: 16px; opacity: 0.8; }
 h2 { font-size: 0.85rem; font-weight: 600; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
