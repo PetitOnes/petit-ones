@@ -5815,6 +5815,16 @@ HTML = """<!DOCTYPE html>
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
+    /* 会話を選んで画像にする: 選んでいるあいだは、選んでいない吹き出しを薄く、選んだものに枠 */
+    body.shot-mode #chat > .msg, body.shot-mode #chat > .msg-group { cursor: pointer; opacity: 0.5; transition: opacity 0.15s; }
+    body.shot-mode #chat > .shot-on { opacity: 1; outline: 3px solid var(--topbar-bg, var(--char)); outline-offset: 2px; }
+    body.shot-mode #chat > .msg.system, body.shot-mode #chat > .msg.thinking { pointer-events: none; }
+    .shot-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 46; display: flex; align-items: center; gap: 8px; padding: 10px max(12px, calc(50vw - 434px)) calc(10px + env(safe-area-inset-bottom)); background: var(--ui-paper); border-top: 1px solid var(--ui-cream-line); font-size: 0.9rem; color: #6E625A;
+      --ui-accent: var(--topbar-bg, var(--char)); --ui-accent-ink: var(--topbar-fg, #fff); --ui-accent-text: #8a5a4c; --ui-accent-line: var(--ui-cream-line); --ui-accent-soft: #f6ebe4; }
+    /* 画像にするときの台(画面の外で組む) */
+    .shot-stage { position: fixed; left: -10000px; top: 0; width: 390px; padding: 18px 16px 14px; background: var(--ui-cream); max-height: none; overflow: visible; }
+    .shot-stage .msg, .shot-stage .msg-group { opacity: 1; outline: none; }
+    .shot-foot { align-self: center; margin-top: 6px; font-size: 0.68rem; color: #b3a79c; letter-spacing: 0.04em; }
     /* メールボックスの「＋」(メールを書く) */
     .mail-new-btn { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%; background: var(--topbar-bg, var(--char)); color: var(--topbar-fg, var(--char-btn-text)); font-size: 1.3rem; font-weight: 700; line-height: 1; cursor: pointer; }
     /* 「起こす」ボタンは出さない(2026-11-10 ありさん)。JS が表示を切り替えるので、ここで止める */
@@ -6095,6 +6105,7 @@ HTML = """<!DOCTYPE html>
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
         <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
+      <button onclick="closePlusMenu(); startShotMode()">📸 会話を選んで画像にする</button>
       <hr class="plus-sep">
       <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
       <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
@@ -6120,6 +6131,31 @@ HTML = """<!DOCTYPE html>
             <div id="groupCharStatus"></div>
           </section>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 会話を選んで画像にする(2026-11-10 ありさん): 選んでいるあいだの下の帯と、できた画像の下見 -->
+  <div class="shot-bar" id="shotBar" style="display:none">
+    <span id="shotCount">吹き出しを押して選ぶ</span>
+    <span style="margin-left:auto;display:flex;gap:8px">
+      <button class="a-btn a-btn--sub a-btn--s" onclick="endShotMode()">やめる</button>
+      <button class="a-btn a-btn--s" id="shotMakeBtn" onclick="makeShot()" disabled>画像にする</button>
+    </span>
+  </div>
+  <div class="overlay" id="shotOverlay" onclick="closeIfOverlay(event,'shotOverlay')">
+    <div class="popup house-settings">
+      <div class="popup-header">
+        <span class="popup-title">できた画像</span>
+        <button class="popup-close" onclick="closePopup('shotOverlay')">✕</button>
+      </div>
+      <div class="popup-body" style="text-align:center">
+        <img id="shotImg" alt="会話の画像" style="max-width:100%;border:1px solid var(--ui-cream-line);border-radius:12px">
+        <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;flex-wrap:wrap">
+          <a class="a-btn" id="shotSave" download="kaiwa.png">保存する</a>
+          <button class="a-btn a-btn--sub" id="shotShare" style="display:none" onclick="shareShot()">共有する</button>
+        </div>
+        <p class="a-hint" style="margin-top:8px">スマホでは、画像を長押ししても保存できます。</p>
       </div>
     </div>
   </div>
@@ -6700,6 +6736,87 @@ HTML = """<!DOCTYPE html>
       const t = document.getElementById("dominant").textContent.trim();
       document.getElementById("charBarSum").textContent = t ? "いま: " + t : "";
     }).observe(document.getElementById("dominant"), {childList: true, characterData: true, subtree: true});
+    // ---- 会話を選んで画像にする(＋ → 📸)。吹き出しを押して選び、「画像にする」で 1 枚の PNG に ----
+    function startShotMode() {
+      if (_pane) showPane(null);
+      document.body.classList.add("shot-mode");
+      document.getElementById("chatDock").style.display = "none";
+      document.getElementById("shotBar").style.display = "";
+      updateShotCount();
+    }
+    function endShotMode() {
+      document.body.classList.remove("shot-mode");
+      document.querySelectorAll("#chat > .shot-on").forEach(e => e.classList.remove("shot-on"));
+      document.getElementById("shotBar").style.display = "none";
+      document.getElementById("chatDock").style.display = "";
+    }
+    function updateShotCount() {
+      const n = document.querySelectorAll("#chat > .shot-on").length;
+      document.getElementById("shotCount").textContent = n ? `${n} 件を選択` : "吹き出しを押して選ぶ";
+      document.getElementById("shotMakeBtn").disabled = !n;
+    }
+    // 選んでいるあいだは、吹き出しを押すと選ぶ/外す(写真を開く・リンクへ飛ぶなどはしない)
+    document.getElementById("chat").addEventListener("click", e => {
+      if (!document.body.classList.contains("shot-mode")) return;
+      const b = e.target.closest("#chat > .msg, #chat > .msg-group");
+      if (!b || b.classList.contains("system") || b.classList.contains("thinking")) return;
+      e.preventDefault(); e.stopPropagation();
+      b.classList.toggle("shot-on");
+      updateShotCount();
+    }, true);
+    function loadScript(src) {
+      return new Promise((ok, ng) => { const t = document.createElement("script"); t.src = src; t.onload = ok; t.onerror = ng; document.head.appendChild(t); });
+    }
+    let _shotBlob = null;
+    async function makeShot() {
+      const picked = [...document.querySelectorAll("#chat > .shot-on")];
+      if (!picked.length) return;
+      const btn = document.getElementById("shotMakeBtn");
+      btn.disabled = true; btn.textContent = "作っています…";
+      const stage = document.createElement("div");
+      stage.className = "chat-messages shot-stage";
+      try {
+        if (!window.html2canvas) await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+        // 最初に選んだ吹き出しの日付の札を頭に置き、選んだ順(画面の上から)に写しを並べる
+        let d = picked[0].previousElementSibling;
+        while (d && !d.classList.contains("msg-date")) d = d.previousElementSibling;
+        if (d) stage.appendChild(d.cloneNode(true));
+        for (const el of picked) {
+          const c = el.cloneNode(true);
+          c.classList.remove("shot-on");
+          stage.appendChild(c);
+        }
+        const foot = document.createElement("div");
+        foot.className = "shot-foot";
+        foot.textContent = document.getElementById("houseTitle").textContent;
+        stage.appendChild(foot);
+        document.body.appendChild(stage);
+        if (document.fonts && document.fonts.ready) await document.fonts.ready;
+        const canvas = await html2canvas(stage, {scale: 2, backgroundColor: getComputedStyle(stage).backgroundColor, useCORS: true, logging: false});
+        _shotBlob = await new Promise(ok => canvas.toBlob(ok, "image/png"));
+        const url = URL.createObjectURL(_shotBlob);
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+        document.getElementById("shotImg").src = url;
+        const save = document.getElementById("shotSave");
+        save.href = url; save.download = `kaiwa_${stamp}.png`;
+        const file = new File([_shotBlob], save.download, {type: "image/png"});
+        document.getElementById("shotShare").style.display = (navigator.canShare && navigator.canShare({files: [file]})) ? "" : "none";
+        endShotMode();
+        document.getElementById("shotOverlay").classList.add("open");
+      } catch (e) {
+        addMsg("画像を作れませんでした", "system");
+      } finally {
+        stage.remove();
+        btn.textContent = "画像にする";
+        updateShotCount();
+      }
+    }
+    async function shareShot() {
+      if (!_shotBlob) return;
+      const file = new File([_shotBlob], document.getElementById("shotSave").download, {type: "image/png"});
+      try { await navigator.share({files: [file]}); } catch (e) {}
+    }
+
     function openYousu() {
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
