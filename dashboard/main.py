@@ -6636,6 +6636,9 @@ HTML = """<!DOCTYPE html>
       document.getElementById("chatBody").style.display = name ? "none" : "";
       document.getElementById("chatDock").style.display = name ? "none" : "";
       document.getElementById("paneBack").style.display = name ? "" : "none";
+      // ぷちの帯(いま: …)は会話のときだけ(2026-11-10 ありさん)。ページを出しているあいだは隠す
+      toggleCharPanel(false);
+      document.getElementById("charBar").style.display = (!name && characters.some(c => c.id === currentCharId)) ? "" : "none";
       if (name) {
         const accent = (_uiSettings.topbar_color || "").replace("#", "");
         const top = Math.round(document.querySelector(".sticky-head").getBoundingClientRect().bottom);
