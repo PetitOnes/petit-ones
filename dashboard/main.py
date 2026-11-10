@@ -5930,7 +5930,7 @@ HTML = """<!DOCTYPE html>
   <!-- 会話は画面いっぱい(ページのスクロールがそのまま会話。2026-11-10 ありさん)。見出しは出さない -->
   <span style="display:none"><span id="chatTitle">話す</span><span id="chatToggle"></span><!-- 「最近した会話」は、画面で遡れるので出さない(JS が参照するので置いておく) --><button id="historyBtn"></button></span>
   <div class="date-float" id="dateFloat"></div>
-  <iframe id="paneFrame" class="pane-frame" title="アルバム・ボイスメモ"></iframe>
+  <iframe id="paneFrame" class="pane-frame" title="アルバム・ボイスメモ・ノート・交換日記"></iframe>
   <button id="paneBack" class="pane-back" style="display:none" onclick="showPane(null)">💬 会話にもどる</button>
   <div id="chatBody">
     <div class="chat-messages" id="chat"></div>
@@ -6234,8 +6234,8 @@ HTML = """<!DOCTYPE html>
         + tool("✉️", "メール", 'onclick="openMailCompose()"')
         + tool("🖼️", "アルバム", `onclick="showPane('album')"${_pane === "album" ? ' data-on="1"' : ""}`)
         + tool("🎤", "ボイスメモ", `onclick="showPane('voice')"${_pane === "voice" ? ' data-on="1"' : ""}`)
-        + tool("📓", "ノート", 'href="/notes"')
-        + tool("📖", "交換日記", 'href="/notebook"')
+        + tool("📓", "ノート", `onclick="showPane('notes')"${_pane === "notes" ? ' data-on="1"' : ""}`)
+        + tool("📖", "交換日記", `onclick="showPane('notebook')"${_pane === "notebook" ? ' data-on="1"' : ""}`)
         + tool("📋", "回覧板", 'href="/kairanban"')
         + tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
         + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">`
@@ -6430,10 +6430,10 @@ HTML = """<!DOCTYPE html>
       }
     }
 
-    // アルバム・ボイスメモは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
+    // アルバム・ボイスメモ・ノート・交換日記は別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -8353,6 +8353,12 @@ NOTES_HTML = """<!DOCTYPE html>
     .layout { display: flex; flex: 1; padding: 14px; gap: 14px; min-height: 0; overflow: hidden; }
     .sidebar { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 
+    /* だれのノートか・件数を 1 行に(2026-11-10 ありさん): タブをやめてドロップダウン */
+    .bar { display: flex; align-items: center; gap: 8px; }
+    .bar label { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #aaa; white-space: nowrap; min-width: 0; }
+    .bar select { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 8px; padding: 5px 6px; font: inherit; font-size: 0.9rem; min-width: 0; }
+    .bar .note-count { margin-left: auto; font-size: 0.8rem; color: #aaa; white-space: nowrap; }
+
     /* キャラタブ */
     .char-tabs { display: flex; gap: 4px; }
     .char-tab-btn { flex: 1; padding: 5px 0; border: 1px solid #0f3460; background: #16213e; color: #e0e0e0; border-radius: 8px; cursor: pointer; font-size: 0.82rem; }
@@ -8428,6 +8434,17 @@ NOTES_HTML = """<!DOCTYPE html>
       .sidebar { width: 100%; min-height: 0; max-height: 55vh; }
     }
   </style>
+  <link rel="stylesheet" href="/ui/embed.css">
+  <script>
+    // トップページの会話の場所に埋めて出すとき(?embed=1): 配色をそろえる(ui/embed.css)
+    (() => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("embed")) return;
+      document.documentElement.classList.add("embed");
+      const a = q.get("accent");
+      if (/^[0-9a-fA-F]{6}$/.test(a || "")) document.documentElement.style.setProperty("--embed-accent", "#" + a);
+    })();
+  </script>
 </head>
 <body>
   <div class="top-bar">
@@ -8436,7 +8453,10 @@ NOTES_HTML = """<!DOCTYPE html>
   </div>
   <div class="layout">
     <div class="sidebar">
-      <div class="char-tabs" id="charTabs"></div>
+      <div class="bar">
+        <label><select id="charSelect" onchange="switchChar(this.value)"></select> のノート</label>
+        <span class="note-count" id="noteCount"></span>
+      </div>
       <div class="toolbar">
         <input class="search-input" id="searchInput" placeholder="🔍 検索…" oninput="renderList()">
         <select class="sort-select" id="sortSelect" onchange="renderList()">
@@ -8446,7 +8466,6 @@ NOTES_HTML = """<!DOCTYPE html>
         </select>
       </div>
       <div class="folder-chips" id="folderChips"></div>
-      <div class="note-count" id="noteCount"></div>
       <div id="createArea"></div>
       <div class="note-list" id="noteList"></div>
     </div>
@@ -8545,16 +8564,21 @@ NOTES_HTML = """<!DOCTYPE html>
     }
 
     function renderCharTabs() {
-      document.getElementById("charTabs").innerHTML = chars.map(c =>
-        `<button class="char-tab-btn${c.id===currentChar?" active":""}" onclick="switchChar('${c.id}')">${c.name}</button>`
-      ).join("");
+      const sel = document.getElementById("charSelect");
+      sel.textContent = "";
+      chars.forEach(c => {
+        const o = document.createElement("option");
+        o.value = c.id; o.textContent = c.name; o.selected = c.id === currentChar;
+        sel.appendChild(o);
+      });
       document.getElementById("createArea").innerHTML = isEditable()
         ? '<button class="create-btn" onclick="createNote()">＋ 新規作成</button>' : "";
     }
 
     function switchChar(id) {
       currentChar = id; currentNote = null; currentNoteTitle = null; currentNoteContent = null;
-      history.replaceState(null,"","/notes?char="+id);
+      const q = new URLSearchParams(location.search); q.set("char", id);   // 埋めて出しているときの印(embed)は残す
+      history.replaceState(null, "", "/notes?" + q.toString());
       renderCharTabs(); loadNotes();
       document.getElementById("mainContent").innerHTML = '<div class="empty-state">ノートを選んでね</div>';
     }
@@ -8564,7 +8588,7 @@ NOTES_HTML = """<!DOCTYPE html>
       const charList = await charsRes.json(), me = await meRes.json();
       chars = charList.map(c => ({ id: c.id, name: c.name||c.id }));
       chars.push({ id: me.username, name: me.name, editable: true });
-      if (!currentChar) currentChar = chars[0].id;
+      if (!currentChar) currentChar = me.username || chars[0].id;   // 開いたときは自分のノート
       renderCharTabs(); loadNotes();
     }
 
@@ -8939,6 +8963,17 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     .author-arisan { color: #7ec8e3; }
     .empty-state { text-align: center; color: #666; padding: 40px 0; font-size: 0.95rem; }
   </style>
+  <link rel="stylesheet" href="/ui/embed.css">
+  <script>
+    // トップページの会話の場所に埋めて出すとき(?embed=1): 配色をそろえる(ui/embed.css)
+    (() => {
+      const q = new URLSearchParams(location.search);
+      if (!q.has("embed")) return;
+      document.documentElement.classList.add("embed");
+      const a = q.get("accent");
+      if (/^[0-9a-fA-F]{6}$/.test(a || "")) document.documentElement.style.setProperty("--embed-accent", "#" + a);
+    })();
+  </script>
 </head>
 <body>
   <div class="top-bar">

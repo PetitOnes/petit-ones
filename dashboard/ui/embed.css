@@ -26,3 +26,30 @@ html.embed .memo-time, html.embed .more-btn { color: #6E625A; }
 html.embed .memo-menu { background: #fff; box-shadow: 0 6px 24px rgba(0,0,0,0.18); }
 html.embed .memo-menu a, html.embed .memo-menu button { color: #3A322D; }
 html.embed .memo-menu .mi-del { color: #B84E33; }
+
+/* ---- ノート(/notes)・交換日記(/notebook) ---- */
+html.embed .top-bar { display: none; }
+html.embed .layout, html.embed .container { padding-bottom: 84px; }
+html.embed .container { padding-top: 14px; }
+html.embed .bar .note-count, html.embed .note-count { color: #6E625A; }
+html.embed .search-input, html.embed .sort-select, html.embed .title-input, html.embed .editor-area, html.embed .form-textarea { background: #fff; color: #3A322D; border: 1.5px solid var(--ui-cream-line); }
+html.embed .search-input::placeholder { color: #9a8d82; }
+html.embed .folder-chip { background: #fff; border-color: var(--ui-cream-line); color: #6E625A; }
+html.embed .folder-chip.active { background: var(--embed-accent, #E0674C); border-color: var(--embed-accent, #E0674C); color: #fff; }
+html.embed .note-item, html.embed .main-content, html.embed .form-box, html.embed .entry { background: #fff; border-color: var(--ui-cream-line); }
+html.embed .note-item:hover { background: var(--ui-paper); }
+html.embed .note-item.active { background: #fdeee9; border-color: var(--embed-accent, #E0674C); }
+html.embed .note-item .note-meta, html.embed .empty-state, html.embed .entry-date { color: #9a8d82; }
+html.embed .create-btn, html.embed .send-btn { background: var(--embed-accent, #E0674C); border-color: var(--embed-accent, #E0674C); color: #fff; }
+html.embed .edit-toolbar button { background: #f3e9d8; border-color: var(--ui-cream-line); color: #3A322D; }
+html.embed .md-body h1 { color: #3A322D; border-bottom-color: var(--ui-cream-line); }
+html.embed .md-body h2, html.embed .md-body h3 { color: #3A322D; }
+html.embed .md-body code, html.embed .md-body pre, html.embed .md-body th { background: #f6f1e8; }
+html.embed .md-body blockquote { border-left-color: var(--embed-accent, #E0674C); color: #6E625A; }
+html.embed .md-body a { color: #B84E33; }
+html.embed .md-body hr { border-top-color: var(--ui-cream-line); }
+html.embed .md-body th, html.embed .md-body td { border-color: var(--ui-cream-line); }
+html.embed .entry-content { color: #3A322D; }
+html.embed .author-label, html.embed .author-arisan { color: #B84E33; }
+html.embed .author-petitya { color: #8f7417; }
+html.embed .author-petiko { color: #7a5fa8; }
