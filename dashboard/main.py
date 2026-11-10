@@ -5573,7 +5573,7 @@ HTML = """<!DOCTYPE html>
     .char-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
     .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: 6px;
       margin: -16px -16px 8px; padding: 10px 12px 8px; background: var(--topbar-bg, var(--char-bg)); box-shadow: 0 1px 6px rgba(0,0,0,0.08); transition: background 0.4s; }
-    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--char-mid); letter-spacing: 0.02em; }
+    .topbar .house-title { flex: 1; margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--topbar-fg, var(--char-mid)); letter-spacing: 0.02em; }
     .topbar-btns { display: flex; gap: 2px; flex-shrink: 0; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -5971,6 +5971,8 @@ HTML = """<!DOCTYPE html>
       const r = document.documentElement;
       const c = _uiSettings.topbar_color;
       if (c) r.style.setProperty("--topbar-bg", c); else r.style.removeProperty("--topbar-bg");
+      // 色を決めたトップバーの題は白(とても明るい色のときだけ濃い色)。未設定ならぷちの色のまま
+      if (c) r.style.setProperty("--topbar-fg", brightness(c) < 190 ? "#fff" : darken(c, 0.55)); else r.style.removeProperty("--topbar-fg");
       const h = document.getElementById("houseTitle");
       if (h && _uiSettings.house_title) h.textContent = _uiSettings.house_title;
       const inp = document.getElementById("topbarColor");
