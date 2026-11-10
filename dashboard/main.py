@@ -4419,15 +4419,62 @@ def api_chat_media_file(username: str, filename: str):
     return Response(content=path.read_bytes(), media_type=mt)
 
 
+class ChatMedia(BaseModel):
+    file: str          # chat_media/<me>/ のファイル名
+    title: str = ""    # 写真の題(任意)
+
+
 class GroupChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
+    media: str | None = None                # 声(chat_media/<me>/ のファイル名)
+    medias: list[ChatMedia] | None = None   # 写真を何枚か(4 枚まで)
 
 
 class SelectChatRequest(BaseModel):
     message: str
     char_ids: list[str]
     client_msg_id: str | None = None
+    media: str | None = None
+    medias: list[ChatMedia] | None = None
+
+
+async def _prepare_chat_media(username: str, message: str, media: str | None, medias: list[ChatMedia] | None) -> dict:
+    """話すで送った写真/声を確かめて、記録用とぷちに渡す文をそろえる(ひとり・みんな・だれか共通)。
+    返すもの: media(1 つ目のファイル名か None)、medias(写真の並びか None)、shown(記録に残す文)、prompt(ぷちに渡す文)。
+    chat_media にあるものだけ受け付ける。写真は 4 枚まで"""
+    media_path = None
+    photos: list[tuple[Path, str]] = []   # (置き場所, 題)
+    for m in (medias or [])[:_CHAT_PHOTOS_MAX]:
+        cand = _chat_media_dir(username) / Path(m.file).name
+        if cand.exists() and _chat_media_kind(cand.name) == "photo":
+            photos.append((cand, m.title.strip()[:60]))
+    if photos:
+        media_path = photos[0][0]
+    elif media:
+        cand = _chat_media_dir(username) / Path(media).name
+        if cand.exists():
+            media_path = cand
+    kind = _chat_media_kind(media_path.name) if media_path else None
+    photo_word = "📷 写真" if len(photos) <= 1 else f"📷 写真 {len(photos)} 枚"
+    shown = message or (photo_word if kind == "photo" else "🎤 声" if kind == "audio" else "")
+    who = user_display_for(username)
+    prompt = message
+    if len(photos) > 1 or (photos and photos[0][1]):
+        lines = "\n".join(f"{i}. {pth}" + (f"(題: {t})" if t else "") for i, (pth, t) in enumerate(photos, 1))
+        prompt = (f"[{who}が写真を {len(photos)} 枚送りました]\n{lines}\n"
+                  f"まず Read で写真をぜんぶ見てから、見えたものに触れて返事してください。\n{message}").rstrip()
+    elif media_path and kind == "photo":
+        prompt = (f"[{who}が写真を送りました: {media_path}]\n"
+                  f"まず Read でこの写真を見てから、見えたものに触れて返事してください。\n{message}").rstrip()
+    elif media_path and kind == "audio":
+        transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
+        heard = f"聞こえた言葉: 「{transcript}」" if transcript else "(いま文字起こしができなかった。transcribe_audio で聞き直せる)"
+        prompt = (f"[{who}が声を送りました: {media_path}]\n{heard}\n"
+                  f"声で話しかけられたつもりで返事してください。\n{message}").rstrip()
+    return {"media": media_path.name if media_path else None,
+            "medias": [{"file": pth.name, "title": t} for pth, t in photos] or None,
+            "shown": shown, "prompt": prompt}
 
 
 # ---- スマホのバックグラウンド切断対策 ----
@@ -4445,7 +4492,16 @@ def _chat_jobs_gc() -> None:
 
 @app.get("/api/group/history")
 def api_group_history(limit: int = 200):
-    return load_group_log()[-max(1, min(limit, 5000)):]
+    log = load_group_log()[-max(1, min(limit, 5000)):]
+    for m in log:   # 写真/声つきの発言(2026-11-10): 送った人の chat_media を指す
+        who = m.get("media_user")
+        if who and m.get("media"):
+            m["media_url"] = f"/api/chat-media/{who}/{m['media']}"
+            m["media_kind"] = _chat_media_kind(m["media"])
+            if m.get("medias"):
+                m["medias"] = [{"url": f"/api/chat-media/{who}/{x['file']}", "kind": _chat_media_kind(x["file"]), "title": x.get("title", "")}
+                               for x in m["medias"] if x.get("file")]
+    return log
 
 
 @app.post("/api/group/chat")
@@ -4476,21 +4532,29 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     return {"responses": responses}
 
 
-async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, username: str, log_type: str):
+async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, username: str, log_type: str,
+                               media: str | None = None, medias: list[ChatMedia] | None = None):
     """キャラに順番に聞き、1人返ってくるたびに entry["messages"] に追記する。
     HTTPコネクションから切り離して実行するので、クライアントが切断しても処理は完走する。"""
     try:
         user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
         now = datetime.now(timezone.utc).isoformat()
-        append_group_log({"type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": message, "timestamp": now})
+        # 写真/声つき(2026-11-10): みんな・だれかでも送れる。声の文字起こしは 1 回だけ
+        prep = await _prepare_chat_media(username, message, media, medias)
+        user_entry = {"type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": prep["shown"], "timestamp": now}
+        if prep["media"]:
+            user_entry.update({"media": prep["media"], "media_user": username})
+        if prep["medias"]:
+            user_entry["medias"] = prep["medias"]
+        append_group_log(user_entry)
         responses = []
         for char in chars:
-            context = message
+            context = prep["prompt"]
             if responses:
                 prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-                context = f"{message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+                context = f"{prep['prompt']}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
             reply = await call_claude(char["id"], context, username=username)
-            append_chat(char["id"], "user", message, username, via="group")
+            append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
             append_chat(char["id"], char["id"], reply, username, via="group")
             r = {
                 "character_id": char["id"],
@@ -4506,7 +4570,8 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
         entry["ts"] = time.time()
 
 
-def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username: str, log_type: str) -> StreamingResponse:
+def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username: str, log_type: str,
+                    media: str | None = None, medias: list[ChatMedia] | None = None) -> StreamingResponse:
     """ジョブをバックグラウンドで走らせ、進捗をNDJSONで垂れ流す。
     同じ client_msg_id で再接続されたら、途中まで済んだ結果を最初から再生して続きを流す。"""
     _chat_jobs_gc()
@@ -4515,7 +4580,7 @@ def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username
         entry = {"messages": [], "done": False, "ts": time.time()}
         if key:
             _chat_jobs[key] = entry
-        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type))
+        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type, media, medias))
 
     async def tail():
         i = 0
@@ -4536,7 +4601,7 @@ async def api_group_chat_stream(req: GroupChatRequest, request: Request):
     username = _get_username(request) or "arisan"
     chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
     key = (username, "group", req.client_msg_id) if req.client_msg_id else None
-    return _stream_via_job(key, chars, req.message, username, "group")
+    return _stream_via_job(key, chars, req.message, username, "group", req.media, req.medias)
 
 
 @app.post("/api/select/chat/stream")
@@ -4546,7 +4611,7 @@ async def api_select_chat_stream(req: SelectChatRequest, request: Request):
     chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     key = (username, "select", req.client_msg_id) if req.client_msg_id else None
-    return _stream_via_job(key, chars, req.message, username, "select")
+    return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias)
 
 
 @app.post("/api/select/chat")
@@ -4978,11 +5043,6 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
     return {"responses": responses}
 
 
-class ChatMedia(BaseModel):
-    file: str          # chat_media/<me>/ のファイル名
-    title: str = ""    # 写真の題(任意)
-
-
 class ChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
@@ -5067,25 +5127,10 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
                 skip_user_append = True
         _chat_jobs[key] = {"state": "processing", "ts": time.time()}
 
-    # 写真/声つき(2026-10-16): chat_media にあるものだけ受け付ける
-    media_path = None
-    photos: list[tuple[Path, str]] = []   # 写真を何枚か(2026-11-10): (置き場所, 題)。4 枚まで
-    for m in (req.medias or [])[:_CHAT_PHOTOS_MAX]:
-        cand = _chat_media_dir(username) / Path(m.file).name
-        if cand.exists() and _chat_media_kind(cand.name) == "photo":
-            photos.append((cand, m.title.strip()[:60]))
-    if photos:
-        media_path = photos[0][0]
-    elif req.media:
-        cand = _chat_media_dir(username) / Path(req.media).name
-        if cand.exists():
-            media_path = cand
-    media_kind = _chat_media_kind(media_path.name) if media_path else None
+    # 写真/声つき(2026-10-16)。写真は 4 枚まで・題つき(2026-11-10)
+    prep = await _prepare_chat_media(username, req.message, req.media, req.medias)
     if not skip_user_append:
-        photo_word = "📷 写真" if len(photos) <= 1 else f"📷 写真 {len(photos)} 枚"
-        shown = req.message or (photo_word if media_kind == "photo" else "🎤 声" if media_kind == "audio" else "")
-        append_chat(character_id, "user", shown, username, media=media_path.name if media_path else None,
-                    medias=[{"file": pth.name, "title": t} for pth, t in photos] or None)
+        append_chat(character_id, "user", prep["shown"], username, media=prep["media"], medias=prep["medias"])
 
     # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
     born = False
@@ -5094,19 +5139,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
 
     # @opus / @sonnet でモデル指定
     chat_model = None
-    chat_message = req.message
-    if len(photos) > 1 or (photos and photos[0][1]):
-        lines = "\n".join(f"{i}. {pth}" + (f"(題: {t})" if t else "") for i, (pth, t) in enumerate(photos, 1))
-        chat_message = (f"[{user_display_for(username)}が写真を {len(photos)} 枚送りました]\n{lines}\n"
-                        f"まず Read で写真をぜんぶ見てから、見えたものに触れて返事してください。\n{req.message}").rstrip()
-    elif media_path and media_kind == "photo":
-        chat_message = (f"[{user_display_for(username)}が写真を送りました: {media_path}]\n"
-                        f"まず Read でこの写真を見てから、見えたものに触れて返事してください。\n{req.message}").rstrip()
-    elif media_path and media_kind == "audio":
-        transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
-        heard = f"聞こえた言葉: 「{transcript}」" if transcript else "(いま文字起こしができなかった。transcribe_audio で聞き直せる)"
-        chat_message = (f"[{user_display_for(username)}が声を送りました: {media_path}]\n{heard}\n"
-                        f"声で話しかけられたつもりで返事してください。\n{req.message}").rstrip()
+    chat_message = prep["prompt"]
     if req.message.startswith("@opus "):
         chat_model = "opus"
         chat_message = req.message[6:]
@@ -6647,9 +6680,6 @@ HTML = """<!DOCTYPE html>
       const btn = document.getElementById("send");
       const text = input.value.trim();
       if (!text && !_pendingMedia) return;
-      if (_pendingMedia && (currentCharId === "select" || currentCharId === "group")) {
-        addMsg("写真や声は、ひとりのぷちのタブから送ってね", "system"); return;
-      }
       input.value = "";
       refreshSend();
       btn.disabled = true;
@@ -6674,11 +6704,11 @@ HTML = """<!DOCTYPE html>
         if (charIds.length === 0) { btn.disabled = false; return; }
         const thinkNames = charIds.map(id => (characters.find(c=>c.id===id)||{}).name||id).join("と");
         const thinking = addMsg(`${thinkNames}に聞いてる…`, "thinking");
-        await streamWithRetry("/api/select/chat/stream", {message:text, char_ids:charIds, client_msg_id:msgId}, thinking);
+        await streamWithRetry("/api/select/chat/stream", {message:text, char_ids:charIds, client_msg_id:msgId, media:mediaName, medias}, thinking);
         btn.disabled = false; input.focus();
       } else if (currentCharId === "group") {
         const thinking = addMsg("みんなに聞いてる…", "thinking");
-        await streamWithRetry("/api/group/chat/stream", {message:text, client_msg_id:msgId}, thinking);
+        await streamWithRetry("/api/group/chat/stream", {message:text, client_msg_id:msgId, media:mediaName, medias}, thinking);
         btn.disabled = false; input.focus();
       } else {
         const thinking = addMsg("考え中…", "thinking");
