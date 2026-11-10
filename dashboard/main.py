@@ -5599,8 +5599,7 @@ HTML = """<!DOCTYPE html>
     .mail-action-btn.active { opacity: 1; }
     .dominant { display: inline-block; background: var(--char); color: var(--char-btn-text); border-radius: 20px; padding: 4px 12px; font-size: 0.8rem; margin-bottom: 12px; }
     .empty { color: #bbb; font-size: 0.875rem; }
-    section.chat-flat { background: none; box-shadow: none; padding: 0 2px; }
-    .chat-messages { max-height: 56vh; overflow-y: auto; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .chat-messages {  margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
     .chat-messages { overflow-x: hidden; max-width: 100%; }
     /* 話すのカードが横に広がらないように(スマホ Safari 対策 2026-10-16): 中身はカード幅まで、はみ出しは横だけ切る */
     #chatBody > * { max-width: 100%; box-sizing: border-box; }
@@ -5649,6 +5648,16 @@ HTML = """<!DOCTYPE html>
     /* 話しかける欄は画面の下に固定。中身は本文の幅(最大 900px)に合わせる */
     .chat-dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; padding: 8px max(12px, calc(50vw - 434px)) calc(8px + env(safe-area-inset-bottom)); background: var(--ui-paper); border-top: 1px solid var(--ui-cream-line); }
     body { padding-bottom: calc(76px + env(safe-area-inset-bottom)); }
+    /* 頭(トップバー + 道具の列)はまとめて上に固定。端から端まで、中身は本文の幅に合わせる */
+    .sticky-head { position: sticky; top: 0; z-index: 50; margin: -16px calc(50% - 50vw) 12px; }
+    .sticky-head .topbar { position: static; margin: 0; padding: 10px max(12px, calc(50vw - 438px)) 8px; }
+    .sticky-head .tool-row { margin: 0; padding: 8px max(16px, calc(50vw - 434px)) 6px; }
+    .chat-input .plus-menu button { margin: 0; }
+    .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
+    .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
+    .yousu-body { background: var(--ui-cream); }
+    /* 吹き出しの枠は濃いクリーム色(2026-11-10 ありさん) */
+    .msg.char, .msg.user, .msg.thinking, .msg-group { border: 1px solid var(--ui-cream-line); }
     /* 📷🎤 は .chat-input button の色・余白を継がない(それで横にはみ出していた 2026-10-16) */
     .chat-input .chat-icon-btn { border: none; background: none; font-size: 1.25rem; cursor: pointer; padding: 4px 2px; min-height: 0; opacity: 0.7; color: inherit; }
     .chat-input .chat-icon-btn.recording { opacity: 1; animation: pulse 1s infinite; }
@@ -5694,8 +5703,6 @@ HTML = """<!DOCTYPE html>
       .sub-btn { font-size: 0.9rem; padding: 10px 18px; min-height: 40px; }
       .setting-label { font-size: 1rem; }
       .popup-title { font-size: 1rem; }
-      .chat-messages { max-height: 52vh; }
-      section.chat-flat { padding: 0 2px; }
       /* スマホのスクロールを減らす(2026-10-16): 余白を詰める */
       .desire .bar-bg { height: 8px; }
       section { padding: 12px 14px; margin-bottom: 10px; }
@@ -5777,6 +5784,7 @@ HTML = """<!DOCTYPE html>
     <button onclick="cancelRelay()" style="background:#fff;color:#c0392b;border:none;border-radius:8px;padding:4px 14px;cursor:pointer;font-weight:bold;">🛑 止める</button>
   </div>
   <!-- トップバー(2026-10-16 ありさん): 名前(● ぷちこ)は出さず、タブ 1 行(横スクロール)+ 📬⚙️ を上に貼り付ける。h1 は JS が参照するので残す -->
+  <div class="sticky-head">
   <div class="topbar">
     <span style="display:none"><span class="char-dot" id="charDot"></span><span id="pageTitle">プチたち</span></span>
     <h1 class="house-title" id="houseTitle">ありさんち</h1>
@@ -5791,75 +5799,19 @@ HTML = """<!DOCTYPE html>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
   <div class="tool-row" id="toolRow"></div>
-  <!-- 更新時刻は一番下へ、「M5 接続済」はタブの緑丸で分かるので未接続のときだけ(2026-10-16 ありさん) -->
-  <div style="display:flex;justify-content:flex-end;align-items:center;">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <div id="m5status"></div>
-      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
-      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
-    </div>
+  </div><!-- /sticky-head -->
+
+  <!-- 会話は画面いっぱい(ページのスクロールがそのまま会話。2026-11-10 ありさん)。見出しは出さない -->
+  <span style="display:none"><span id="chatTitle">話す</span><span id="chatToggle"></span><!-- 「最近した会話」は、画面で遡れるので出さない(JS が参照するので置いておく) --><button id="historyBtn"></button></span>
+  <div id="chatBody">
+    <div class="chat-messages" id="chat"></div>
   </div>
 
-  <!-- ぷちたちの状態(2026-11-10 ありさん): いつも道具の列の下に。閉じておき、開いたそのときに体へ確かめにいく -->
-  <div id="groupStatusPanel">
-    <section style="padding-top:12px;padding-bottom:12px">
-      <h2 style="margin:0;cursor:pointer;user-select:none" onclick="toggleGroupStatus()">ぷちたちの状態 <span id="groupStatusToggle">▶</span></h2>
-      <div id="groupCharStatus" style="display:none;margin-top:8px"></div>
-    </section>
-  </div>
 
-  <div class="two-col" id="twoColLayout">
-    <div class="main-col">
-      <section id="desiresSection">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-          <h2 style="margin:0">欲求</h2>
-          <div id="dominant" title="いちばん強い欲求"></div>
-        </div>
-        <div id="desires"></div>
-      </section>
-
-
-      <!-- 会話はカードに入れず、背景にそのまま出す。畳まない(2026-11-10 ありさん) -->
-      <section class="chat-flat">
-        <h2><span id="chatTitle">話す</span><span id="chatToggle" style="display:none"></span></h2>
-        <div id="chatBody">
-        <div id="selectToggles"></div>
-        <div class="chat-messages" id="chat"></div>
-        <div>
-          <button class="sub-btn" onclick="openHistory()" id="historyBtn">最近した会話</button>
-          <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
-          <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
-          <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
-          <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
-        </div>
-        </div><!-- /chatBody -->
-      </section>
-
-      <section id="memoriesSection">
-        <h2 style="cursor:pointer;user-select:none" onclick="toggleMemories()">今日の記憶 <span id="memoriesCount"></span> <span id="memoriesToggle">▼</span></h2>
-        <div id="memories" style="max-height:400px;overflow-y:auto"></div>
-      </section>
-    </div>
-
-    <div class="diary-col" id="diaryCol">
-      <div class="diary-panel">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <h3 style="margin:0">📖 日記</h3>
-          <button class="diary-nav-btn" id="diaryDetailBtn" onclick="toggleDiaryDetail()">詳細</button>
-        </div>
-        <div class="diary-nav">
-          <button class="diary-nav-btn" id="diaryPrev" onclick="diaryNav(-1)">◀</button>
-          <span class="diary-date-label" id="diaryDateLabel">—</span>
-          <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
-        </div>
-        <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
-        <div id="diaryContent"><div class="empty">読み込み中...</div></div>
-      </div>
-    </div>
-  </div>
 
   <!-- 話しかける欄は画面の下に固定(2026-11-10 ありさん) -->
   <div class="chat-dock" id="chatDock">
+    <div id="selectToggles"></div>
     <div id="mediaPreview" style="display:none;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:wrap;">
       <img id="mediaPreviewImg" style="display:none;height:56px;border-radius:8px;" alt="">
       <span id="mediaPreviewAudio" style="display:none;font-size:0.85rem;color:#666;"></span>
@@ -5874,9 +5826,68 @@ HTML = """<!DOCTYPE html>
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
         <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
+      <hr class="plus-sep">
+      <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
+      <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
+      <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
+      <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
       </div>
       <input type="text" id="input" placeholder="話しかける..." />
       <button id="send">送信</button>
+    </div>
+  </div>
+
+  <!-- ようす(2026-11-10): 体につながっているか・欲求・今日の記憶・日記。道具の列の「ようす」から開く -->
+  <div class="overlay" id="yousuOverlay" onclick="closeIfOverlay(event,'yousuOverlay')">
+    <div class="popup">
+      <div class="popup-header">
+        <span class="popup-title">ようす</span>
+        <button class="popup-close" onclick="closePopup('yousuOverlay')">✕</button>
+      </div>
+      <div class="popup-body yousu-body">
+  <div style="display:flex;justify-content:flex-end;align-items:center;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div id="m5status"></div>
+      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
+      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
+    </div>
+  </div>
+        <div id="groupStatusPanel">
+          <section>
+            <h2>ぷちたちの状態</h2>
+            <div id="groupCharStatus"></div>
+          </section>
+        </div>
+        <div id="twoColLayout">
+      <section id="desiresSection">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+          <h2 style="margin:0">欲求</h2>
+          <div id="dominant" title="いちばん強い欲求"></div>
+        </div>
+        <div id="desires"></div>
+      </section>
+      <section id="memoriesSection">
+        <h2 style="cursor:pointer;user-select:none" onclick="toggleMemories()">今日の記憶 <span id="memoriesCount"></span> <span id="memoriesToggle">▼</span></h2>
+        <div id="memories" style="max-height:400px;overflow-y:auto"></div>
+      </section>
+          <div id="diaryCol">
+      <div class="diary-panel" style="position:static;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <h3 style="margin:0">📖 日記</h3>
+          <button class="diary-nav-btn" id="diaryDetailBtn" onclick="toggleDiaryDetail()">詳細</button>
+        </div>
+        <div class="diary-nav">
+          <button class="diary-nav-btn" id="diaryPrev" onclick="diaryNav(-1)">◀</button>
+          <span class="diary-date-label" id="diaryDateLabel">—</span>
+          <button class="diary-nav-btn" id="diaryNext" onclick="diaryNav(+1)">▶</button>
+        </div>
+        <div id="diaryTodayBar" style="display:none;margin-bottom:6px"><button class="diary-nav-btn" style="font-size:0.7rem;width:100%" onclick="diaryGoToday()">↩ 今日に戻る</button></div>
+        <div id="diaryContent"><div class="empty">読み込み中...</div></div>
+      </div>
+          </div>
+        </div>
+        <div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
+      </div>
     </div>
   </div>
 
@@ -6090,7 +6101,8 @@ HTML = """<!DOCTYPE html>
       const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
       const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
       document.getElementById("toolRow").innerHTML =
-          tool("✉️", "メール", 'onclick="openMailCompose()"')
+          tool("🌱", "ようす", 'onclick="openYousu()"')
+        + tool("✉️", "メール", 'onclick="openMailCompose()"')
         + tool("🖼️", "アルバム", 'href="/album"')
         + tool("🎤", "ボイスメモ", 'href="/voice_memo"')
         + tool("📓", "ノート", 'href="/notes"')
@@ -6143,7 +6155,7 @@ HTML = """<!DOCTYPE html>
     }
 
     // LINE みたいに、タブを開いたら過去の会話を吹き出しで並べる(2026-10-16 ありさん)
-    const CHAT_HISTORY_SHOW = 60;
+    const CHAT_HISTORY_SHOW = 200;   // 画面で遡れる数(「最近した会話」をやめた分、多めに)
     function _dateLabel(ts) {
       const d = new Date(ts);
       if (isNaN(d)) return "";
@@ -6228,12 +6240,9 @@ HTML = """<!DOCTYPE html>
       }
     }
 
-    function toggleGroupStatus() {
-      const body = document.getElementById("groupCharStatus");
-      const open = body.style.display === "none";
-      body.style.display = open ? "" : "none";
-      document.getElementById("groupStatusToggle").textContent = open ? "▼" : "▶";
-      if (open) updateGroupStatus();   // 開いたそのときに確かめる
+    function openYousu() {
+      document.getElementById("yousuOverlay").classList.add("open");
+      updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
     }
     async function updateGroupStatus() {
       const panel = document.getElementById("groupCharStatus");
@@ -6339,7 +6348,7 @@ HTML = """<!DOCTYPE html>
         textEl.textContent = text;
         div.appendChild(textEl);
         chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
+        chatToBottom();
         return div;
       }
       const div = document.createElement("div");
@@ -6358,7 +6367,7 @@ HTML = """<!DOCTYPE html>
         }
       }
       chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
+      chatToBottom();
       return div;
     }
 
@@ -6495,7 +6504,7 @@ HTML = """<!DOCTYPE html>
               notice.style.cssText = "text-align:center;padding:16px;margin:12px 0;background:linear-gradient(135deg,#e0f7fa,#b2ebf2);border-radius:12px;font-size:0.95rem;color:#00796b;";
               notice.textContent = "ぷちるが生まれました。心臓が動き始めます。";
               document.getElementById("chat").appendChild(notice);
-              document.getElementById("chat").scrollTop = document.getElementById("chat").scrollHeight;
+              chatToBottom();
             }
             update();
             break;
@@ -6551,7 +6560,7 @@ HTML = """<!DOCTYPE html>
           addMsg(r.reply, "group", r.color, r.name);
           thinking.textContent = "つぎのこが考えてる…";
           chatEl.appendChild(thinking);
-          chatEl.scrollTop = chatEl.scrollHeight;
+          chatToBottom();
         }
       }
       thinking.remove();
@@ -6845,9 +6854,11 @@ HTML = """<!DOCTYPE html>
     }
 
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
+    // 会話はページのスクロールそのもの。いちばん下(最新)へ
+    function chatToBottom() { window.scrollTo(0, document.documentElement.scrollHeight); }
     function scrollChatToBottom() {
       const chat = document.getElementById("chat");
-      requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; });
+      requestAnimationFrame(() => { chatToBottom(); });
     }
     // 話す欄を畳む(2026-10-16 ありさん)。状態はこの端末に覚える
     function toggleChat(force) {
@@ -7250,7 +7261,6 @@ HTML = """<!DOCTYPE html>
       if (e.target === document.getElementById("mailModal")) closeMailModal();
     });
   </script>
-<div class="updated" id="updated" style="text-align:center;margin:8px 0 16px">読み込み中...</div>
 </body>
 </html>
 """
