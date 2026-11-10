@@ -5708,7 +5708,7 @@ HTML = """<!DOCTYPE html>
     .msg .chat-photos.one { grid-template-columns: minmax(0, 220px); }
     .msg .chat-photos figure { margin: 0; min-width: 0; }
     .msg .chat-photos img.chat-photo { width: 100%; max-width: none; max-height: none; aspect-ratio: 1; object-fit: cover; margin-top: 0; }
-    .msg .chat-photos.one img.chat-photo { aspect-ratio: auto; max-height: 220px; object-fit: contain; }
+    .msg .chat-photos.one img.chat-photo { aspect-ratio: auto; width: auto; max-width: 100%; max-height: 220px; }
     .msg .chat-photos figcaption { font-size: 0.72rem; line-height: 1.3; margin-top: 2px; opacity: 0.9; overflow-wrap: anywhere; }
     /* 送る前の下見: 写真ごとに ✕ と題の欄 */
     .photo-picks { display: flex; gap: 8px; flex: 1 1 100%; overflow-x: auto; padding-bottom: 2px; }
