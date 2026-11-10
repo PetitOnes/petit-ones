@@ -5757,7 +5757,7 @@ HTML = """<!DOCTYPE html>
     .char-bar .char-pick-dot { box-shadow: none; }
     .char-bar-sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--ui-font-maru); font-weight: 400; font-size: 0.8rem; color: #9a8d82; }
     .char-bar .caret { font-size: 0.6rem; opacity: 0.7; }
-    .char-panel { max-height: 62vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px max(16px, calc(50vw - 434px)) 4px; background: var(--ui-cream); border-bottom: 1px solid var(--ui-cream-line); box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
+    .char-panel { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px max(16px, calc(50vw - 434px)) calc(16px + env(safe-area-inset-bottom)); background: var(--ui-cream); border-bottom: 1px solid var(--ui-cream-line); box-shadow: 0 8px 16px rgba(0,0,0,0.08); }
     /* 家の設定: 押せるものの色はトップバーの色に */
     .house-settings { --ui-accent: var(--topbar-bg, var(--char)); --ui-accent-ink: var(--topbar-fg, #fff); --ui-accent-text: #8a5a4c; --ui-accent-line: var(--ui-cream-line); --ui-accent-soft: #f6ebe4; --ui-heading: #8a7f78; }
     .tool-set-row { padding: 4px 0; }
@@ -6586,6 +6586,10 @@ HTML = """<!DOCTYPE html>
       const pnl = document.getElementById("charPanel");
       const open = force !== undefined ? force : pnl.style.display === "none";
       pnl.style.display = open ? "" : "none";
+      if (open) {   // 画面のいちばん下まで広げる(話しかける欄は隠れてよい。2026-11-10 ありさん)
+        const top = Math.round(document.getElementById("charBar").getBoundingClientRect().bottom);
+        pnl.style.height = `calc(100dvh - ${top}px)`;
+      }
       document.getElementById("charBar").setAttribute("aria-expanded", open ? "true" : "false");
       document.getElementById("charBarCaret").textContent = open ? "▲" : "▼";
       if (open) { update(); updateDiary(); }   // 開いたそのときに新しくする
