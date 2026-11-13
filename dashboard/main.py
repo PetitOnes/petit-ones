@@ -266,8 +266,9 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
             await asyncio.sleep(1)
 
 
-def _load_display_char_info() -> dict:
-    """展示用の一言の固定の紹介文。prompts/dashboard/display_char_info.json(家の prompts/ が先)。無ければ空"""
+def _display_char_info() -> dict:
+    """展示用の一言の固定の紹介文。prompts/dashboard/display_char_info.json(家の prompts/ が先)。無ければ空。
+    _render_prompt はこの下(PROJECT_DIR の定義の後)で import するので、読み込み時ではなく呼ばれたときに読む"""
     try:
         d = json.loads(_render_prompt.find_resource("dashboard/display_char_info.json", DATA_DIR, PROJECT_DIR).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -275,12 +276,9 @@ def _load_display_char_info() -> dict:
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
-_DISPLAY_CHAR_INFO = _load_display_char_info()
-
-
 async def _generate_display_phrase(character_id: str) -> str:
     """センサー + 欲求からキャラらしい一言を生成（haiku-4-5直呼び）"""
-    info = _DISPLAY_CHAR_INFO.get(character_id)
+    info = _display_char_info().get(character_id)
     if not info:
         return ""
     try:
