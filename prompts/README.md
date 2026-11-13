@@ -2,6 +2,7 @@
 
 ぷちの Claude に渡すプロンプトの文面は、コードの中に書かずにここに置く(2026-11-13 から)。
 `scripts/render_prompt.py <名前> --var k=v …` で組み立てる。Python からは `render_prompt.render(name, vars)`。
+台帳(どのテンプレートがどこから呼ばれ、どんな変数を使い、家で上書きされているか)は `python3 scripts/gen_prompt_ledger.py --out 台帳.html`(`--format md` も)で作る。手で写さない。
 
 - 名前はこの下の相対パス(拡張子なし)。例: `autonomous/user`、`chat/system`
 - **家ごとの言い回しは `PETIT_DATA_DIR/prompts/<同じ名前>.md` を置けば上書き**(git には入れない)。無ければここのものを使う
