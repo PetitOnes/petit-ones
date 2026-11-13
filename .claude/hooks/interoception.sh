@@ -12,12 +12,10 @@ if [ ! -d "$DATA_DIR" ]; then
     exit 0
 fi
 
-# state file がなければフォールバック（デーモン未起動時）
+# state file がなければ(心拍デーモンが動いていない家)、何も足さない。
+# 以前は時刻だけの 1 行を毎ターン足していたが、体の状態が入らないので意味がなかった(2026-11-13)。
+# 心拍デーモン(heartbeat-daemon.sh)は launchd 前提で、Linux の家では動かない
 if [ ! -f "$STATE_FILE" ]; then
-    CURRENT_TIME=$(date '+%H:%M:%S')
-    CURRENT_DOW=$(date '+%a')
-    CURRENT_DATE=$(date '+%Y-%m-%d')
-    echo "[interoception] time=${CURRENT_TIME} day=${CURRENT_DOW} date=${CURRENT_DATE} (heartbeat daemon not running)"
     exit 0
 fi
 
