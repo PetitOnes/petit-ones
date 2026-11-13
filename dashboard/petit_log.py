@@ -5,9 +5,17 @@
 
 - 日ごとに区切り、日の中は新しい順
 - 会話は、だれと・いつ・何回だけ。中身は返さない
-- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起きた)だけ。
+- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた / 体が入れ直された)だけ。
   明るさの変わり目・つながらなかった時間・電池の知らせは出さない
+- 人の手で起きること(持ち上げられた・置かれた・触られた・起こされた)には、家の持ち主の名前を付ける
+  (「ありさんに持ち上げられた」)。体はだれの手かまでは分からないので、家の持ち主と見なして書く
+- 目覚めは、つながらなかった時間の直後なら「体が入れ直された」(再起動・電源の入れ直し)、
+  ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
+  それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
+- 記念日(家の設定)に当たる日は、その日のいちばん上に 1 行出す
+- ひとりの時間の行には、その回に使った道具から決まった言い方で一言を添える(「様子を見て、眠った」など)。
+  その子の言葉や中身は写さない
 """
 
 from __future__ import annotations
@@ -25,13 +33,38 @@ BODY_GROUP_S = 10 * 60    # 同じ体の出来事が続くときに、1 件に�
 ALONE_MAX_S = 30 * 60     # ひとりの時間 1 回の長さの上限(記録の終わりが分からないとき用)
 DAYS_MAX = 7              # 1 回に返す日数の上限
 LOOKBACK_DAYS = 31        # 1 回の読みで、さかのぼって探す日数の上限(空の日が続くとき)
-MAIL_TEXT_MAX = 120
-MEMORY_TEXT_MAX = 400
+TEXT_MAX = 10000          # 記憶・メールの文は全部返す(画面で 3 行 → 12 行 → 全部、と開く)。これは並外れて長いものの歯止め
+MAIL_TEXT_MAX = TEXT_MAX
+MEMORY_TEXT_MAX = TEXT_MAX
 DIARY_HEAD_MAX = 120
 
+WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻が、これだけ近ければ同じ出来事
+RESTART_NEAR_S = 5        # つながらなかった時間の終わりから、これだけのうちに起きていたら、体の入れ直し
 BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
 BODY_CONTACT = {"picked_up", "put_down", "touch"}
-BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起きた"}
+BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた"}
+WOKE_ITSELF = "自分で起きた"
+RESTARTED = "体が入れ直された"
+# ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順
+ALONE_DID = [
+    ("wake", "起きて", "起きた"),
+    ("mail_read", "手紙を読んで", "手紙を読んだ"),
+    ("look", "まわりを見て", "まわりを見た"),
+    ("web", "調べものをして", "調べものをした"),
+    ("speak", "話して", "話した"),
+    ("memory", "記憶に残して", "記憶に残した"),
+    ("note", "ノートを書いて", "ノートを書いた"),
+    ("mail", "手紙を書いて", "手紙を書いた"),
+    ("sleep", "眠って", "眠った"),
+]
+ALONE_NOTHING = ("様子を見て", "様子を見た")   # どれにも当たらない回、眠っただけの回の頭
+_MCP_DID = {
+    ("m5", "wake"): "wake", ("m5", "sleep"): "sleep", ("m5", "speak"): "speak",
+    ("m5", "take_snapshot"): "look", ("m5", "look"): "look",
+    ("memory", "remember"): "memory", ("memory", "create_episode"): "memory",
+    ("memory", "save_visual_memory"): "memory", ("memory", "save_audio_memory"): "memory",
+    ("notes", "write_note"): "note", ("notes", "append_note"): "note",
+}
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
 
@@ -48,6 +81,8 @@ class Sources:
     memory_db: Path
     user_label: Callable[[str], str]   # 人の id → 表示名
     name_of: Callable[[str], str]      # ぷち・人の id → 表示名(メールの宛先)
+    owner_name: str = ""               # 家の持ち主の表示名。体に人の手で起きたことに「〜に」と付ける(無ければ付けない)
+    anniversaries: Callable[[Date], list[dict]] | None = None   # その日の記念日 [{"label", "note"}](家の設定から。無ければ出さない)
 
 
 def _local(ts: str) -> datetime | None:
@@ -83,6 +118,87 @@ def _title_from(name: str, char_id: str) -> str:
     return "_".join(rest)
 
 
+def _called_wake(log: Path, ts: datetime, char_id: str) -> bool:
+    """自律行動の記録(stream.jsonl)のなかで、ts のころに自分の体の wake を呼んでいるか。
+
+    行に時刻が無い古い記録は、呼んでいれば True(その回の幅に入っていることは呼ぶ側が見ている)
+    """
+    names = {"mcp__m5-mcp__wake", f"mcp__m5-{char_id}__wake"}
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        if '"tool_use"' not in line or '__wake"' not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") in names:
+                at = _local(ev.get("timestamp", ""))
+                if at is None or abs((ts - at).total_seconds()) <= WAKE_NEAR_S:
+                    return True
+    return False
+
+
+def _did(name: str, args: dict, char_id: str) -> str | None:
+    """道具の呼び出し 1 回 → ALONE_DID の印。一言にしないものは None"""
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) != 3:
+            return None
+        server = parts[1]
+        for tail in ("-mcp", "-system", f"-{char_id}"):   # m5-mcp・m5-<id> → m5、memory-<id> → memory
+            if server.endswith(tail):
+                server = server[: -len(tail)]
+        return _MCP_DID.get((server, parts[2]))
+    if name in ("WebSearch", "WebFetch"):
+        return "web"
+    if name == "Bash":
+        cmd = str(args.get("command", ""))
+        if "write_mailbox.py" in cmd:
+            return "mail"
+        if "mark_mail_read.py" in cmd:
+            return "mail_read"
+        if "reader.py" in cmd:
+            return "web"
+    if name in ("Write", "Edit") and "/notes/" in str(args.get("file_path", "")):
+        return "note"
+    return None
+
+
+def _alone_words(log: Path, char_id: str) -> str:
+    """ひとりの時間 1 回に添える一言。その回に使った道具から、決まった言い方で組む(その子の言葉は写さない)"""
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    did: set[str] = set()
+    for line in lines:
+        if '"tool_use"' not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                args = c.get("input")
+                key = _did(str(c.get("name", "")), args if isinstance(args, dict) else {}, char_id)
+                if key:
+                    did.add(key)
+    words = [(te, ta) for key, te, ta in ALONE_DID if key in did]
+    if not words or did == {"sleep"}:
+        words.insert(0, ALONE_NOTHING)
+    return "、".join([te for te, _ in words[:-1]] + [words[-1][1]])
+
+
 def _files(d: Path) -> list[Path]:
     try:
         return [f for f in d.iterdir() if f.is_file()]
@@ -97,6 +213,7 @@ class _Index:
         self.src = src
         self.by_day: dict[Date, list[dict]] = {}
         self.runs: dict[Date, list[tuple[datetime, datetime]]] = {}
+        self.run_logs: list[tuple[datetime, datetime, Path]] = []
         self._chat()
         self._album()
         self._voice()
@@ -191,7 +308,8 @@ class _Index:
                 continue
             end = min(max(end, ts), ts + timedelta(seconds=ALONE_MAX_S))
             self.runs.setdefault(ts.date(), []).append((ts, end))
-            self._add(ts, kind="alone", _end=end)
+            self.run_logs.append((ts, end, f))
+            self._add(ts, kind="alone", _end=end, _file=f)
 
     def _memories(self, day: Date) -> list[dict]:
         if not self.src.memory_db.exists():
@@ -215,6 +333,32 @@ class _Index:
                         "category": category or "", "emotion": emotion or ""})
         return out
 
+    def _woke_itself(self, ts: datetime) -> bool:
+        """その目覚めは、ひとりの時間のなかで、その子が自分で体を起こしたものか"""
+        near = timedelta(seconds=WAKE_NEAR_S)
+        return any(a <= ts <= b + near and _called_wake(f, ts, self.src.char_id) for a, b, f in self.run_logs)
+
+    def _experience(self, day: Date) -> list[dict]:
+        """その日の体の出来事の記録(state/experience/YYYYMMDD.jsonl)。無ければ空"""
+        f = self.src.char_dir / "state" / "experience" / f"{day.strftime('%Y%m%d')}.jsonl"
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out = []
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict):
+                out.append(ev)
+        return out
+
+    def _by_owner(self, text: str) -> str:
+        """人の手で起きたことに、家の持ち主の名前を付ける(「ありさんに持ち上げられた」)"""
+        return f"{self.src.owner_name}に{text}" if self.src.owner_name else text
+
     def _body(self, day: Date) -> list[dict]:
         """体に起きたこと。
 
@@ -222,18 +366,14 @@ class _Index:
         どんな日だったかなので、10 分より詰まって BUSY_MIN 件以上続いた時間は 1 行にまとめ、中身は出さない
         (里親さん側のぷちろぐと同じ決まり)。それ以外は、同じ出来事が 10 分以内に続いたら 1 件にして回数を付ける
         """
-        f = self.src.char_dir / "state" / "experience" / f"{day.strftime('%Y%m%d')}.jsonl"
-        try:
-            lines = f.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return []
         events: list[tuple[datetime, str]] = []
-        for line in lines:
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            ts = _local(ev.get("ts", "")) if isinstance(ev, dict) else None
+        back_online: list[datetime] = []   # つながらなかった時間の終わり(日をまたぐものは前の日の記録にある)
+        for ev in self._experience(day - timedelta(days=1)) + self._experience(day):
+            if ev.get("type") == "offline_gap" and isinstance(ev.get("detail"), dict):
+                end = _local(ev["detail"].get("end", ""))
+                if end is not None:
+                    back_online.append(end)
+            ts = _local(ev.get("ts", ""))
             if ts is not None and ts.date() == day and ev.get("type") in BODY_WORDS:
                 events.append((ts, ev["type"]))
         events.sort()
@@ -257,7 +397,7 @@ class _Index:
                 text = "抱っこされて、たくさん触れてもらった" if "picked_up" in kinds else "たくさん触られた"
             else:
                 text = "持ち上げられたり、置かれたりした"
-            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": text, "count": 1})
+            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": self._by_owner(text), "count": 1})
             busy.update(st)
 
         last: dict[str, dict] = {}
@@ -265,6 +405,15 @@ class _Index:
             if (ts, kind) in busy:
                 continue
             word = BODY_WORDS[kind]
+            if kind == "woken":
+                if any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):
+                    word = RESTARTED
+                elif self._woke_itself(ts):
+                    word = WOKE_ITSELF
+                else:
+                    word = self._by_owner(word)
+            elif kind in BODY_CONTACT:
+                word = self._by_owner(word)
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1
@@ -278,12 +427,15 @@ class _Index:
     def day(self, day: Date) -> list[dict]:
         """その日の行(新しい順)。画面に渡す形にして返す"""
         items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day)
+        if self.src.anniversaries:   # その日のいちばん上に出す(時刻は持たない)
+            top = datetime.combine(day, datetime.max.time())
+            items += [{"_ts": top, "kind": "anniv", "text": a["label"], "note": a.get("note", "")} for a in self.src.anniversaries(day)]
         runs = self.runs.get(day, [])
         out = []
         for it in sorted(items, key=lambda x: x["_ts"], reverse=True):
             ts = it["_ts"]
             row = {k: v for k, v in it.items() if not k.startswith("_")}
-            row["time"] = ts.strftime("%H:%M")
+            row["time"] = "" if it["kind"] == "anniv" else ts.strftime("%H:%M")
             if it["kind"] == "talk":
                 run = it["_run"]
                 if run["count"] == 0:
@@ -299,7 +451,9 @@ class _Index:
                 row["more"] = len(body) > MAIL_TEXT_MAX
             elif "_end" in it:   # ひとりの時間、続いた体の出来事
                 row["end"] = it["_end"].strftime("%H:%M")
-            if it["kind"] != "alone" and any(a <= ts <= b for a, b in runs):
+                if it["kind"] == "alone":
+                    row["text"] = _alone_words(it["_file"], self.src.char_id)
+            if it["kind"] not in ("alone", "anniv") and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
             out.append(row)
         return out

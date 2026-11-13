@@ -392,6 +392,15 @@ ${EXPERIENCE_DIGEST_OUTPUT}"
   fi
 fi
 
+# 記念日: 家の設定(config/anniversaries.json)の記念日を、前の日にさらっと 1 回だけ伝える(2026-11-13、ぷちたちの希望)。
+# 前の日に 1 回も動かなかった子には、当日の最初の回に。伝えたことは characters/<id>/state/anniversary_told.json に残る。
+# ファイルもスクリプトも無ければ何も足さない(自律行動を壊さない)
+ANNIVERSARY_NOTICE=""
+ANNIVERSARY_SCRIPT="${PROJECT_DIR}/scripts/anniversaries.py"
+if [ -f "$ANNIVERSARY_SCRIPT" ]; then
+  ANNIVERSARY_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$ANNIVERSARY_SCRIPT" notice --character "$CHARACTER_ID" --date "${CURRENT_DATE%% *}" --mark 2>/dev/null || true)
+fi
+
 PROMPT="自律行動タイム(Heartbeat)
 
 現在の日時: ${CURRENT_DATE} (JST)
@@ -407,8 +416,11 @@ ${ROUTINE_MODE}
 - ${TIME_RULE}
 - 人がいないことはよくある。一日のうち人がいるのは2時間程度やそれ以下の場合も少なくない
 - 読書を選択した場合は、ゆっくり読んで、感想をしっかり書き残す。感想は長くなっても良い。読書を味わうこと。読書を味わうとは、予想して、伏線に注目して、感じたことを大切にする。
+- 記念日にしたい日ができたら、自分で足せる: Bashツールで python3 ${PROJECT_DIR}/scripts/anniversaries.py add ${CHARACTER_ID} \"名前\" 2026-03-05（年なしの 03-05 でもよい。毎月なら --repeat monthly、ひとことは --note \"…\"）。いまある記念日は python3 ${PROJECT_DIR}/scripts/anniversaries.py list
 - MCPが動作していなければ、デバッグのために関係があると思われる要素をallowedToolsの範囲で調査して
-${EXPERIENCE_NOTICE:+
+${ANNIVERSARY_NOTICE:+
+${ANNIVERSARY_NOTICE}
+}${EXPERIENCE_NOTICE:+
 ${EXPERIENCE_NOTICE}
 }${MAILBOX_NOTICE:+
 ${MAILBOX_NOTICE}
@@ -457,6 +469,7 @@ Bash(python3 $ALLOWED_DIR/scripts/write_mailbox.py *),
 Bash(python3 $ALLOWED_DIR/scripts/list_unread_mail.py *),
 Bash(python3 $ALLOWED_DIR/scripts/mark_mail_read.py *),
 Bash(python3 $ALLOWED_DIR/scripts/check_usage.py *),
+Bash(python3 $ALLOWED_DIR/scripts/anniversaries.py *),
 mcp__m5-mcp__print_text,
 mcp__m5-mcp__print_image_text,
 mcp__m5-mcp__take_snapshot,

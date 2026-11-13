@@ -12,6 +12,7 @@ import os
 import secrets
 import sqlite3
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -886,6 +887,7 @@ def _read_mail_cached(f: Path) -> str:
 class MailMetaUpdate(BaseModel):
     archived: bool | None = None
     starred: bool | None = None
+    read: bool | None = None   # 見ている人が読んだか(read_by にその人の id を入れる・外す。ぷちの既読と同じ持ち方)
 
 
 def memory_db_path(character_id: str) -> Path:
@@ -1411,6 +1413,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
         f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
         f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
+        f"\n## 記念日\n"
+        f"- 記念日にしたい日ができたら、自分で足せる: `python3 {scripts_dir}/anniversaries.py add {character_id} '<名前>' <日付>`"
+        f"(日付は 2026-03-05 か、年なしの 03-05。毎月なら `--repeat monthly`、ひとことは `--note '…'`)\n"
+        f"- いまある記念日: `python3 {scripts_dir}/anniversaries.py list`\n"
         f"\n## 会話リレー\n"
         f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
         f"- 「ぷちこに話しかけて」「ぷちてゃと会話して」などと言われたら積極的に使う\n"
@@ -1847,7 +1853,86 @@ def ui_css(name: str):
     return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
+# ---- 記念日(家の設定 config/anniversaries.json)。計算と保存は scripts/anniversaries.py(自律行動のプロンプトと同じもの)----
+def _anniv():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import anniversaries
+    return anniversaries
+
+
+class AnniversaryBody(BaseModel):
+    name: str
+    date: str
+    repeat: str = "yearly"
+    count: bool = True
+    note: str = ""
+
+
+def _anniv_view(items: list[dict]) -> dict:
+    """一覧(次に来る日が近い順、もう来ないものは最後)と、30 日のうちに来るもの"""
+    an = _anniv()
+    today = datetime.now().date()
+    rows = []
+    for it in items:
+        nxt = an.next_occurrence(it, today)
+        by_name = _user_label(it["by"], fallback=_char_display_name(it["by"])) if it.get("by") else ""
+        rows.append({**it, "by_name": by_name, "next": nxt.isoformat() if nxt else None, "days_left": (nxt - today).days if nxt else None,
+                     "next_label": an.label(it, nxt) if nxt else it["name"]})
+    rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] or 0, r["date"]))
+    return {"items": rows, "upcoming": an.upcoming(items, today, days=30)}
+
+
+@app.get("/api/anniversaries")
+def api_anniversaries():
+    return _anniv_view(_anniv().load(DATA_DIR))
+
+
+@app.post("/api/anniversaries")
+def api_anniversaries_add(body: AnniversaryBody, request: Request):
+    an = _anniv()
+    try:
+        an.add({**body.model_dump(), "by": _get_username(request) or "arisan"}, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _anniv_view(an.load(DATA_DIR))
+
+
+@app.put("/api/anniversaries/{item_id}")
+def api_anniversaries_update(item_id: str, body: AnniversaryBody):
+    an = _anniv()
+    items = an.load(DATA_DIR)
+    if not any(it["id"] == item_id for it in items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        keep_by = next(it.get("by", "") for it in items if it["id"] == item_id)   # 直しても、足した人はそのまま
+        item = an.clean({**body.model_dump(), "id": item_id, "by": keep_by})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    items = [item if it["id"] == item_id else it for it in items]
+    an.save(items, DATA_DIR)
+    return _anniv_view(items)
+
+
+@app.delete("/api/anniversaries/{item_id}")
+def api_anniversaries_delete(item_id: str):
+    an = _anniv()
+    items = an.load(DATA_DIR)
+    rest = [it for it in items if it["id"] != item_id]
+    if len(rest) == len(items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    an.save(rest, DATA_DIR)
+    return _anniv_view(rest)
+
+
 # ---- ぷちログ(1 日のタイムライン)と日記の一覧。組み立ては petit_log.py、ページは dashboard/ui/ ----
+def _owner_name() -> str:
+    """家の持ち主の表示名(config/people.json の arisan。無ければ最初の 1 人)"""
+    info = _USER_DISPLAY.get("arisan") or next(iter(_USER_DISPLAY.values()), None)
+    return info["name"] if info else ""
+
+
 def _petit_log_sources(character_id: str):
     import petit_log
     return petit_log.Sources(
@@ -1857,6 +1942,8 @@ def _petit_log_sources(character_id: str):
         memory_db=memory_db_path(character_id),
         user_label=_user_label,
         name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
+        owner_name=_owner_name(),
+        anniversaries=lambda day, _items=_anniv().load(DATA_DIR): _anniv().on_day(_items, day),
     )
 
 
@@ -1894,7 +1981,12 @@ def api_diary_day(character_id: str, date: str):
             "prev": prev_day, "next": next_day}
 
 
-_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html"}
+_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html"}
+
+
+@app.get("/anniversaries", response_class=HTMLResponse)
+def anniversaries_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/petitlog", response_class=HTMLResponse)
@@ -5377,11 +5469,12 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
 
 @app.get("/api/mailbox")
 def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, request: Request = None):
-    """ログインユーザー宛のメール一覧を返す (filter: inbox/archived/starred/all)"""
+    """ログインユーザー宛のメール一覧を返す (filter: inbox/unread/archived/starred/all)。unread は、受信のうちまだ読んでいない数"""
     username = _get_username(request) or "arisan" if request else "arisan"
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
-        return {"total": 0, "items": []}
+        return {"total": 0, "unread": 0, "items": []}
+    unread = 0
     # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）。メタは 1 回だけ読む
     all_meta = _load_mailbox_metadata()
     candidates = []
@@ -5392,7 +5485,12 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         if info is None:
             continue
         meta = _get_mail_meta(f.name, all_meta)
+        is_read = username in (meta.get("read_by") or [])
+        if not is_read and not meta["archived"]:
+            unread += 1
         if filter == "inbox" and meta["archived"]:
+            continue
+        if filter == "unread" and (is_read or meta["archived"]):
             continue
         if filter == "archived" and not meta["archived"]:
             continue
@@ -5401,6 +5499,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         info["archived"] = meta["archived"]
         info["starred"] = meta["starred"]
         info["read_by"] = meta.get("read_by", [])
+        info["read"] = is_read
         candidates.append(info)
     candidates.sort(key=lambda m: m["date"], reverse=True)
     total = len(candidates)
@@ -5422,8 +5521,32 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "archived": c["archived"],
             "starred": c["starred"],
             "read_by": c["read_by"],
+            "read": c["read"],
         })
-    return {"total": total, "offset": offset, "items": items}
+    return {"total": total, "unread": unread, "offset": offset, "items": items}
+
+
+@app.post("/api/mailbox/read_all")
+def api_mailbox_read_all(request: Request):
+    """ログインユーザー宛のメールを、ぜんぶ読んだことにする(受信もアーカイブも)"""
+    username = _get_username(request) or "arisan"
+    mailbox_dir = DATA_DIR / "mailbox"
+    if not mailbox_dir.exists():
+        return {"marked": 0}
+    data = _load_mailbox_metadata()
+    mails = data.setdefault("mails", {})
+    marked = 0
+    for f in mailbox_dir.iterdir():
+        if not f.name.endswith(".md") or _parse_mail_meta_from_file(f, username) is None:
+            continue
+        current = mails.setdefault(f.name, {"archived": False, "starred": False})
+        read_by = current.setdefault("read_by", [])
+        if username not in read_by:
+            read_by.append(username)
+            marked += 1
+    if marked:
+        _save_mailbox_metadata(data)
+    return {"marked": marked}
 
 
 @app.get("/api/mailbox/all")
@@ -5492,8 +5615,8 @@ def api_mailbox_all(filter: str = "all"):
 
 
 @app.patch("/api/mailbox/{filename}/meta")
-def api_mailbox_update_meta(filename: str, body: MailMetaUpdate):
-    """メールのメタデータ（starred/archived）を更新"""
+def api_mailbox_update_meta(filename: str, body: MailMetaUpdate, request: Request):
+    """メールのメタデータ（starred/archived/read）を更新"""
     safe_name = Path(filename).name
     mailbox_dir = DATA_DIR / "mailbox"
     if not (mailbox_dir / safe_name).exists():
@@ -5505,6 +5628,10 @@ def api_mailbox_update_meta(filename: str, body: MailMetaUpdate):
         current["archived"] = body.archived
     if body.starred is not None:
         current["starred"] = body.starred
+    if body.read is not None:
+        username = _get_username(request) or "arisan"
+        read_by = [u for u in (current.get("read_by") or []) if u != username]
+        current["read_by"] = read_by + [username] if body.read else read_by
     mails[safe_name] = current
     _save_mailbox_metadata(data)
     return current
@@ -5749,6 +5876,12 @@ HTML = """<!DOCTYPE html>
     .mailbox-tab { padding: 6px 14px; border-radius: 16px; border: none; background: #f0f0f0; font-size: 0.8rem; cursor: pointer; color: #666; transition: all 0.2s; }
     .mailbox-tab.active { background: var(--char, #cab8d9); color: var(--char-btn-text, #333); font-weight: 600; }
     .mail-actions { display: flex; gap: 6px; align-items: center; }
+    /* まだ読んでいないメール: 左に太い線と「未読」の印。読んだら消える */
+    .mail-item.is-unread { border-left: 4px solid #e57373; }
+    .mail-unread-mark { display: none; margin-left: 6px; padding: 1px 7px; border-radius: 8px; background: #e57373; color: #fff; font-size: 0.65rem; font-weight: 600; }
+    .mail-item.is-unread .mail-unread-mark { display: inline-block; }
+    .mail-read-btn { background: none; border: 1px solid #ccc; border-radius: 10px; font-size: 0.7rem; padding: 2px 8px; cursor: pointer; color: #666; white-space: nowrap; }
+    .mail-read-all { margin: 0 0 10px auto; display: none; padding: 4px 12px; border: 1px solid #ccc; border-radius: 12px; background: #fff; font-size: 0.75rem; color: #666; cursor: pointer; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
     .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
     .mail-reply textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; resize: vertical; }
@@ -6276,9 +6409,11 @@ HTML = """<!DOCTYPE html>
       <div class="popup-body">
         <div class="mailbox-tabs">
           <button class="mailbox-tab active" id="mailTabInbox" onclick="switchMailTab('inbox')">受信</button>
+          <button class="mailbox-tab" id="mailTabUnread" onclick="switchMailTab('unread')">未読<span id="mailUnreadCount"></span></button>
           <button class="mailbox-tab" id="mailTabStarred" onclick="switchMailTab('starred')">⭐</button>
           <button class="mailbox-tab" id="mailTabArchived" onclick="switchMailTab('archived')">📦</button>
         </div>
+        <button class="mail-read-all" id="mailReadAllBtn" onclick="markAllMailRead()">ぜんぶ既読にする</button>
         <div id="mailboxBody"></div>
       </div>
     </div>
@@ -6548,6 +6683,7 @@ HTML = """<!DOCTYPE html>
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
+      anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
@@ -6693,7 +6829,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", library: "/library"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", library: "/library"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -7621,7 +7757,7 @@ HTML = """<!DOCTYPE html>
     function switchMailTab(filter) {
       currentMailTab = filter;
       document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
-      const tabId = {inbox:"mailTabInbox", starred:"mailTabStarred", archived:"mailTabArchived"}[filter];
+      const tabId = {inbox:"mailTabInbox", unread:"mailTabUnread", starred:"mailTabStarred", archived:"mailTabArchived"}[filter];
       document.getElementById(tabId).classList.add("active");
       loadMailbox();
     }
@@ -7640,10 +7776,11 @@ HTML = """<!DOCTYPE html>
       const sc = (characters.find(c => c.id === m.sender_id) || {}).color;
       const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
       const senderStyle = sc ? `color:${readableText(sc)}` : "";
-      return `<div class="mail-item" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
+      return `<div class="mail-item${m.read ? "" : " is-unread"}" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
         <div class="mail-header">
-          <span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span>
+          <span><span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span><span class="mail-unread-mark">未読</span></span>
           <div class="mail-actions">
+            <button class="mail-read-btn" onclick="toggleMailRead('${fn}',this)">${m.read ? "未読に戻す" : "既読にする"}</button>
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
             <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
             ${m.sender_id ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
@@ -7718,8 +7855,9 @@ HTML = """<!DOCTYPE html>
         const data = await res.json();
         _mailboxTotal = data.total;
         _mailboxOffset = data.items.length;
+        _showMailUnread(data.unread || 0);
         if (!data.items.length) {
-          const labels = {inbox:"メールはありません", starred:"スター付きメールはありません", archived:"アーカイブはありません"};
+          const labels = {inbox:"メールはありません", unread:"未読のメールはありません", starred:"スター付きメールはありません", archived:"アーカイブはありません"};
           body.innerHTML = `<div class='empty'>${labels[currentMailTab] || "メールはありません"}</div>`;
           return;
         }
@@ -7744,6 +7882,37 @@ HTML = """<!DOCTYPE html>
       } catch(e) {
         if (btn) { btn.textContent = "読み込みに失敗しました"; btn.disabled = false; }
       }
+    }
+
+    // 既読・未読(2026-11-13 ありさん): 自分で付ける印。メールは一覧に全文が出るので、開いたら既読、にはしない
+    let _mailUnread = 0;
+    function _showMailUnread(n) {
+      _mailUnread = Math.max(0, n);
+      document.getElementById("mailUnreadCount").textContent = _mailUnread ? ` ${_mailUnread}` : "";
+      document.getElementById("mailReadAllBtn").style.display = _mailUnread ? "block" : "none";
+    }
+
+    async function toggleMailRead(filename, btn) {
+      const item = btn.closest(".mail-item");
+      const read = item.classList.contains("is-unread");   // いま未読なら、既読にする
+      try {
+        const res = await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
+          method: "PATCH", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({read})
+        });
+        if (!res.ok) return;
+        item.classList.toggle("is-unread", !read);
+        btn.textContent = read ? "未読に戻す" : "既読にする";
+        if (currentMailTab !== "archived") _showMailUnread(_mailUnread + (read ? -1 : 1));
+      } catch(e) {}
+    }
+
+    async function markAllMailRead() {
+      if (!confirm(`未読の ${_mailUnread} 通を、ぜんぶ既読にします`)) return;
+      try {
+        await fetch("/api/mailbox/read_all", {method: "POST"});
+        loadMailbox();
+      } catch(e) {}
     }
 
     async function toggleStar(filename, btn) {
