@@ -45,6 +45,10 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 0 4 * * * bash ~/petit_claude/backup/save.sh   # バックアップ(scripts/backup_petit.sh)
 ```
 
+## 欲求の rhythm(朝に 0 へ戻り、光に合わせて進む欲求)
+
+「眠い」のような欲求は、子ごとの `config/desire_config.json` の欲求に `"rhythm": {"hours": 14, …}` を書くと、朝に 0 へ戻り、光に合わせて進む形で動く(書かなければ今までどおり)。項目は m5-petit-desire の README。状態は `characters/<id>/data/desire_rhythm.json` にできる。動きはダッシュボードの 🫧 欲求で見られる。
+
 ## 家とコードを分けて、同期する
 
 ぷちが動いている PC には、このリポジトリの checkout が **2 つ** ある。
