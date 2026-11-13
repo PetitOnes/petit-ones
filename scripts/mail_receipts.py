@@ -25,6 +25,8 @@ from pathlib import Path
 
 # スタンプは 5 つに絞る(2026-11-13)。選ぶ手間を増やさない
 STAMPS = {"💛": "すき", "😊": "うれしい", "✨": "すてき", "🥹": "じんとした", "👀": "読んだよ"}
+# ぷちに伝えるときの言い方。ハートは、画面ではその子の色で描いている(文字では色を渡せないので、言葉で)
+STAMP_WORDS = {"💛": "きみの色のハート"}
 STAMPS_SHOWN = 3   # 知らせの 1 行に、どの手紙かを書く数(それより多い分は数だけ)
 _NAME = re.compile(r"^from_(.+)_to_(.+?)_(\d{8})_(\d{4})")
 
@@ -99,7 +101,7 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     for who, got in by_person.items():
         person = _person_name(base, who)
         stamps = sorted(got["stamps"])
-        shown = "、".join(f"{_when(n)} の手紙に {e}" for n, e in stamps[:STAMPS_SHOWN])
+        shown = "、".join(f"{_when(n)} の手紙に {STAMP_WORDS.get(e, e)}" for n, e in stamps[:STAMPS_SHOWN])
         if len(stamps) > STAMPS_SHOWN:
             shown += f"、ほか {len(stamps) - STAMPS_SHOWN} 通にも"
         if got["read"] and stamps:

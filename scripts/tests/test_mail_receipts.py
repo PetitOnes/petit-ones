@@ -37,7 +37,7 @@ def test_read_and_stamp_are_told_once(tmp_path):
     assert mr.notice(base, "puchi", mark=True) == []                      # 基準を作る
     house(tmp_path, {A: {"read_by": ["arisan"], "stamps": {"arisan": "💛"}}, B: {"read_by": ["arisan"]},
                      C: {"read_by": ["other"]}, D: {"read_by": ["arisan"], "stamps": {"arisan": "✨"}}})
-    line = "（ちなみに、ありさんが、きみの手紙を 2 通読んだ。スタンプも付いていた: 11/13 07:05 の手紙に 💛）"
+    line = "（ちなみに、ありさんが、きみの手紙を 2 通読んだ。スタンプも付いていた: 11/13 07:05 の手紙に きみの色のハート）"
     assert mr.notice(base, "puchi") == [line]                              # --mark なしでは、残さない
     assert mr.notice(base, "puchi", mark=True) == [line]
     assert mr.notice(base, "puchi", mark=True) == []                      # 2 回目は言わない
