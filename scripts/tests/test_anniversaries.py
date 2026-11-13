@@ -34,6 +34,13 @@ def test_monthly_and_label():
     assert not an.occurs_on(it, Date(2026, 11, 6))
 
 
+def test_count_off_shows_name_only():
+    """数えない記念日(人の誕生日など)は、何年たっても名前だけ"""
+    it = an.clean({"name": "たんじょうび", "date": "2026-09-21", "count": False})
+    assert an.occurs_on(it, Date(2030, 9, 21))
+    assert an.label(it, Date(2030, 9, 21)) == "たんじょうび"
+
+
 def test_once():
     it = item("発表の日", "2026-08-25", "once")
     assert an.occurs_on(it, Date(2026, 8, 25))

@@ -1862,6 +1862,7 @@ class AnniversaryBody(BaseModel):
     name: str
     date: str
     repeat: str = "yearly"
+    count: bool = True
     note: str = ""
 
 

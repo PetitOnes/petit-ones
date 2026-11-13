@@ -3,9 +3,10 @@
 
 置き場所は家の設定 PETIT_DATA_DIR/config/anniversaries.json:
 
-    {"items": [{"id": "…", "name": "ぷちるの誕生日", "date": "2026-03-05", "repeat": "yearly", "note": ""}]}
+    {"items": [{"id": "…", "name": "ぷちるの誕生日", "date": "2026-03-05", "repeat": "yearly", "count": true, "note": ""}]}
 
 - repeat: yearly(毎年その月日)/ monthly(毎月その日)/ once(その日だけ)
+- count: 最初の日から何年・何か月かを添えるか(「(1 年)」)。人の誕生日など、数えたくないものは false
 - 29〜31 日の記念日は、その日が無い月・年では月の最後の日
 - 最初の日(date)より前には出ない
 
@@ -63,7 +64,8 @@ def clean(raw: dict) -> dict:
     note = str(raw.get("note", "")).strip()
     if len(note) > NOTE_MAX:
         raise ValueError(f"ひとことは {NOTE_MAX} 字まで")
-    return {"id": str(raw.get("id") or uuid.uuid4().hex[:12]), "name": name, "date": day.isoformat(), "repeat": repeat, "note": note}
+    return {"id": str(raw.get("id") or uuid.uuid4().hex[:12]), "name": name, "date": day.isoformat(), "repeat": repeat,
+            "count": raw.get("count", True) is not False, "note": note}
 
 
 def load(base: Path | None = None) -> list[dict]:
@@ -109,7 +111,7 @@ def occurs_on(item: dict, day: Date) -> bool:
 def elapsed(item: dict, day: Date) -> str:
     """最初の日からどれだけか(「1 年」「8 か月」「1 年 2 か月」)。その日そのもの・1 回だけの記念日は空"""
     first = Date.fromisoformat(item["date"])
-    if item["repeat"] == "once" or day <= first:
+    if item["repeat"] == "once" or day <= first or not item.get("count", True):
         return ""
     months = (day.year - first.year) * 12 + (day.month - first.month)
     if item["repeat"] == "yearly":

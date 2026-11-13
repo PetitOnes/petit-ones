@@ -29,6 +29,7 @@
             <option value="once">その日だけ</option>
           </select>
         </label>
+        <label class="is-wide" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="fCount" checked><span class="a-label">何年目・何か月目かを添える(「1 年」「8 か月」)</span></label>
         <label class="is-wide"><span class="a-label">ひとこと(なくてもよい。ぷちたちにも伝わります)</span><input class="a-input" id="fNote" maxlength="200"></label>
         <div class="o-anniv-form-row">
           <span class="o-anniv-msg" id="fMsg"></span>
@@ -77,6 +78,7 @@
       editing = null;
       for (const id of ["fName", "fDate", "fNote"]) document.getElementById(id).value = "";
       document.getElementById("fRepeat").value = "yearly";
+      document.getElementById("fCount").checked = true;
       document.getElementById("fMsg").textContent = "";
       document.getElementById("formTitle").textContent = "記念日を足す";
       document.getElementById("saveBtn").textContent = "足す";
@@ -92,7 +94,8 @@
 
     async function save() {
       const body = { name: document.getElementById("fName").value, date: document.getElementById("fDate").value,
-                     repeat: document.getElementById("fRepeat").value, note: document.getElementById("fNote").value };
+                     repeat: document.getElementById("fRepeat").value, count: document.getElementById("fCount").checked,
+                     note: document.getElementById("fNote").value };
       const msg = document.getElementById("fMsg");
       msg.textContent = "";
       try {
@@ -110,6 +113,7 @@
         document.getElementById("fName").value = it.name;
         document.getElementById("fDate").value = it.date;
         document.getElementById("fRepeat").value = it.repeat;
+        document.getElementById("fCount").checked = it.count !== false;
         document.getElementById("fNote").value = it.note || "";
         document.getElementById("formTitle").textContent = "記念日を直す";
         document.getElementById("saveBtn").textContent = "直す";
