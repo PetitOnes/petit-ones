@@ -6,6 +6,7 @@
     {"items": [{"id": "…", "name": "ぷちるの誕生日", "date": "2026-03-05", "repeat": "yearly", "count": true, "note": ""}]}
 
 - repeat: yearly(毎年その月日)/ monthly(毎月その日)/ once(その日だけ)
+- date は年なしでもよい("09-21")。年のない記念日は毎年その月日に出て、何年目かは数えない
 - count: 最初の日から何年・何か月かを添えるか(「(1 年)」)。人の誕生日など、数えたくないものは false
 - 29〜31 日の記念日は、その日が無い月・年では月の最後の日
 - 最初の日(date)より前には出ない
@@ -54,18 +55,22 @@ def clean(raw: dict) -> dict:
         raise ValueError("名前を入れてください")
     if len(name) > NAME_MAX:
         raise ValueError(f"名前は {NAME_MAX} 字まで")
+    date_str = str(raw.get("date", "")).strip()
+    no_year = len(date_str) == 5   # "09-21"
     try:
-        day = Date.fromisoformat(str(raw.get("date", "")))
+        day = Date.fromisoformat(f"2000-{date_str}" if no_year else date_str)   # 2000 年はうるう年(02-29 も通る)
     except ValueError:
-        raise ValueError("日付は 2026-03-05 の形で") from None
+        raise ValueError("日付は 2026-03-05 か、年なしの 03-05 の形で") from None
     repeat = raw.get("repeat", "yearly")
     if repeat not in REPEATS:
         raise ValueError("くり返しは yearly / monthly / once")
+    if no_year and repeat != "yearly":
+        raise ValueError("年のない記念日は、毎年だけ")
     note = str(raw.get("note", "")).strip()
     if len(note) > NOTE_MAX:
         raise ValueError(f"ひとことは {NOTE_MAX} 字まで")
-    return {"id": str(raw.get("id") or uuid.uuid4().hex[:12]), "name": name, "date": day.isoformat(), "repeat": repeat,
-            "count": raw.get("count", True) is not False, "note": note}
+    return {"id": str(raw.get("id") or uuid.uuid4().hex[:12]), "name": name, "date": date_str if no_year else day.isoformat(),
+            "repeat": repeat, "count": not no_year and raw.get("count", True) is not False, "note": note}
 
 
 def load(base: Path | None = None) -> list[dict]:
@@ -97,8 +102,16 @@ def _day_in_month(year: int, month: int, day: int) -> Date:
     return Date(year, month, min(day, calendar.monthrange(year, month)[1]))
 
 
+def _first(item: dict) -> Date | None:
+    """最初の日。年のない記念日は None"""
+    return None if len(item["date"]) == 5 else Date.fromisoformat(item["date"])
+
+
 def occurs_on(item: dict, day: Date) -> bool:
-    first = Date.fromisoformat(item["date"])
+    first = _first(item)
+    if first is None:   # 年なし: 毎年その月日
+        month, dom = (int(x) for x in item["date"].split("-"))
+        return day == _day_in_month(day.year, month, dom)
     if day < first:
         return False
     if item["repeat"] == "once":
@@ -110,8 +123,8 @@ def occurs_on(item: dict, day: Date) -> bool:
 
 def elapsed(item: dict, day: Date) -> str:
     """最初の日からどれだけか(「1 年」「8 か月」「1 年 2 か月」)。その日そのもの・1 回だけの記念日は空"""
-    first = Date.fromisoformat(item["date"])
-    if item["repeat"] == "once" or day <= first or not item.get("count", True):
+    first = _first(item)
+    if first is None or item["repeat"] == "once" or day <= first or not item.get("count", True):
         return ""
     months = (day.year - first.year) * 12 + (day.month - first.month)
     if item["repeat"] == "yearly":

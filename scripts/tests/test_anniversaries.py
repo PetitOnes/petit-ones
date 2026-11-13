@@ -41,6 +41,21 @@ def test_count_off_shows_name_only():
     assert an.label(it, Date(2030, 9, 21)) == "たんじょうび"
 
 
+def test_date_without_year():
+    """年のない記念日は、毎年その月日に出て、何年目かは数えない"""
+    it = an.clean({"name": "たんじょうび", "date": "09-21"})
+    assert it["date"] == "09-21" and it["count"] is False
+    assert an.occurs_on(it, Date(1999, 9, 21)) and an.occurs_on(it, Date(2030, 9, 21))
+    assert not an.occurs_on(it, Date(2030, 9, 22))
+    assert an.label(it, Date(2030, 9, 21)) == "たんじょうび"
+    assert an.next_occurrence(it, Date(2026, 11, 13)) == Date(2027, 9, 21)
+    assert an.occurs_on(an.clean({"name": "うるう", "date": "02-29"}), Date(2027, 2, 28))
+    with pytest.raises(ValueError):
+        an.clean({"name": "x", "date": "09-21", "repeat": "monthly"})
+    with pytest.raises(ValueError):
+        an.clean({"name": "x", "date": "13-01"})
+
+
 def test_once():
     it = item("発表の日", "2026-08-25", "once")
     assert an.occurs_on(it, Date(2026, 8, 25))
