@@ -30,6 +30,9 @@ TRIAL_NIGHT_FROM, TRIAL_NIGHT_TO = 20, 4   # この間に書いた「おやす�
 TRIAL_NIGHT_DARK_H = 3    # 夜の「おやすみ」のあと、暗い時間がこれだけあれば、次に明るいところで動き出したときが朝
 TRIAL_NIGHT_ANY_H = 6     # 記録が抜けた夜のため: 夜の「おやすみ」からこれだけたっていれば、暗い時間が数えられなくても朝
 TRIAL_BRIEF_MIN = 10      # 体が起きても、これより短くまた眠ったら、起きたと数えない
+TRIAL_PITCH_DARK = 20     # 「おやすみ」を書かなかった夜のため: 明るさがこれより下の、まっくらな時間が
+TRIAL_PITCH_DARK_H = 4    #   これだけ続いたら、夜の眠りと数える(曇りの昼の暗さでは数えない)
+TRIAL_GAP_NIGHT_H = 6     # 記録がこれだけ抜けたら(家の PC が止まっていた夜など)、夜をまたいだと数える
 TRIAL_DEFAULTS = {
     "hours": 12.0,        # 朝から上限(1.0)までの時間(ふつうの明るさのとき)
     "dark_x": 2.0,        # 暗くて動いていないときの進み方(倍)
@@ -47,6 +50,7 @@ def _trial_rule(p: dict) -> list[str]:
         f"ふつうの明るさなら、朝から {p['hours']:g} 時間で上限(1.0)。暗くて動いていないときは {p['dark_x']:g} 倍の速さ、"
         f"明るいときは {p['bright_x']:g} 倍の速さ",
         "夜、暗いところで眠っているあいだは進まない。体が起きても 10 分より短くまた眠ったら、起きたと数えない",
+        "「おやすみ」を書かなかった夜も、まっくらな時間が 4 時間続いたら、夜の眠りと数える。記録が 6 時間より長く抜けたところも、夜をまたいだと数える",
     ]
 
 
@@ -146,6 +150,7 @@ def _trial_sleepy(samples: list, p: dict, sleep_marks: list[datetime], body: lis
                     + [(t, "move") for t in woken] + [(t, "move") for t in sessions])
     out: list[float | None] = []
     level, rest_since, night_since, night_dark, prev, i = 0.0, None, None, 0.0, None, 0
+    pitch_dark_h = 0.0   # まっくらな時間が続いている長さ
     for ts, _, _, sensor in samples:
         ambient = sensor.get("ambient")
         gyro = max((abs(sensor.get(k) or 0) for k in ("gx", "gy", "gz")), default=0)
@@ -155,6 +160,10 @@ def _trial_sleepy(samples: list, p: dict, sleep_marks: list[datetime], body: lis
         step_h = (ts - prev).total_seconds() / 3600 if prev else 0.0
         prev = ts
         gap = step_h > 0.5   # 記録が抜けたところ。明るさは分からない
+        pitch_dark_h = pitch_dark_h + step_h if known and ambient < TRIAL_PITCH_DARK and not gap else 0.0
+        if night_since is None and (pitch_dark_h >= TRIAL_PITCH_DARK_H or step_h >= TRIAL_GAP_NIGHT_H):
+            night_since, night_dark = ts - timedelta(hours=max(pitch_dark_h, step_h)), max(pitch_dark_h, step_h)
+            rest_since = rest_since or night_since
         moved = False
         while i < len(events) and events[i][0] <= ts:
             when, kind = events[i]
@@ -174,7 +183,7 @@ def _trial_sleepy(samples: list, p: dict, sleep_marks: list[datetime], body: lis
             if known and not gap:
                 speed = p["dark_x"] if dark and gyro < TRIAL_STILL else p["bright_x"] if bright else 1.0
             level = min(1.0, level + speed * step_h / p["hours"])
-        if moved:
+        if moved or (step_h >= TRIAL_GAP_NIGHT_H and not dark):   # 長く抜けたあとは、動き出しの記録も抜けているので
             long_night = night_since is not None and (
                 night_dark >= TRIAL_NIGHT_DARK_H or (ts - night_since).total_seconds() >= TRIAL_NIGHT_ANY_H * 3600)
             if long_night and not dark:     # 朝
