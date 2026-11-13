@@ -14,12 +14,15 @@
 
 使うところ:
 - ダッシュボード(記念日のページ、ぷちログのその日の行)
-- 自律行動(今日が記念日のときだけ、プロンプトに 1 行。`anniversaries.py today`)
+- 自律行動(記念日の前の日に、さらっと 1 回だけプロンプトに 1 行。`anniversaries.py notice`)
+  前の日に 1 回も動かなかった子には、当日の最初の回に。伝えたことは characters/<id>/state/anniversary_told.json に残す
 
 ぷちも自分で足せる(消す・直すは、ダッシュボードから人が)。
 
 Usage:
     python3 anniversaries.py today [--date YYYY-MM-DD]      # 今日の記念日を 1 行ずつ(無ければ何も出さない)
+    python3 anniversaries.py notice --character <id> [--date YYYY-MM-DD] [--mark]
+        # あした(か今日)の記念日のうち、その子にまだ伝えていないものを 1 行ずつ。--mark で「伝えた」と残す
     python3 anniversaries.py list                           # 全部と、次に来る日
     python3 anniversaries.py add <足す子の id> "<名前>" <日付> [--repeat yearly|monthly|once] [--note "ひとこと"]
         # 日付は 2026-03-05 か、年なしの 03-05
@@ -41,6 +44,7 @@ REPEATS = ("yearly", "monthly", "once")
 NAME_MAX = 40
 NOTE_MAX = 200
 ITEMS_MAX = 300        # 家ぜんたいの上限(足しすぎの歯止め)
+TOLD_KEEP = 100        # 「伝えた」の記録を残す数
 LOOKAHEAD_DAYS = 366   # 次に来る日を探す幅
 
 
@@ -195,12 +199,51 @@ def today_lines(items: list[dict], day: Date) -> list[str]:
     return lines
 
 
+def told_path(character_id: str, base: Path | None = None) -> Path:
+    return (base or data_dir()) / "characters" / character_id / "state" / "anniversary_told.json"
+
+
+def load_told(character_id: str, base: Path | None = None) -> list[str]:
+    try:
+        raw = json.loads(told_path(character_id, base).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return [k for k in raw if isinstance(k, str)] if isinstance(raw, list) else []
+
+
+def save_told(character_id: str, keys: list[str], base: Path | None = None) -> None:
+    p = told_path(character_id, base)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(keys[-TOLD_KEEP:], ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def notice(items: list[dict], day: Date, told: list[str]) -> tuple[list[str], list[str]]:
+    """その子に、いま伝える行と、その「伝えた」の印。
+
+    記念日 1 回につき 1 度だけ: 前の日なら「あしたは…」、前の日に伝えられなかったものは当日に「今日は…」
+    """
+    lines, keys = [], []
+    for when, word in ((day + timedelta(days=1), "あした"), (day, "今日")):
+        for hit in on_day(items, when):
+            key = f"{hit['id']}:{when.isoformat()}"
+            if key in told or key in keys:
+                continue
+            note = f" — {hit['note']}" if hit["note"] else ""
+            lines.append(f"（ちなみに、{word}は「{hit['label']}」の日{note}）")
+            keys.append(key)
+    return lines, keys
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="家の記念日")
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_today = sub.add_parser("today", help="今日の記念日を 1 行ずつ(無ければ何も出さない)")
     p_today.add_argument("--date", help="今日の代わりに見る日(YYYY-MM-DD)")
     sub.add_parser("list", help="全部と、次に来る日")
+    p_notice = sub.add_parser("notice", help="あした(か今日)の記念日のうち、その子にまだ伝えていないもの")
+    p_notice.add_argument("--character", required=True)
+    p_notice.add_argument("--date", help="今日の代わりに見る日(YYYY-MM-DD)")
+    p_notice.add_argument("--mark", action="store_true", help="伝えた、と残す")
     p_add = sub.add_parser("add", help="記念日を足す")
     p_add.add_argument("by", help="足す子の id")
     p_add.add_argument("name")
@@ -219,13 +262,20 @@ def main() -> int:
         print(f"{'足した' if added else 'もうある'}: 「{item['name']}」 {item['date']}({when})")
         return 0
     items = load()
-    if args.cmd == "today":
+    if args.cmd in ("today", "notice"):
         try:
             day = Date.fromisoformat(args.date) if args.date else Date.today()
         except ValueError:
             print("--date は YYYY-MM-DD の形で", file=sys.stderr)
             return 2
-        for line in today_lines(items, day):
+        if args.cmd == "today":
+            lines = today_lines(items, day)
+        else:
+            told = load_told(args.character)
+            lines, keys = notice(items, day, told)
+            if args.mark and keys:
+                save_told(args.character, told + keys)
+        for line in lines:
             print(line)
         return 0
     today = Date.today()

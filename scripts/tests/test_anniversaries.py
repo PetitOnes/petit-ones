@@ -66,6 +66,22 @@ def test_add_keeps_who_and_skips_duplicates(tmp_path):
         an.add({"name": "", "date": "2026-08-01"}, tmp_path)
 
 
+def test_notice_once_the_day_before(tmp_path):
+    """前の日に 1 度だけ。前の日に伝えていれば当日は出さない。伝えられなかったら当日に"""
+    it = item("うまれた日", "2026-03-04", note="お祝い")
+    key = f"{it['id']}:2027-03-04"
+    lines, keys = an.notice([it], Date(2027, 3, 3), [])
+    assert lines == ["（ちなみに、あしたは「うまれた日(1 年)」の日 — お祝い）"] and keys == [key]
+    assert an.notice([it], Date(2027, 3, 3), [key]) == ([], [])          # 同じ日の 2 回目
+    assert an.notice([it], Date(2027, 3, 4), [key]) == ([], [])          # 当日(前の日に伝えた)
+    lines, keys = an.notice([it], Date(2027, 3, 4), [])                    # 前の日に動かなかった子
+    assert lines == ["（ちなみに、今日は「うまれた日(1 年)」の日 — お祝い）"] and keys == [key]
+    assert an.notice([it], Date(2027, 3, 2), []) == ([], [])              # 2 日前はまだ
+    an.save_told("puchi", [key], tmp_path)
+    assert an.load_told("puchi", tmp_path) == [key]
+    assert an.load_told("other", tmp_path) == []
+
+
 def test_once():
     it = item("発表の日", "2026-08-25", "once")
     assert an.occurs_on(it, Date(2026, 8, 25))

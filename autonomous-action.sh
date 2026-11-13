@@ -392,16 +392,13 @@ ${EXPERIENCE_DIGEST_OUTPUT}"
   fi
 fi
 
-# 記念日: 家の設定(config/anniversaries.json)で今日に当たるものがあるときだけ、プロンプトに足す。
+# 記念日: 家の設定(config/anniversaries.json)の記念日を、前の日にさらっと 1 回だけ伝える(2026-11-13、ぷちたちの希望)。
+# 前の日に 1 回も動かなかった子には、当日の最初の回に。伝えたことは characters/<id>/state/anniversary_told.json に残る。
 # ファイルもスクリプトも無ければ何も足さない(自律行動を壊さない)
 ANNIVERSARY_NOTICE=""
 ANNIVERSARY_SCRIPT="${PROJECT_DIR}/scripts/anniversaries.py"
 if [ -f "$ANNIVERSARY_SCRIPT" ]; then
-  ANNIVERSARY_OUTPUT=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$ANNIVERSARY_SCRIPT" today --date "${CURRENT_DATE%% *}" 2>/dev/null || true)
-  if [ -n "$ANNIVERSARY_OUTPUT" ]; then
-    ANNIVERSARY_NOTICE="## 今日の記念日
-${ANNIVERSARY_OUTPUT}"
-  fi
+  ANNIVERSARY_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$ANNIVERSARY_SCRIPT" notice --character "$CHARACTER_ID" --date "${CURRENT_DATE%% *}" --mark 2>/dev/null || true)
 fi
 
 PROMPT="自律行動タイム(Heartbeat)
