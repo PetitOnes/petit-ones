@@ -91,3 +91,5 @@ html.embed .p-head { display: none; }
 .o-desire-words span { padding: 1px 8px; border-radius: 10px; background: var(--ui-accent-soft); font-size: var(--ui-fs-xs); color: var(--ui-text); }
 .o-desire-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 12px; font-size: var(--ui-fs-xs); color: var(--ui-text-sub); }
 .o-desire-key i { display: inline-block; vertical-align: middle; margin-right: 4px; }
+.o-desire-trial { margin-top: 2px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+.o-desire-trial b { color: var(--ui-text); font-variant-numeric: tabular-nums; }

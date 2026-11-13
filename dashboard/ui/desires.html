@@ -61,18 +61,24 @@
         if (i % step === 0) grid += `<text class="tick" x="${gx}" y="${H - 2}" text-anchor="middle">${day.getMonth() + 1}/${day.getDate()}</text>`;
       }
       // 強さの線。記録が 20 分より空いたところは、線を切る
-      let path = "", prev = null;
-      d.values.forEach((v, i) => {
-        if (v === null || v === undefined) { prev = null; return; }
-        const gap = prev === null || times[i] - prev > 20 * 60000;
-        path += `${gap ? "M" : "L"}${x(times[i]).toFixed(1)},${y(v).toFixed(1)}`;
-        prev = times[i];
-      });
+      const line = values => {
+        let p = "", prev = null;
+        values.forEach((v, i) => {
+          if (v === null || v === undefined) { prev = null; return; }
+          const gap = prev === null || times[i] - prev > 20 * 60000;
+          p += `${gap ? "M" : "L"}${x(times[i]).toFixed(1)},${y(v).toFixed(1)}`;
+          prev = times[i];
+        });
+        return p;
+      };
+      const path = line(d.values);
+      // 試し算の線(あれば): いまの線は薄くして後ろに、試し算を濃い破線で前に
+      const trial = d.trial ? `<path d="${line(d.trial.values)}" fill="none" stroke="var(--ui-text)" stroke-width="2" stroke-dasharray="5 3" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : "";
       const rug = d.satisfied.map(s => { const sx = x(new Date(s).getTime()).toFixed(1); return `<line x1="${sx}" x2="${sx}" y1="${BOTTOM - 8}" y2="${BOTTOM}" stroke="var(--ui-text-sub)" stroke-width="1.5"/>`; }).join("");
       return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(d.name)}の強さの移り変わり">
         <line class="grid" x1="0" x2="${W}" y1="${TOP}" y2="${TOP}"/><line class="grid" x1="0" x2="${W}" y1="${BOTTOM}" y2="${BOTTOM}"/>${grid}
-        <path d="${path}" fill="none" stroke="color-mix(in srgb, ${esc(d.color)} 72%, #333)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
-        ${rug}<line class="hair" x1="0" x2="0" y1="${TOP}" y2="${BOTTOM}"/></svg>`;
+        <path d="${path}" fill="none" stroke="color-mix(in srgb, ${esc(d.color)} 72%, #333)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"${d.trial ? ' opacity="0.55"' : ""}/>
+        ${trial}${rug}<line class="hair" x1="0" x2="0" y1="${TOP}" y2="${BOTTOM}"/></svg>`;
     }
 
     function cardHtml(d, i, t0, t1, times) {
@@ -90,6 +96,15 @@
           <div class="o-desire-stat"><b>${d.satisfied.length} 回</b><span>満たした記憶</span></div>
         </div>
         <div class="o-desire-plot">${plotSvg(d, t0, t1, times)}<div class="o-desire-tip"></div></div>
+        ${d.trial ? `<div class="o-desire-trial">
+          <div class="o-desire-key" style="margin:6px 0 4px">
+            <span><i style="width:18px;height:2px;background:color-mix(in srgb, ${esc(d.color)} 72%, #333);opacity:.55"></i>いまの決まり</span>
+            <span><i style="width:18px;height:0;border-top:2px dashed var(--ui-text)"></i>試し算(相談して決めた案)</span>
+          </div>
+          <div>上限にいた時間: いま <b>${pct(d.full_pct)}</b> → 試し算 <b>${pct(d.trial.full_pct)}</b></div>
+          <details class="o-desire-more"><summary>試し算の決まり</summary>${d.trial.rule.map(r => `<div>・${esc(r)}</div>`).join("")}
+            <div style="margin-top:4px">家の決まりは変えていません。線を見比べるための計算です。</div></details>
+        </div>` : ""}
         <details class="o-desire-more"><summary>この欲求の決まり</summary>
           <div>満たしてから ${hoursText(d.hours)} で、上限(1.0)まで上がります</div>${fixed}${floor}
           <div>道具(satisfy_desire)で満たした回数: ${d.tool_satisfied} 回</div>
@@ -129,7 +144,9 @@
       const when = new Date(data._times[best]);
       const fx = (data._times[best] - t0) / (t1 - t0);
       hair.setAttribute("x1", (fx * W).toFixed(1)); hair.setAttribute("x2", (fx * W).toFixed(1)); hair.style.display = "block";
-      tip.textContent = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}  ${d.values[best].toFixed(2)}`;
+      const tv = d.trial ? d.trial.values[best] : null;
+      tip.textContent = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}  ${d.trial ? "いま " : ""}${d.values[best].toFixed(2)}`
+        + (tv === null || tv === undefined ? "" : ` / 試し算 ${tv.toFixed(2)}`);
       tip.style.left = Math.min(box.width - 50, Math.max(50, fx * box.width)) + "px";
       tip.style.display = "block";
     }
