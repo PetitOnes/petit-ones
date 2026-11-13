@@ -45,6 +45,17 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 0 4 * * * bash ~/petit_claude/backup/save.sh   # バックアップ(scripts/backup_petit.sh)
 ```
 
+- **記憶の整理は、既定では減衰だけ**(重要度を下げるだけで、消さない)。似た記憶の統合と忘却は記憶を消すので、使う家だけ cron の行に `MEMORY_SLEEP_MERGE=true` / `MEMORY_SLEEP_FORGET=true` を足す。理由は m5-petit-memory の README(sleep)
+
+## 埋め込みを 1 つのプロセスにまとめる(任意)
+
+記憶のサーバー(memory-mcp)は、1 回でも覚える・思い出すをすると埋め込みのモデルを読んで約 1.4GB になる。子ごと・セッションごとに立つので、何人も同時に動く家では重なる。`memory-embed-server` を常駐させると、モデルを読むのはそれ 1 つになる(各 memory-mcp は 100MB 前後、最初の 1 回も 0.1 秒ほど)。
+
+1. systemd(ユーザー)に `memory-embed-server.service` を置いて `systemctl --user enable --now memory-embed-server`(ユニットの例は m5-petit-memory の README)
+2. 各子の `config/autonomous-mcp.json`・`config/chat-mcp.json` と `.mcp.json` の、記憶のサーバーの `env` に `"MEMORY_EMBED_SERVER": "http://127.0.0.1:18766"` を足す
+
+サーバーが止まっていても、各 memory-mcp が自分でモデルを読んで続ける。確かめるには `curl http://127.0.0.1:18766/health`。
+
 ## 家とコードを分けて、同期する
 
 ぷちが動いている PC には、このリポジトリの checkout が **2 つ** ある。
