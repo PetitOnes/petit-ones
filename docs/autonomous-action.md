@@ -48,3 +48,10 @@ Claude Code は cwd とその祖先の `CLAUDE.md` / `.claude/CLAUDE.md`、設�
 - 置き場所: `PETIT_DATA_DIR/.claude/`(git には入れない)。中身は `settings.json`(language・model・Stop フック程度)、`.credentials.json`(`~/.claude/.credentials.json` へのリンク)、`.claude.json`(オンボーディング済みの状態を写し、家のディレクトリを信頼済みに)、`commands/`(`.claude/commands/*.md` へのリンク)、`projects/<cwd>/memory/`(ぷちの自動メモリ)
 - 変えるなら環境変数 `PETIT_CLAUDE_CONFIG_DIR`。ディレクトリが無ければ今までどおり `~/.claude` を使う
 - 開発者側の注意: `~/.claude/CLAUDE.md` は家の祖先(`$HOME/.claude/CLAUDE.md`)としても読まれる。開発用の全体指示は `~/work/CLAUDE.md` など、家の祖先でない場所に置く
+
+## 付けるファイルの重さの見張り(2026-11-13)
+
+Claude Code は、大きすぎる `@` 添付を黙って落とす(実測: 70 KB は付く、85 KB は落ちる)。自律行動は毎回 `SOUL.md`・`TODO_ACTIVE.md`(無ければ TODO.md)・`diary_summary.md` の大きさを測り、
+`PROMPT_FILE_WARN_KB`(既定 40)以上なら、(1) ログに `[prompt-size] …` を残し、(2) 本人のプロンプトに「## 注意: 自分のファイルが重い」として軽くする手順を入れ(消さず移す)、(3) `scripts/slack_notify.py` で 1 日 1 回 人にも知らせる(`state/.prompt-size-notified` に日付。`PROMPT_SIZE_SLACK=0` で止められる)。
+ダッシュボードも `SOUL.md` が同じしきい値を超えたら `[prompt-size]` をログに出す(会話のたびに system prompt へ全文入るため)。
+

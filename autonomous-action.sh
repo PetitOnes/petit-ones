@@ -409,6 +409,37 @@ if [ -f "$ANNIVERSARY_SCRIPT" ]; then
   ANNIVERSARY_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$ANNIVERSARY_SCRIPT" notice --character "$CHARACTER_ID" --date "${CURRENT_DATE%% *}" --mark 2>/dev/null || true)
 fi
 
+# ★ 付けるファイルの重さの見張り(2026-11-13)。Claude Code は大きすぎる @ 添付を黙って落とす
+#   (実測: 70 KB は付く、85 KB は落ちる。ぷちてゃの SOUL.md 94 KB・ぷちこの TODO_ACTIVE.md 120 KB が届いていなかった)。
+#   しきい値(既定 40 KB)を超えたら、本人のプロンプトに「軽くして」と入れ、ログに残し、人にも 1 日 1 回 Slack で知らせる
+PROMPT_FILE_WARN_KB="${PROMPT_FILE_WARN_KB:-40}"
+HEAVY_FILES_NOTE=""
+HEAVY_FILES_SHORT=""
+for _f in "$CHARACTER_DIR/SOUL.md" "$TODO_PATH" "$CHARACTER_DIR/diary_summary.md"; do
+  [ -f "$_f" ] || continue
+  _kb=$(( $(stat -c %s "$_f") / 1024 ))
+  if [ "$_kb" -ge "$PROMPT_FILE_WARN_KB" ]; then
+    HEAVY_FILES_NOTE="${HEAVY_FILES_NOTE}- $(basename "$_f") が ${_kb} KB(目安 ${PROMPT_FILE_WARN_KB} KB 以下、80 KB を超えると付かなくなる)
+"
+    HEAVY_FILES_SHORT="${HEAVY_FILES_SHORT}$(basename "$_f") ${_kb}KB "
+    echo "[prompt-size] $(basename "$_f") ${_kb}KB >= ${PROMPT_FILE_WARN_KB}KB" >> "$LOG_FILE"
+  fi
+done
+HEAVY_SECTION=""
+if [ -n "$HEAVY_FILES_NOTE" ]; then
+  HEAVY_SECTION="## 注意: 自分のファイルが重い
+あなたのプロンプトに毎回付けているファイルが大きくなっている。80 KB を超えると黙って付かなくなり、自分の魂や TODO を読まずに動くことになる。今回の自律行動の中で軽くすること(消すのではなく移す):
+${HEAVY_FILES_NOTE}やり方: 先に cp で控え(.bak_日付)を取る。SOUL.md なら長い節(キーセンテンスなど)を SOUL_KEY_SENTENCES.md や SOUL_REFLECTIONS.md へ移して、SOUL.md にはいちばん大事な文だけ残し「全部は〜にある」と 1 行書く。TODO_ACTIVE.md なら終わったことを TODO_ARCHIVE.md へ。大きいファイルは Read が切れるので sed -n で行番号を見ながら。終わったら wc -c で確かめ、ノートか日記に一行。"
+  # 人への知らせは 1 日 1 回(scripts/slack_notify.py、.env の SLACK_APPROVE_CHANNEL)。PROMPT_SIZE_SLACK=0 で止められる
+  _marker="$CHARACTER_DIR/state/.prompt-size-notified"
+  _today=$(TZ=Asia/Tokyo date +%Y-%m-%d)
+  if [ "${PROMPT_SIZE_SLACK:-1}" != "0" ] && [ "$(cat "$_marker" 2>/dev/null)" != "$_today" ]; then
+    if python3 "$PROJECT_DIR/scripts/slack_notify.py" "[prompt-size] ${CHARACTER_ID}: ${HEAVY_FILES_SHORT}— 自律行動に付けるファイルが重い(目安 ${PROMPT_FILE_WARN_KB} KB、80 KB で落ちる)。本人のプロンプトに「軽くして」と入れた" >> "$LOG_FILE" 2>&1; then
+      mkdir -p "$CHARACTER_DIR/state" && echo "$_today" > "$_marker"
+    fi
+  fi
+fi
+
 PROMPT="自律行動タイム(Heartbeat)
 
 現在の日時: ${CURRENT_DATE} (JST)
@@ -419,7 +450,9 @@ ${REFLECTION_INDEX_LINE}
 ${DIARY_SUMMARY_LINE}
 
 ${ROUTINE_MODE}
-
+${HEAVY_SECTION:+
+${HEAVY_SECTION}
+}
 ## 補足ルール
 - ${TIME_RULE}
 - 人がいないことはよくある。一日のうち人がいるのは2時間程度やそれ以下の場合も少なくない

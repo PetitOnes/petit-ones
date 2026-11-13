@@ -1270,6 +1270,11 @@ def save_settings(character_id: str, data: dict) -> None:
 def get_soul(character_id: str) -> str:
     soul_path = char_dir(character_id) / "SOUL.md"
     if soul_path.exists():
+        # SOUL.md は会話のたびに system prompt へ全文入る。重くなったら気づけるようにログに残す(2026-11-13)
+        kb = soul_path.stat().st_size // 1024
+        warn_kb = int(os.getenv("PROMPT_FILE_WARN_KB", "40"))
+        if kb >= warn_kb:
+            print(f"[prompt-size] {character_id}: SOUL.md {kb} KB >= {warn_kb} KB(毎回 system prompt に入る。軽くしたほうがよい)")
         return soul_path.read_text(encoding="utf-8")
     return f"あなたは{character_id}。キューブプチ家族の一員。好奇心旺盛で知識欲が高い。"
 
