@@ -65,6 +65,7 @@ _MCP_DID = {
     ("memory", "save_visual_memory"): "memory", ("memory", "save_audio_memory"): "memory",
     ("notes", "write_note"): "note", ("notes", "append_note"): "note",
 }
+QUIET_NOTE_PREFIX = "しずかな時間"   # scripts/quiet_time.py が足すノート(何も残さなかった回の、その子の言葉)
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
 
@@ -281,9 +282,12 @@ class _Index:
                 self._add(ts, kind="mail", to=src.name_of("_".join(rest[:i])), _file=f)
 
     def _notes(self) -> None:
-        """ノートは、最後に書いた・直した日にだけ出る(更新時刻)"""
+        """ノートは、最後に書いた・直した日にだけ出る(更新時刻)。
+
+        「しずかな時間_YYYY-MM」は自律行動のあとに自動で足されるノートなので、「書いた」とは出さない
+        """
         for f in _files(self.src.char_dir / "notes"):
-            if f.suffix != ".md":
+            if f.suffix != ".md" or f.stem.startswith(QUIET_NOTE_PREFIX):
                 continue
             try:
                 ts = datetime.fromtimestamp(f.stat().st_mtime)
