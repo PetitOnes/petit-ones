@@ -5517,6 +5517,24 @@ def api_mailbox_read_all(request: Request):
     return {"marked": marked}
 
 
+@app.get("/api/mailbox/unread_count")
+def api_mailbox_unread_count(request: Request):
+    """ログインユーザー宛の、まだ読んでいないメールの数(アーカイブは数えない)。ファイル名と印だけを見る(本文は読まない)"""
+    username = _get_username(request) or "arisan"
+    mailbox_dir = DATA_DIR / "mailbox"
+    if not mailbox_dir.exists():
+        return {"unread": 0}
+    all_meta = _load_mailbox_metadata()
+    unread = 0
+    for f in mailbox_dir.iterdir():
+        if not f.name.endswith(".md") or _parse_mail_meta_from_file(f, username) is None:
+            continue
+        meta = _get_mail_meta(f.name, all_meta)
+        if not meta["archived"] and username not in (meta.get("read_by") or []):
+            unread += 1
+    return {"unread": unread}
+
+
 @app.get("/api/mailbox/all")
 def api_mailbox_all(filter: str = "all"):
     """全メール一覧（メールボックスにあるすべて）"""
@@ -5789,6 +5807,10 @@ HTML = """<!DOCTYPE html>
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
     .gear-btn { background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #bbb; }
+    /* メールボックスのボタンの右上: 未読があるときだけ、赤い丸に数を出す */
+    #mailBtn { position: relative; }
+    .mail-badge { display: none; position: absolute; top: -3px; right: -3px; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 8px; background: #e53935; color: #fff; font-size: 0.62rem; font-weight: 700; line-height: 16px; text-align: center; font-family: -apple-system, sans-serif; pointer-events: none; }
+    .mail-badge.show { display: block; }
     /* トップバーの絵文字の後ろに、薄い丸(2026-11-10 ありさん) */
     .topbar .gear-btn { width: 38px; height: 38px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; border-radius: 50%; background: rgba(255,255,255,0.4); }
     .updated { font-size: 0.75rem; color: #aaa; margin-bottom: 16px; }
@@ -6115,7 +6137,7 @@ HTML = """<!DOCTYPE html>
       <div class="char-menu" id="charTabs" style="display:none"></div>
     </div>
     <div class="topbar-btns">
-      <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬</button>
+      <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬<span class="mail-badge" id="mailBadge"></span></button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
     </div>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
@@ -7845,8 +7867,23 @@ HTML = """<!DOCTYPE html>
 
     // 既読・未読(2026-11-13 ありさん): 自分で付ける印。メールは一覧に全文が出るので、開いたら既読、にはしない
     let _mailUnread = 0;
+    // トップのメールボックスのボタンに、未読の数の赤い丸を出す(0 なら出さない、100 以上は 99+)
+    function showMailBadge(n) {
+      const b = document.getElementById("mailBadge");
+      if (!b) return;
+      b.textContent = n > 99 ? "99+" : String(n);
+      b.classList.toggle("show", n > 0);
+      document.getElementById("mailBtn").title = n > 0 ? `メールボックス(未読 ${n} 通)` : "メールボックス";
+    }
+    async function refreshMailBadge() {
+      try { showMailBadge((await (await fetch("/api/mailbox/unread_count")).json()).unread || 0); } catch (e) {}
+    }
+    document.addEventListener("DOMContentLoaded", refreshMailBadge);
+    setInterval(refreshMailBadge, 60000);
+
     function _showMailUnread(n) {
       _mailUnread = Math.max(0, n);
+      showMailBadge(_mailUnread);
       document.getElementById("mailUnreadCount").textContent = _mailUnread ? ` ${_mailUnread}` : "";
       document.getElementById("mailReadAllBtn").style.display = _mailUnread ? "block" : "none";
     }
