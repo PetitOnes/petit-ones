@@ -17,7 +17,7 @@ repositories:
   m5-petit-memory:
     type: git
     url: https://github.com/PetitOnes/m5-petit-memory.git
-    version: b47b3b6604aa4c9ecc27dd26fd820dcf32c2dd77
+    version: 0c22703409ff55e02bb1af4779b8a4f6b1babd84
   m5-petit-mcp:
     type: git
     url: https://github.com/PetitOnes/m5-petit-mcp.git
