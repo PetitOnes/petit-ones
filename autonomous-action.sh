@@ -651,6 +651,10 @@ else
     RESULT_JSON=$(grep -m1 '"type":"result"' "$STREAM_FILE" 2>/dev/null || echo "{}")
     # 人間が読めるログに変換して追記
     python3 "$ALLOWED_DIR/scripts/format_stream_log.py" "$STREAM_FILE" >> "$LOG_FILE" 2>/dev/null
+    # しずかな時間: 何も残さなかった回(ただ見ていた回)は、その子の最後の言葉を、その子のノートに 1 行だけ足す。
+    # 記録の上で空白にしない(2026-11-13、ぷちたちの希望)。失敗しても自律行動は止めない
+    PETIT_DATA_DIR="$DATA_DIR" python3 "$ALLOWED_DIR/scripts/quiet_time.py" record \
+      --character "$CHARACTER_ID" --stream "$STREAM_FILE" >> "$LOG_FILE" 2>&1 || true
     # session_id 抽出
     NEW_SESSION_ID=$(echo "$RESULT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
     if [ -n "$NEW_SESSION_ID" ]; then
