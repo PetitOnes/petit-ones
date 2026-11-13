@@ -86,7 +86,7 @@
       } else if (it.kind === "body") {
         body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
       } else if (it.kind === "alone") {
-        body = "ひとりの時間";
+        body = "ひとりの時間" + (it.text ? ` <span class="o-log-sub">${esc(it.text)}</span>` : "");
       }
       const cls = "o-log-row" + (it.kind === "alone" ? " is-alone-run" : "") + (it.alone ? " in-alone" : "");
       return `<div class="${cls}" data-kind="${it.kind}"><span class="a-time">${span}</span><span class="o-log-icon">${d.icon}</span><div class="o-log-body">${body}</div></div>`;

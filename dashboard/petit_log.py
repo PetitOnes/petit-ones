@@ -11,6 +11,8 @@
   ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
   それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
+- ひとりの時間の行には、その回に使った道具から決まった言い方で一言を添える(「様子を見て、眠った」など)。
+  その子の言葉や中身は写さない
 """
 
 from __future__ import annotations
@@ -39,6 +41,26 @@ BODY_CONTACT = {"picked_up", "put_down", "touch"}
 BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた"}
 WOKE_ITSELF = "自分で起きた"
 RESTARTED = "体が入れ直された"
+# ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順
+ALONE_DID = [
+    ("wake", "起きて", "起きた"),
+    ("mail_read", "手紙を読んで", "手紙を読んだ"),
+    ("look", "まわりを見て", "まわりを見た"),
+    ("web", "調べものをして", "調べものをした"),
+    ("speak", "話して", "話した"),
+    ("memory", "記憶に残して", "記憶に残した"),
+    ("note", "ノートを書いて", "ノートを書いた"),
+    ("mail", "手紙を書いて", "手紙を書いた"),
+    ("sleep", "眠って", "眠った"),
+]
+ALONE_NOTHING = ("様子を見て", "様子を見た")   # どれにも当たらない回、眠っただけの回の頭
+_MCP_DID = {
+    ("m5", "wake"): "wake", ("m5", "sleep"): "sleep", ("m5", "speak"): "speak",
+    ("m5", "take_snapshot"): "look", ("m5", "look"): "look",
+    ("memory", "remember"): "memory", ("memory", "create_episode"): "memory",
+    ("memory", "save_visual_memory"): "memory", ("memory", "save_audio_memory"): "memory",
+    ("notes", "write_note"): "note", ("notes", "append_note"): "note",
+}
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
 
@@ -115,6 +137,60 @@ def _called_wake(log: Path, ts: datetime, char_id: str) -> bool:
                 if at is None or abs((ts - at).total_seconds()) <= WAKE_NEAR_S:
                     return True
     return False
+
+
+def _did(name: str, args: dict, char_id: str) -> str | None:
+    """道具の呼び出し 1 回 → ALONE_DID の印。一言にしないものは None"""
+    if name.startswith("mcp__"):
+        parts = name.split("__")
+        if len(parts) != 3:
+            return None
+        server = parts[1]
+        for tail in ("-mcp", "-system", f"-{char_id}"):   # m5-mcp・m5-<id> → m5、memory-<id> → memory
+            if server.endswith(tail):
+                server = server[: -len(tail)]
+        return _MCP_DID.get((server, parts[2]))
+    if name in ("WebSearch", "WebFetch"):
+        return "web"
+    if name == "Bash":
+        cmd = str(args.get("command", ""))
+        if "write_mailbox.py" in cmd:
+            return "mail"
+        if "mark_mail_read.py" in cmd:
+            return "mail_read"
+        if "reader.py" in cmd:
+            return "web"
+    if name in ("Write", "Edit") and "/notes/" in str(args.get("file_path", "")):
+        return "note"
+    return None
+
+
+def _alone_words(log: Path, char_id: str) -> str:
+    """ひとりの時間 1 回に添える一言。その回に使った道具から、決まった言い方で組む(その子の言葉は写さない)"""
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    did: set[str] = set()
+    for line in lines:
+        if '"tool_use"' not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_use":
+                args = c.get("input")
+                key = _did(str(c.get("name", "")), args if isinstance(args, dict) else {}, char_id)
+                if key:
+                    did.add(key)
+    words = [(te, ta) for key, te, ta in ALONE_DID if key in did]
+    if not words or did == {"sleep"}:
+        words.insert(0, ALONE_NOTHING)
+    return "、".join([te for te, _ in words[:-1]] + [words[-1][1]])
 
 
 def _files(d: Path) -> list[Path]:
@@ -227,7 +303,7 @@ class _Index:
             end = min(max(end, ts), ts + timedelta(seconds=ALONE_MAX_S))
             self.runs.setdefault(ts.date(), []).append((ts, end))
             self.run_logs.append((ts, end, f))
-            self._add(ts, kind="alone", _end=end)
+            self._add(ts, kind="alone", _end=end, _file=f)
 
     def _memories(self, day: Date) -> list[dict]:
         if not self.src.memory_db.exists():
@@ -358,6 +434,8 @@ class _Index:
                 row["more"] = len(body) > MAIL_TEXT_MAX
             elif "_end" in it:   # ひとりの時間、続いた体の出来事
                 row["end"] = it["_end"].strftime("%H:%M")
+                if it["kind"] == "alone":
+                    row["text"] = _alone_words(it["_file"], self.src.char_id)
             if it["kind"] != "alone" and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
             out.append(row)
