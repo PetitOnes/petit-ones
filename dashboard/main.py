@@ -2011,7 +2011,21 @@ def api_diary_day(character_id: str, date: str):
             "prev": prev_day, "next": next_day}
 
 
-_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html"}
+_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html"}
+
+
+@app.get("/desires", response_class=HTMLResponse)
+def desires_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["desires"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/{character_id}/desire_history")
+def api_desire_history(character_id: str, days: int = 7):
+    """その子の欲求が、この days 日どう動いたか(決まり・強さの記録・満たした記憶)。読むだけ"""
+    import desire_history
+    if not _is_petit(character_id):
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    return desire_history.build(char_dir(character_id), _STREAM_LOG_ROOT / character_id, memory_db_path(character_id), days=days)
 
 
 @app.get("/anniversaries", response_class=HTMLResponse)
@@ -6706,6 +6720,7 @@ HTML = """<!DOCTYPE html>
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
+      desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
@@ -6851,7 +6866,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", library: "/library"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", library: "/library"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
