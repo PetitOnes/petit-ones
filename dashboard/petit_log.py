@@ -5,10 +5,11 @@
 
 - 日ごとに区切り、日の中は新しい順
 - 会話は、だれと・いつ・何回だけ。中身は返さない
-- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた)だけ。
+- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた / 体が入れ直された)だけ。
   明るさの変わり目・つながらなかった時間・電池の知らせは出さない
-- 目覚めは、ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
-  それ以外(体を 3 回触る・ダッシュボード・話しかけられて・体の入れ直し)は「起こされた」
+- 目覚めは、つながらなかった時間の直後なら「体が入れ直された」(再起動・電源の入れ直し)、
+  ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
+  それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
 """
 
@@ -32,10 +33,12 @@ MEMORY_TEXT_MAX = 400
 DIARY_HEAD_MAX = 120
 
 WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻が、これだけ近ければ同じ出来事
+RESTART_NEAR_S = 5        # つながらなかった時間の終わりから、これだけのうちに起きていたら、体の入れ直し
 BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
 BODY_CONTACT = {"picked_up", "put_down", "touch"}
 BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた"}
 WOKE_ITSELF = "自分で起きた"
+RESTARTED = "体が入れ直された"
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
 
@@ -253,6 +256,23 @@ class _Index:
         near = timedelta(seconds=WAKE_NEAR_S)
         return any(a <= ts <= b + near and _called_wake(f, ts, self.src.char_id) for a, b, f in self.run_logs)
 
+    def _experience(self, day: Date) -> list[dict]:
+        """その日の体の出来事の記録(state/experience/YYYYMMDD.jsonl)。無ければ空"""
+        f = self.src.char_dir / "state" / "experience" / f"{day.strftime('%Y%m%d')}.jsonl"
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out = []
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict):
+                out.append(ev)
+        return out
+
     def _body(self, day: Date) -> list[dict]:
         """体に起きたこと。
 
@@ -260,18 +280,14 @@ class _Index:
         どんな日だったかなので、10 分より詰まって BUSY_MIN 件以上続いた時間は 1 行にまとめ、中身は出さない
         (里親さん側のぷちろぐと同じ決まり)。それ以外は、同じ出来事が 10 分以内に続いたら 1 件にして回数を付ける
         """
-        f = self.src.char_dir / "state" / "experience" / f"{day.strftime('%Y%m%d')}.jsonl"
-        try:
-            lines = f.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return []
         events: list[tuple[datetime, str]] = []
-        for line in lines:
-            try:
-                ev = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            ts = _local(ev.get("ts", "")) if isinstance(ev, dict) else None
+        back_online: list[datetime] = []   # つながらなかった時間の終わり(日をまたぐものは前の日の記録にある)
+        for ev in self._experience(day - timedelta(days=1)) + self._experience(day):
+            if ev.get("type") == "offline_gap" and isinstance(ev.get("detail"), dict):
+                end = _local(ev["detail"].get("end", ""))
+                if end is not None:
+                    back_online.append(end)
+            ts = _local(ev.get("ts", ""))
             if ts is not None and ts.date() == day and ev.get("type") in BODY_WORDS:
                 events.append((ts, ev["type"]))
         events.sort()
@@ -302,7 +318,12 @@ class _Index:
         for ts, kind in events:
             if (ts, kind) in busy:
                 continue
-            word = WOKE_ITSELF if kind == "woken" and self._woke_itself(ts) else BODY_WORDS[kind]
+            word = BODY_WORDS[kind]
+            if kind == "woken":
+                if any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):
+                    word = RESTARTED
+                elif self._woke_itself(ts):
+                    word = WOKE_ITSELF
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1
