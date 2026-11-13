@@ -18,11 +18,21 @@ if [ -z "$CHAR_ID" ] || [ -z "$PROMPT_FILE" ]; then
     exit 1
 fi
 
-DATA_DIR="/home/cube-petit/petit_claude"
+DATA_DIR="${PETIT_DATA_DIR:-$HOME/petit_claude}"
 STATE_DIR="$DATA_DIR/characters/$CHAR_ID/state"
 SESSION_FILE="$STATE_DIR/.chat-terminal-session-id"
 SESSION_DATE_FILE="$STATE_DIR/.chat-terminal-session-date"
-PROJECTS_DIR="$HOME/.claude/projects/-home-cube-petit-work-embodied-claude"
+# ぷち専用の Claude 設定(2026-11-13)。家の .claude/ があれば CLAUDE_CONFIG_DIR にし、cwd も家にする
+# (開発側の ~/.claude の CLAUDE.md・自動メモリと、リポの CLAUDE.md を読ませない。autonomous-action.sh と同じ)
+PETIT_CLAUDE_CONFIG_DIR="${PETIT_CLAUDE_CONFIG_DIR:-$DATA_DIR/.claude}"
+CONFIG_ROOT="$HOME/.claude"
+if [ -d "$PETIT_CLAUDE_CONFIG_DIR" ]; then
+    export CLAUDE_CONFIG_DIR="$PETIT_CLAUDE_CONFIG_DIR"
+    CONFIG_ROOT="$PETIT_CLAUDE_CONFIG_DIR"
+fi
+cd "$DATA_DIR" || exit 1
+# セッション記録は <設定>/projects/<cwd を - に潰した名前>/ に出る。新しい ID はそこを見て拾う
+PROJECTS_DIR="$CONFIG_ROOT/projects/$(pwd | sed 's#[^A-Za-z0-9]#-#g')"
 
 mkdir -p "$STATE_DIR"
 

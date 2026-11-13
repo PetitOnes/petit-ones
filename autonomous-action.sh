@@ -74,6 +74,14 @@ set +a
 # ★ 家ごとの上書き(任意)。USER_NAME・USER_ROOM・CLAUDE_MODEL・時間帯のルールなどをここで変えられる
 HOUSE_FILE="$DATA_DIR/config/house.sh"
 [ -f "$HOUSE_FILE" ] && source "$HOUSE_FILE"
+# ★ ぷち専用の Claude 設定(2026-11-13)。家の .claude/ があれば CLAUDE_CONFIG_DIR にして、開発側の
+#   ~/.claude(CLAUDE.md・自動メモリ・プラグイン)を読ませない。cwd も家にして、リポの CLAUDE.md を読ませない
+#   (Claude Code は cwd とその祖先の CLAUDE.md / .claude/CLAUDE.md を全部読むので、cwd をリポの外に出す必要がある)
+PETIT_CLAUDE_CONFIG_DIR="${PETIT_CLAUDE_CONFIG_DIR:-$DATA_DIR/.claude}"
+if [ -d "$PETIT_CLAUDE_CONFIG_DIR" ]; then
+  export CLAUDE_CONFIG_DIR="$PETIT_CLAUDE_CONFIG_DIR"
+fi
+CLAUDE_CWD="$DATA_DIR"
 
 # ★ ユーザー名・部屋名（時間帯ルールで使用）
 # 例: "あなた" "コウタ" など
@@ -430,8 +438,8 @@ ${PERMISSION_RULES}}
 "
 
 # プロジェクトディレクトリに移動
-cd "$PROJECT_DIR" || {
-  echo "Error: PROJECT_DIR not found: $PROJECT_DIR" >&2
+cd "$CLAUDE_CWD" || {
+  echo "Error: CLAUDE_CWD not found: $CLAUDE_CWD" >&2
   exit 1
 }
 
