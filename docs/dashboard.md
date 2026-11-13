@@ -146,3 +146,9 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `styleguide.html` | 部品の見本（`/ui`） |
 
 Web フォント・markdown の変換・会話の画像化は、外の CDN（Google Fonts・jsDelivr）から部品を読む。届かないときは、端末のフォントと素の文字で出る。
+
+## ぷちに渡す文(2026-11-13)
+
+会話の system prompt、写真・声の前置き、来場者、ぷち同士、体のイベント(カメラ・センサー・マイク)、展示の一言、日記の文は `prompts/dashboard/*.md`(一覧は `prompts/README.md`)。`main.py` は `_prompt("<名前>", **値)` で組み立てるだけで日本語の文を持たない。
+家ごとの言い回しは `PETIT_DATA_DIR/prompts/dashboard/<同名>.md` を置けば上書き(ダッシュボードの再起動は不要。毎回読む)。展示用の固定の紹介文は `prompts/dashboard/display_char_info.json`(同じく家で上書き可)。
+

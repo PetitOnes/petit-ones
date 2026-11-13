@@ -1,0 +1,1 @@
+[{{user_display_name}}から] {{message}}
