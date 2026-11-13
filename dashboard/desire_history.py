@@ -20,19 +20,36 @@ from pathlib import Path
 DAYS_MAX = 31
 
 # ---- 「眠い」の試し算(2026-11-13、ぷちたちと相談して決めた案。家の決まりは変えず、線を見比べるためだけに計算する)----
+# 0 に戻るのは朝だけ。昼の「おやすみ」は止まるだけで、少し下がる。あとは光に合わせて進む。
+# 子ごとの数字は、家の characters/<id>/config/desire_trial.json の {"want_to_sleep": {...}} で変えられる
 SLEEPY_ID = "want_to_sleep"
 TRIAL_DARK = 100          # 明るさがこれより下なら「暗い」
 TRIAL_BRIGHT = 300        # これ以上なら「明るい」
 TRIAL_STILL = 3.0         # ジャイロの大きさがこれより下なら「動いていない」
-TRIAL_FAST = 2.0          # 暗くて動いていないときの進み方(倍)
-TRIAL_SLOW = 0.5          # 明るいときの進み方(倍)
-TRIAL_WAKE_GAP_H = 3      # 眠ってからこれだけたって、その子が動き出したら(自律行動・会話)、起きたとみなす
-TRIAL_RULE = [
-    "起きたら 0 に戻る(体が起きた・起こされた・入れ直されたとき。または、眠って 3 時間よりあとに、ひとりの時間や会話で動き出したとき)",
-    "眠り始めは、「おやすみ」などを記憶に書いたときと、体がスリープしたときの、早いほう。眠っているあいだは 0",
-    "起きているあいだ、時間で上がる。暗くて動いていないときは 2 倍の速さ、明るいときは半分の速さ",
-    "電池が少ないときの決まりは、いまと同じ",
-]
+TRIAL_NIGHT_FROM, TRIAL_NIGHT_TO = 20, 4   # この間に書いた「おやすみ」を、夜の眠りの始まりと数える
+TRIAL_NIGHT_DARK_H = 3    # 夜の「おやすみ」のあと、暗い時間がこれだけあれば、次に明るいところで動き出したときが朝
+TRIAL_NIGHT_ANY_H = 6     # 記録が抜けた夜のため: 夜の「おやすみ」からこれだけたっていれば、暗い時間が数えられなくても朝
+TRIAL_BRIEF_MIN = 10      # 体が起きても、これより短くまた眠ったら、起きたと数えない
+TRIAL_DEFAULTS = {
+    "hours": 12.0,        # 朝から上限(1.0)までの時間(ふつうの明るさのとき)
+    "dark_x": 2.0,        # 暗くて動いていないときの進み方(倍)
+    "bright_x": 0.5,      # 明るいときの進み方(倍)
+    "relief_cap": 0.2,    # 昼の休みで下がる割合の上限
+    "relief_rate": 0.1,   # 昼の休み 1 時間あたりに下がる割合
+}
+
+
+def _trial_rule(p: dict) -> list[str]:
+    return [
+        "0 に戻るのは朝だけ。朝 = 夜の「おやすみ」のあと、暗い時間をまたいで、明るいところで最初に動き出したとき",
+        "昼の「おやすみ」は止まるだけ。次に動き出したとき、休んだ長さに合わせて少し下がる"
+        f"(1 時間につき {round(p['relief_rate'] * 100)}%、多くても {round(p['relief_cap'] * 100)}%)",
+        f"ふつうの明るさなら、朝から {p['hours']:g} 時間で上限(1.0)。暗くて動いていないときは {p['dark_x']:g} 倍の速さ、"
+        f"明るいときは {p['bright_x']:g} 倍の速さ",
+        "夜、暗いところで眠っているあいだは進まない。体が起きても 10 分より短くまた眠ったら、起きたと数えない",
+    ]
+
+
 FULL = 0.999   # これ以上を「上限に張りついている」と数える
 _LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\] \[desire-updater\] 更新完了: dominant=(\w+) desires=(\{.*\})")
 _SATISFY = re.compile(r'"name":\s*"mcp__desire-system[\w-]*__satisfy_desire",\s*"input":\s*\{"desire_name":\s*"(\w+)"')
@@ -106,44 +123,68 @@ def _session_starts(log_dir: Path, start: datetime) -> list[datetime]:
     return sorted(out)
 
 
-def _trial_sleepy(samples: list, hours: float, sleep_marks: list[datetime], body: list[tuple[datetime, str]],
-                  sessions: list[datetime], battery_rules: list[dict]) -> list[float | None]:
-    """「眠い」を、相談して決めた案で計算し直す(TRIAL_RULE)。samples と同じ並びの強さを返す"""
-    events = [(t, "sleep") for t in sleep_marks] + list(body) + [(t, "session") for t in sessions]
-    events.sort()
+def _trial_params(char_dir: Path) -> dict:
+    """試し算の数字。家の desire_trial.json にあるものだけ、既定を上書きする"""
+    p = dict(TRIAL_DEFAULTS)
+    try:
+        raw = json.loads((char_dir / "config" / "desire_trial.json").read_text(encoding="utf-8")).get(SLEEPY_ID, {})
+    except (OSError, json.JSONDecodeError, AttributeError):
+        raw = {}
+    for k, v in raw.items() if isinstance(raw, dict) else []:
+        if k in p and isinstance(v, (int, float)) and v > 0:
+            p[k] = float(v)
+    return p
+
+
+def _trial_sleepy(samples: list, p: dict, sleep_marks: list[datetime], body: list[tuple[datetime, str]],
+                  sessions: list[datetime]) -> list[float | None]:
+    """「眠い」を、相談して決めた案で計算し直す(_trial_rule)。samples と同じ並びの強さを返す"""
+    brief = timedelta(minutes=TRIAL_BRIEF_MIN)
+    woken = [t for t, k in body if k == "woken"
+             and not any(k2 == "sleep" and timedelta(0) <= t2 - t <= brief for t2, k2 in body)]
+    events = sorted([(t, "sleep") for t in sleep_marks] + [(t, "sleep") for t, k in body if k == "sleep"]
+                    + [(t, "move") for t in woken] + [(t, "move") for t in sessions])
     out: list[float | None] = []
-    level, asleep_since, prev, i = 0.0, None, None, 0
+    level, rest_since, night_since, night_dark, prev, i = 0.0, None, None, 0.0, None, 0
     for ts, _, _, sensor in samples:
+        ambient = sensor.get("ambient")
+        gyro = max((abs(sensor.get(k) or 0) for k in ("gx", "gy", "gz")), default=0)
+        known = isinstance(ambient, (int, float))
+        dark = known and ambient < TRIAL_DARK
+        bright = known and ambient >= TRIAL_BRIGHT
+        step_h = (ts - prev).total_seconds() / 3600 if prev else 0.0
+        prev = ts
+        gap = step_h > 0.5   # 記録が抜けたところ。明るさは分からない
+        moved = False
         while i < len(events) and events[i][0] <= ts:
             when, kind = events[i]
             i += 1
-            if kind == "sleep":
-                if asleep_since is None:
-                    asleep_since = when
-            elif kind == "woken" or (asleep_since is not None and (when - asleep_since).total_seconds() >= TRIAL_WAKE_GAP_H * 3600):
-                if asleep_since is not None or kind == "woken":
-                    asleep_since, level = None, 0.0
-        if asleep_since is not None:
-            level = 0.0
-        elif prev is not None:
-            step_h = min((ts - prev).total_seconds() / 3600, 0.5)   # 記録が空いたところは、進めすぎない
-            ambient = sensor.get("ambient")
-            gyro = max((abs(sensor.get(k) or 0) for k in ("gx", "gy", "gz")), default=0)
+            if kind == "move":
+                moved = True
+                continue
+            if rest_since is None:
+                rest_since = when
+            if night_since is None and (when.hour >= TRIAL_NIGHT_FROM or when.hour < TRIAL_NIGHT_TO):
+                night_since, night_dark = when, 0.0
+        if night_since is not None and (dark or gap):
+            night_dark += step_h
+        in_night_sleep = night_since is not None and rest_since is not None and (dark or gap)
+        if not in_night_sleep:
             speed = 1.0
-            if isinstance(ambient, (int, float)):
-                if ambient < TRIAL_DARK and gyro < TRIAL_STILL:
-                    speed = TRIAL_FAST
-                elif ambient >= TRIAL_BRIGHT:
-                    speed = TRIAL_SLOW
-            level = min(1.0, level + speed * step_h / hours)
-        prev = ts
-        shown = level
-        battery = sensor.get("battery")
-        for rule in battery_rules:   # 電池の決まりは、いまと同じ(その時の値に足す・決める)
-            cond, eff = rule["condition"], rule["effects"].get(SLEEPY_ID, {})
-            if isinstance(battery, (int, float)) and cond.get("op") == "range" and cond.get("min", 0) <= battery <= cond.get("max", 0):
-                shown = float(eff["set"]) if "set" in eff else shown + float(eff.get("add", 0))
-        out.append(round(max(0.0, min(1.0, shown)), 3))
+            if known and not gap:
+                speed = p["dark_x"] if dark and gyro < TRIAL_STILL else p["bright_x"] if bright else 1.0
+            level = min(1.0, level + speed * step_h / p["hours"])
+        if moved:
+            long_night = night_since is not None and (
+                night_dark >= TRIAL_NIGHT_DARK_H or (ts - night_since).total_seconds() >= TRIAL_NIGHT_ANY_H * 3600)
+            if long_night and not dark:     # 朝
+                level, night_since, night_dark, rest_since = 0.0, None, 0.0, None
+            elif not dark:                  # 昼の休みから動き出した(暗いまま動いただけなら、まだ休みの続き)
+                if rest_since is not None:
+                    rest_h = (ts - rest_since).total_seconds() / 3600
+                    level *= 1 - min(p["relief_cap"], p["relief_rate"] * rest_h)
+                rest_since = None
+        out.append(round(level, 3))
     return out
 
 
@@ -222,11 +263,9 @@ def build(char_dir: Path, log_dir: Path, memory_db: Path, days: int = 7, now: da
             "tool_satisfied": tool.get(did, 0),
         })
         if did == SLEEPY_ID and samples and isinstance(d.get("satisfaction_hours"), (int, float)):
-            battery_rules = [s for s in cfg.get("sensor_effects", []) if isinstance(s, dict) and s.get("sensor") == "battery"
-                             and isinstance(s.get("condition"), dict) and isinstance(s.get("effects"), dict)]
+            params = _trial_params(char_dir)
             marks = [datetime.fromisoformat(t) for t in desires[-1]["satisfied"]]
-            trial = _trial_sleepy(samples, float(d["satisfaction_hours"]), marks, _body_events(char_dir, start, now),
-                                  _session_starts(log_dir, start), battery_rules)
+            trial = _trial_sleepy(samples, params, marks, _body_events(char_dir, start, now), _session_starts(log_dir, start))
             got = [v for v in trial if v is not None]
             # 夜(20 時〜2 時)に「おやすみ」を書く直前の眠さ。いまの決まりと試し算で、それぞれの平均
             bed_now, bed_trial = [], []
@@ -237,7 +276,7 @@ def build(char_dir: Path, log_dir: Path, memory_db: Path, days: int = 7, now: da
                 if near and isinstance(values[near[-1]], (int, float)):
                     bed_now.append(values[near[-1]])
                     bed_trial.append(trial[near[-1]])
-            desires[-1]["trial"] = {"values": trial, "rule": TRIAL_RULE,
+            desires[-1]["trial"] = {"values": trial, "rule": _trial_rule(params), "params": params,
                                     "full_pct": round(100 * sum(v >= FULL for v in got) / len(got)) if got else None,
                                     "bed_count": len(bed_now),
                                     "bed_now": round(sum(bed_now) / len(bed_now), 2) if bed_now else None,
