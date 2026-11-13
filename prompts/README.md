@@ -23,7 +23,8 @@
 | `dashboard/system` | dashboard/main.py `call_claude()` | 会話の system prompt(--append-system-prompt。魂の定義・ファイル・メール・記念日・会話リレー・制限) |
 | `dashboard/from_prefix` | 同 | ありさん以外が話したときの「[〜から] 」 |
 | `dashboard/media_photos` `media_photo` `media_audio` | `_prepare_chat_media()` | 写真・声つきの前置き |
-| `dashboard/relay_hint` `group_context` | 個人チャット / グループチャット | 「話しかけて」の追記、「[さっき〜がこう言ってた]」 |
+| `dashboard/relay_hint` | 個人チャット | 「話しかけて」の追記 |
+| `dashboard/group_turn` `group_separate` `group_share` | グループチャット(`_group_turn_context()`、`/api/group/share/stream`) | みんなで話すとき、その子に知らせる文: 今回の順番・自分が何番目か・先に答えた子の返事 / べつべつに聞くときの断り / べつべつの返事を並べて見せる文 |
 | `dashboard/public_chat` | `/api/public/chat` | 来場者の本文 |
 | `dashboard/interact_start` `interact_reply` `interact_group_reply` `relay_turn` | `/api/interact*` `/api/relay/start` | ぷち同士 |
 | `dashboard/event_camera` `event_sensor` `event_mic` | 体のイベント(m5_watcher) | 「みてみて!」「感じてみて!」「聞いて聞いて!」 |

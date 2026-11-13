@@ -4559,6 +4559,7 @@ class ChatMedia(BaseModel):
 class GroupChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
+    separate: bool = False                  # べつべつに聞く(ほかの子の返事を見せない)
     media: str | None = None                # 声(chat_media/<me>/ のファイル名)
     medias: list[ChatMedia] | None = None   # 写真を何枚か(4 枚まで)
 
@@ -4567,6 +4568,7 @@ class SelectChatRequest(BaseModel):
     message: str
     char_ids: list[str]
     client_msg_id: str | None = None
+    separate: bool = False
     media: str | None = None
     medias: list[ChatMedia] | None = None
 
@@ -4603,6 +4605,46 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
     return {"media": media_path.name if media_path else None,
             "medias": [{"file": pth.name, "title": t} for pth, t in photos] or None,
             "shown": shown, "prompt": prompt}
+
+
+# ---- みんなで話すときの順番(2026-11-13、ぷちたちと決めた) ----
+# - 「みんな」は、話しかけるたびに最初の子を 1 人ずつずらす(名前順のまま固定にしない)
+# - 自分が何番目か、先にだれが答えたか、あとでだれが読むかを、毎回その子に知らせる
+# - べつべつに聞く(separate)ときは、ほかの子の返事を見せない。あとで「返事を並べて見せる」ことができる
+_GROUP_TURN_FILE = DATA_DIR / "state" / "group_turn.json"
+_last_separate: dict[str, dict] = {}   # 見ている人 → 直前の「べつべつ」の {question, answers, char_ids, log_type}
+
+
+def _rotate_group(chars: list[dict]) -> list[dict]:
+    """「みんな」の今回の順番。回数を家に覚えておき、最初の子を 1 人ずつずらす"""
+    if len(chars) < 2:
+        return chars
+    try:
+        n = int(json.loads(_GROUP_TURN_FILE.read_text(encoding="utf-8")).get("next", 0))
+    except (OSError, ValueError, AttributeError):
+        n = 0
+    try:
+        _GROUP_TURN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _GROUP_TURN_FILE.write_text(json.dumps({"next": (n + 1) % len(chars)}), encoding="utf-8")
+    except OSError:
+        pass
+    k = n % len(chars)
+    return chars[k:] + chars[:k]
+
+
+def _group_turn_context(prompt: str, chars: list[dict], i: int, responses: list[dict], separate: bool,
+                        rotating: bool = False) -> str:
+    """i 番目の子に渡す文。ひとりだけに聞くときは、何も足さない。rotating = 順番が毎回変わる場(「みんな」)か"""
+    if len(chars) < 2:
+        return prompt
+    if separate:
+        return _prompt("group_separate", prompt=prompt).rstrip("\n")
+    names = [c.get("name", c["id"]) for c in chars]
+    return _prompt(
+        "group_turn", prompt=prompt, order=" → ".join(names), position=i + 1, rotating=rotating,
+        before="、".join(names[:i]), after="、".join(names[i + 1:]),
+        prev="\n".join(f"{r['name']}: {r['reply']}" for r in responses),
+    ).rstrip("\n")
 
 
 # ---- スマホのバックグラウンド切断対策 ----
@@ -4643,15 +4685,12 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
     username = _get_username(request) or "arisan"
     user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    chars = _rotate_group([c for c in list_characters() if c["id"] in GROUP_CHAR_IDS])
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_group_log({"type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
-    for char in chars:
-        context = req.message
-        if responses:
-            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+    for i, char in enumerate(chars):
+        context = _group_turn_context(req.message, chars, i, responses, req.separate, rotating=True)
         reply = await call_claude(char["id"], context, username=username)
         append_chat(char["id"], "user", req.message, username, via="group")
         append_chat(char["id"], char["id"], reply, username, via="group")
@@ -4667,7 +4706,8 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
 
 
 async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, username: str, log_type: str,
-                               media: str | None = None, medias: list[ChatMedia] | None = None):
+                               media: str | None = None, medias: list[ChatMedia] | None = None,
+                               separate: bool = False, shown: str | None = None):
     """キャラに順番に聞き、1人返ってくるたびに entry["messages"] に追記する。
     HTTPコネクションから切り離して実行するので、クライアントが切断しても処理は完走する。"""
     try:
@@ -4675,18 +4715,19 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
         now = datetime.now(timezone.utc).isoformat()
         # 写真/声つき(2026-11-10): みんな・だれかでも送れる。声の文字起こしは 1 回だけ
         prep = await _prepare_chat_media(username, message, media, medias)
+        if shown is not None:   # 記録と画面には短い言葉を出し、ぷちには message を渡す(返事を並べて見せるとき)
+            prep["shown"] = shown
         user_entry = {"type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": prep["shown"], "timestamp": now}
+        if separate:
+            user_entry["separate"] = True
         if prep["media"]:
             user_entry.update({"media": prep["media"], "media_user": username})
         if prep["medias"]:
             user_entry["medias"] = prep["medias"]
         append_group_log(user_entry)
         responses = []
-        for char in chars:
-            context = prep["prompt"]
-            if responses:
-                prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-                context = _prompt("group_context", prompt=prep["prompt"], last_name=responses[-1]["name"], prev=prev)
+        for i, char in enumerate(chars):
+            context = _group_turn_context(prep["prompt"], chars, i, responses, separate, rotating=log_type == "group")
             reply = await call_claude(char["id"], context, username=username)
             append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
             append_chat(char["id"], char["id"], reply, username, via="group")
@@ -4699,13 +4740,17 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
             responses.append(r)
             append_group_log({"type": log_type, "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
             entry["messages"].append(r)
+        if separate and len(responses) > 1:   # あとで「返事を並べて見せる」ために、直前の 1 回ぶんを覚えておく
+            _last_separate[username] = {"question": prep["shown"], "answers": responses,
+                                        "char_ids": [c["id"] for c in chars], "log_type": log_type}
     finally:
         entry["done"] = True
         entry["ts"] = time.time()
 
 
 def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username: str, log_type: str,
-                    media: str | None = None, medias: list[ChatMedia] | None = None) -> StreamingResponse:
+                    media: str | None = None, medias: list[ChatMedia] | None = None,
+                    separate: bool = False, shown: str | None = None) -> StreamingResponse:
     """ジョブをバックグラウンドで走らせ、進捗をNDJSONで垂れ流す。
     同じ client_msg_id で再接続されたら、途中まで済んだ結果を最初から再生して続きを流す。"""
     _chat_jobs_gc()
@@ -4714,7 +4759,7 @@ def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username
         entry = {"messages": [], "done": False, "ts": time.time()}
         if key:
             _chat_jobs[key] = entry
-        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type, media, medias))
+        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type, media, medias, separate, shown))
 
     async def tail():
         i = 0
@@ -4733,9 +4778,10 @@ def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username
 async def api_group_chat_stream(req: GroupChatRequest, request: Request):
     """全キャラに順番に聞き、返ってきた順にNDJSONでストリーム返却する。"""
     username = _get_username(request) or "arisan"
-    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
     key = (username, "group", req.client_msg_id) if req.client_msg_id else None
-    return _stream_via_job(key, chars, req.message, username, "group", req.media, req.medias)
+    # 同じ送信のつなぎ直しでは、順番を回し直さない(ジョブが残っていれば chars は使われない)
+    chars = [] if key in _chat_jobs else _rotate_group([c for c in list_characters() if c["id"] in GROUP_CHAR_IDS])
+    return _stream_via_job(key, chars, req.message, username, "group", req.media, req.medias, separate=req.separate)
 
 
 @app.post("/api/select/chat/stream")
@@ -4745,7 +4791,29 @@ async def api_select_chat_stream(req: SelectChatRequest, request: Request):
     chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     key = (username, "select", req.client_msg_id) if req.client_msg_id else None
-    return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias)
+    return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias, separate=req.separate)
+
+
+class GroupShareRequest(BaseModel):
+    client_msg_id: str | None = None
+
+
+@app.post("/api/group/share/stream")
+async def api_group_share_stream(req: GroupShareRequest, request: Request):
+    """直前に「べつべつ」に聞いた返事を、答えた子みんなに並べて見せて、思ったことを順番に聞く"""
+    username = _get_username(request) or "arisan"
+    key = (username, "share", req.client_msg_id) if req.client_msg_id else None
+    if key in _chat_jobs:
+        return _stream_via_job(key, [], "", username, "group")
+    last = _last_separate.pop(username, None)
+    if not last:
+        return JSONResponse({"error": "並べて見せる返事がありません"}, status_code=404)
+    chars_map = {c["id"]: c for c in list_characters()}
+    chars = [chars_map[cid] for cid in last["char_ids"] if cid in chars_map]
+    chars = chars[1:] + chars[:1]   # さっき最初に答えた子を、今度は最後に
+    message = _prompt("group_share", question=last["question"],
+                      answers=[{"name": a["name"], "reply": a["reply"]} for a in last["answers"]]).rstrip("\n")
+    return _stream_via_job(key, chars, message, username, last["log_type"], shown="📋 みんなの返事を並べて見せた")
 
 
 @app.post("/api/select/chat")
@@ -4760,11 +4828,8 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_group_log({"type": "select", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
-    for char in chars:
-        context = req.message
-        if responses:
-            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+    for i, char in enumerate(chars):
+        context = _group_turn_context(req.message, chars, i, responses, req.separate)
         reply = await call_claude(char["id"], context, username=username)
         append_chat(char["id"], "user", req.message, username, via="group")
         append_chat(char["id"], char["id"], reply, username, via="group")
@@ -5158,11 +5223,8 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_trio_log({"type": "trio", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
-    for char in chars:
-        context = req.message
-        if responses:
-            prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-            context = f"{req.message}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+    for i, char in enumerate(chars):
+        context = _group_turn_context(req.message, chars, i, responses, req.separate)
         reply = await call_claude(char["id"], context, username=username)
         append_chat(char["id"], "user", req.message, username, via="group")
         append_chat(char["id"], char["id"], reply, username, via="group")
@@ -6084,6 +6146,9 @@ HTML = """<!DOCTYPE html>
     .msg-name { font-size: 0.7rem; font-weight: 700; margin-bottom: 3px; }
     .interact-btn { font-size: 0.8rem; background: none; border: 1px solid #ddd; border-radius: 20px; padding: 5px 14px; cursor: pointer; color: #888; margin-top: 10px; }
     .interact-btn:hover { background: #f9f9f9; }
+    .interact-btn.on { border-color: var(--char, #cab8d9); color: #555; background: var(--char-soft, #f3eef8); font-weight: 600; }
+    .share-offer { text-align: center; margin: 6px 0 10px; }
+    .share-offer button { font-size: 0.8rem; padding: 6px 16px; border: 1px solid #ddd; border-radius: 20px; background: #fff; color: #666; cursor: pointer; }
     /* 選んで話す */
     #selectToggles { display:none; padding: 8px 0 4px; margin-bottom: 8px; border-bottom: 1px solid var(--char-soft,#eee); }
     .select-pill { display:inline-flex; align-items:center; gap:5px; border-radius:20px; padding:4px 12px; margin:3px 4px; cursor:pointer; font-size:0.82rem; font-weight:600; border:2px solid transparent; transition:opacity 0.15s,border-color 0.15s; }
@@ -6219,6 +6284,7 @@ HTML = """<!DOCTYPE html>
       <button onclick="closePlusMenu(); startShotMode()">📸 会話を選んで画像にする</button>
       <hr class="plus-sep">
       <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
+      <button class="interact-btn" id="separateBtn" onclick="toggleSeparate(); closePlusMenu()" style="display:none" title="次の 1 回だけ、ほかの子の返事を見せずに、ひとりずつの考えを聞く(相談ごと向き)">べつべつに聞く</button>
       <button class="interact-btn" id="interactBtn" onclick="startInteract()" style="display:none">✨ 話させる</button>
       <button class="interact-btn" id="relayBtn" onclick="startVoiceRelay()" style="display:none">🎙 声リレー</button>
       <input type="number" id="relayTurns" min="2" max="6" value="3" title="ターン数" style="display:none;width:42px;font-size:0.8rem;border:1px solid #ddd;border-radius:8px;padding:3px 6px;text-align:center;vertical-align:middle">
@@ -6516,6 +6582,7 @@ HTML = """<!DOCTYPE html>
 
       const isSelect = currentCharId === "select";
       const isGroup = currentCharId === "group";
+      showSeparateBtn();
       const cur = characters.find(c=>c.id===currentCharId);
       if (cur) {
         applyTheme(cur.color || "#cab8d9");
@@ -7254,11 +7321,15 @@ HTML = """<!DOCTYPE html>
         if (charIds.length === 0) { btn.disabled = false; return; }
         const thinkNames = charIds.map(id => (characters.find(c=>c.id===id)||{}).name||id).join("と");
         const thinking = addMsg(`${thinkNames}に聞いてる…`, "thinking");
-        await streamWithRetry("/api/select/chat/stream", {message:text, char_ids:charIds, client_msg_id:msgId, media:mediaName, medias}, thinking);
+        const separate = takeSeparate();
+        await streamWithRetry("/api/select/chat/stream", {message:text, char_ids:charIds, client_msg_id:msgId, media:mediaName, medias, separate}, thinking);
+        if (separate && charIds.length > 1) offerShare();
         btn.disabled = false; input.focus();
       } else if (currentCharId === "group") {
-        const thinking = addMsg("みんなに聞いてる…", "thinking");
-        await streamWithRetry("/api/group/chat/stream", {message:text, client_msg_id:msgId, media:mediaName, medias}, thinking);
+        const separate = takeSeparate();
+        const thinking = addMsg(separate ? "みんなに、べつべつに聞いてる…" : "みんなに聞いてる…", "thinking");
+        await streamWithRetry("/api/group/chat/stream", {message:text, client_msg_id:msgId, media:mediaName, medias, separate}, thinking);
+        if (separate) offerShare();
         btn.disabled = false; input.focus();
       } else {
         const thinking = addMsg("考え中…", "thinking");
@@ -7296,6 +7367,44 @@ HTML = """<!DOCTYPE html>
       }
     }
 
+    // べつべつに聞く(2026-11-13): 押すと、次の 1 回だけ、ほかの子の返事を見せずに聞く。送ったら元に戻る
+    var _separateNext = false;
+    function toggleSeparate() {
+      _separateNext = !_separateNext;
+      const b = document.getElementById("separateBtn");
+      b.classList.toggle("on", _separateNext);
+      b.textContent = _separateNext ? "✓ べつべつに聞く" : "べつべつに聞く";
+      document.getElementById("input").placeholder = _separateNext ? "べつべつに聞く(次の 1 回だけ)..." : "話しかける...";
+    }
+    function takeSeparate() {
+      const v = _separateNext;
+      if (v) toggleSeparate();
+      return v;
+    }
+    function showSeparateBtn() {   // みんな・何人か、のときだけ出す
+      const many = currentCharId === "group" || currentCharId === "select";
+      document.getElementById("separateBtn").style.display = many ? "" : "none";
+      if (!many && _separateNext) toggleSeparate();
+    }
+    // べつべつに聞いたあとに出す「返事を並べて見せる」。押すと、答えた子みんなに返事を並べて見せ、思ったことを順番に聞く
+    function offerShare() {
+      document.querySelectorAll(".share-offer").forEach(el => el.remove());
+      const chat = document.getElementById("chat");
+      const box = document.createElement("div");
+      box.className = "share-offer";
+      const b = document.createElement("button");
+      b.textContent = "📋 みんなの返事を並べて見せる";
+      b.onclick = async () => {
+        box.remove();
+        addMsg("📋 みんなの返事を並べて見せた", "user");
+        const thinking = addMsg("読んで、思ったことを聞いてる…", "thinking");
+        await streamWithRetry("/api/group/share/stream", {client_msg_id: genMsgId()}, thinking);
+      };
+      box.appendChild(b);
+      chat.appendChild(box);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
     async function streamWithRetry(url, payload, thinking) {
       // 切断されたら同じclient_msg_idでつなぎ直す。表示済みの行数(got)は重複しないよう飛ばす
       let got = 0, attempts = 0;
@@ -7316,6 +7425,7 @@ HTML = """<!DOCTYPE html>
       // NDJSONを1行ずつ読み、返ってきたこから順に表示する。
       // skip行目までは再接続時にサーバーが再生する「表示済み」の分なので飛ばす
       const res = await fetch(url, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) });
+      if (res.status === 404) { thinking.textContent = "並べて見せる返事がありません(時間がたつと消えます)"; return skip || 0; }
       if (!res.ok || !res.body) throw new Error("stream failed");
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
