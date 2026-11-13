@@ -5955,6 +5955,9 @@ HTML = """<!DOCTYPE html>
     .mail-stamp { width: 34px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 15px; background: rgba(255,255,255,0.6); font-size: 1rem; line-height: 1; cursor: pointer; opacity: 0.45; filter: grayscale(0.6); }
     .mail-stamp:hover { opacity: 0.8; }
     .mail-stamp.on { opacity: 1; filter: none; border-color: #e0a0a0; background: #fff; }
+    /* ハートは、書いた子の色。うすい色(黄色など)でも形が見えるように、細いふちを付ける。押す前も色は残す */
+    .mail-stamp.is-heart { filter: none; }
+    .mail-heart { font-size: 1.15rem; line-height: 1; -webkit-text-stroke: 0.7px rgba(0,0,0,0.28); }
     .mail-read-all { margin: 0 0 10px auto; display: none; padding: 4px 12px; border: 1px solid #ccc; border-radius: 12px; background: #fff; font-size: 0.75rem; color: #666; cursor: pointer; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
     .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
@@ -7911,7 +7914,7 @@ HTML = """<!DOCTYPE html>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
         <div class="mail-body${bodyMd === null ? "" : " md"}">${bodyMd === null ? bodyText : bodyMd}</div>
-        ${m.sender_id ? `<div class="mail-stamps">${MAIL_STAMPS.map(([e, t]) => `<button class="mail-stamp${m.stamp === e ? " on" : ""}" title="${t}" onclick="toggleMailStamp('${fn}','${e}',this)">${e}</button>`).join("")}</div>` : ""}
+        ${m.sender_id ? `<div class="mail-stamps">${MAIL_STAMPS.map(([e, t]) => `<button class="mail-stamp${m.stamp === e ? " on" : ""}${e === MAIL_HEART ? " is-heart" : ""}" title="${t}" onclick="toggleMailStamp('${fn}','${e}',this)">${e === MAIL_HEART ? `<span class="mail-heart" style="color:${sc || "#e57373"}">♥</span>` : e}</button>`).join("")}</div>` : ""}
         ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
           <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
           <div class="mail-reply-row">
@@ -8034,6 +8037,7 @@ HTML = """<!DOCTYPE html>
     // スタンプ(2026-11-13): 手紙に気持ちを 1 つ返す。もう一度押すと外れる。付けると既読にもなる。
     // 書いたぷちには、次の自律行動か会話のときに「読んだ・スタンプが付いた」が 1 回だけ伝わる
     const MAIL_STAMPS = [["💛", "すき"], ["😊", "うれしい"], ["✨", "すてき"], ["🥹", "じんとした"], ["👀", "読んだよ"]];
+    const MAIL_HEART = "💛";   // ハートは、手紙を書いた子の色で描く(記録の上では 💛 のまま)
     async function toggleMailStamp(filename, emoji, btn) {
       const item = btn.closest(".mail-item");
       const stamp = btn.classList.contains("on") ? "" : emoji;
