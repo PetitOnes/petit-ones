@@ -56,8 +56,8 @@ fi
 CHARACTER_DIR="$DATA_DIR/characters/$CHARACTER_ID"
 
 # キャラクターごとの最大ターン数（環境変数 MAX_TURNS で上書き可、なければ settings.json から読む）
+SETTINGS_FILE="$CHARACTER_DIR/config/settings.json"   # 制限(allow_*)の読み取りでも使うので、MAX_TURNS の有無に関わらず決める
 if [ -z "$MAX_TURNS" ]; then
-  SETTINGS_FILE="$CHARACTER_DIR/config/settings.json"
   MAX_TURNS=$(python3 -c "import json,sys; d=json.load(open('${SETTINGS_FILE}')); print(d.get('max_turns', 20))" 2>/dev/null || echo 20)
 fi
 
@@ -332,9 +332,10 @@ fi
 # --- settings.json から制限を読む ---
 PERMISSION_RULES=""
 if [ -f "$SETTINGS_FILE" ] && command -v jq &>/dev/null; then
-  ALLOW_CAMERA=$(jq -r '.allow_camera // true' "$SETTINGS_FILE" 2>/dev/null)
-  ALLOW_SOUND=$(jq -r '.allow_sound // true' "$SETTINGS_FILE" 2>/dev/null)
-  ALLOW_MIC=$(jq -r '.allow_microphone // false' "$SETTINGS_FILE" 2>/dev/null)
+  # jq の「//」は false も「無い」扱いにして既定に戻してしまうので、has() で見る(allow_camera: false が効いていなかった)
+  ALLOW_CAMERA=$(jq -r 'if has("allow_camera") then .allow_camera else true end' "$SETTINGS_FILE" 2>/dev/null)
+  ALLOW_SOUND=$(jq -r 'if has("allow_sound") then .allow_sound else true end' "$SETTINGS_FILE" 2>/dev/null)
+  ALLOW_MIC=$(jq -r 'if has("allow_microphone") then .allow_microphone else false end' "$SETTINGS_FILE" 2>/dev/null)
   # 文面は prompts/autonomous/permission_rules.md(false のものだけ行が残る)
   PERMISSION_RULES="$(render autonomous/permission_rules --var allow_camera="$ALLOW_CAMERA" --var allow_sound="$ALLOW_SOUND" --var allow_mic="$ALLOW_MIC")"
 fi
