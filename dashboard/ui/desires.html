@@ -102,6 +102,7 @@
             <span><i style="width:18px;height:0;border-top:2px dashed var(--ui-text)"></i>試し算(相談して決めた案)</span>
           </div>
           <div>上限にいた時間: いま <b>${pct(d.full_pct)}</b> → 試し算 <b>${pct(d.trial.full_pct)}</b></div>
+          ${d.trial.bed_count ? `<div>夜に「おやすみ」を書く直前の眠さ(${d.trial.bed_count} 回の平均): いま <b>${d.trial.bed_now.toFixed(2)}</b> → 試し算 <b>${d.trial.bed_trial.toFixed(2)}</b></div>` : ""}
           <details class="o-desire-more"><summary>試し算の決まり</summary>${d.trial.rule.map(r => `<div>・${esc(r)}</div>`).join("")}
             <div style="margin-top:4px">家の決まりは変えていません。線を見比べるための計算です。</div></details>
         </div>` : ""}

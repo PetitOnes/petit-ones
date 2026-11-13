@@ -228,8 +228,20 @@ def build(char_dir: Path, log_dir: Path, memory_db: Path, days: int = 7, now: da
             trial = _trial_sleepy(samples, float(d["satisfaction_hours"]), marks, _body_events(char_dir, start, now),
                                   _session_starts(log_dir, start), battery_rules)
             got = [v for v in trial if v is not None]
+            # 夜(20 時〜2 時)に「おやすみ」を書く直前の眠さ。いまの決まりと試し算で、それぞれの平均
+            bed_now, bed_trial = [], []
+            for m in marks:
+                if not (m.hour >= 20 or m.hour < 2):
+                    continue
+                near = [i for i, (ts, _, _, _) in enumerate(samples) if timedelta(0) <= m - ts <= timedelta(minutes=12)]
+                if near and isinstance(values[near[-1]], (int, float)):
+                    bed_now.append(values[near[-1]])
+                    bed_trial.append(trial[near[-1]])
             desires[-1]["trial"] = {"values": trial, "rule": TRIAL_RULE,
-                                    "full_pct": round(100 * sum(v >= FULL for v in got) / len(got)) if got else None}
+                                    "full_pct": round(100 * sum(v >= FULL for v in got) / len(got)) if got else None,
+                                    "bed_count": len(bed_now),
+                                    "bed_now": round(sum(bed_now) / len(bed_now), 2) if bed_now else None,
+                                    "bed_trial": round(sum(bed_trial) / len(bed_trial), 2) if bed_trial else None}
 
     def _desc(items: object) -> list[str]:
         return [str(i.get("description", "")) for i in items if isinstance(i, dict) and i.get("description")] if isinstance(items, list) else []
