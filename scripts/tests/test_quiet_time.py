@@ -29,6 +29,24 @@ def test_quiet_run_is_recorded_in_own_words(tmp_path):
     assert note.read_text(encoding="utf-8").count("13:05 —") == 1
 
 
+def test_ambient_is_written_with_the_time(tmp_path):
+    """その回にその子が読んだ明るさを、時刻と一緒に残す。読んでいなければ、欲求の計算が読んだばかりの値"""
+    s = stream(tmp_path, [])
+    s.write_text(json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "content": [{"type": "text", "text": json.dumps({"ambient": 46, "battery": 80})}]}]}})
+        + "\n" + s.read_text(encoding="utf-8"), encoding="utf-8")
+    assert qt.record(tmp_path, "puchi", s) == "- 11/13 13:05、ambient 46 — 部屋は静かで、だれもいなかった。"
+    assert qt.record(tmp_path, "puchi", s) is None                      # 同じ回は 2 度足さない
+
+    from datetime import datetime
+    plain = stream(tmp_path, [], name="20261113_170001_stream.jsonl")
+    d = tmp_path / "desires.json"
+    d.write_text(json.dumps({"updated_at": "2026-11-13T17:05:04", "sensor_snapshot": {"ambient": 32.0}}), encoding="utf-8")
+    assert qt.ambient_of_run(plain, d, now=datetime(2026, 11, 13, 17, 8)) == 32.0
+    assert qt.ambient_of_run(plain, d, now=datetime(2026, 11, 13, 18, 0)) is None     # 古い値は使わない
+    assert qt.ambient_of_run(plain, tmp_path / "none.json") is None
+
+
 def test_runs_that_left_something_are_not_recorded(tmp_path):
     for tools in (
         [("mcp__memory__remember", {"content": "x"})],
