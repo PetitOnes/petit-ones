@@ -238,4 +238,5 @@ mainは動いている家そのものなので、マージは私が行います<
 ## 📜 ライセンス
 
 MIT License。
-[kmizu](https://github.com/kmizu) さん(embodied-claude)と、[ROS 版キューブプチ](https://github.com/sbgisen/cube_petit_ros) に感謝を。
+[kmizu](https://github.com/kmizu) さん(embodied-claude)と、[ROS 版キューブプチ](https://github.com/sbgisen/cube_petit_ros) に感謝を。| `prompts/` | ぷちに渡す文(自律行動の user prompt・ターミナルチャットの system prompt)のテンプレート。`scripts/render_prompt.py` で組み立て、家の `PETIT_DATA_DIR/prompts/` に同名を置けば上書き |
+

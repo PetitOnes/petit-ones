@@ -90,3 +90,9 @@ tmux list-sessions
 | 8765 | ダッシュボード（FastAPI） |
 | 7682 | ttyd（Claudeターミナル） |
 | 7681 | ttyd（ログインシェル、loopbackのみ） |
+
+## system prompt の文面(2026-11-13)
+
+`chat_startup.sh`(1 セッション、複数人可)と `chat_startup_3p.sh`(3 窓)は、どちらも `scripts/build_chat_prompt.py <id…>` で system prompt を作る。文面は `prompts/chat/system.md` 1 つ(1 人でも複数人でも同じテンプレート。複数人のときだけ「複数人チャットのルール」が付く)。
+名前は `characters/<id>/config/config.json` の `name`、話しかける人は `.env` の `COMPANION_NAME`。家ごとの言い回しは `PETIT_DATA_DIR/prompts/chat/system.md` で上書き。
+
