@@ -260,7 +260,10 @@ def test_battery_low_fires_once_per_threshold_with_hysteresis():
 
 
 def test_touch_is_detected_with_current_firmware_key():
-    """いまのファームは last_touch で返す(古い版は lastTouchEventTime)。どちらでも「触られた」になる"""
+    """いまのファームは last_touch で返す(古い版は lastTouchEventTime)。
+
+    どちらでも「触られた」になる
+    """
 
     def sample(value: int) -> dict:
         s = sensor_sample()

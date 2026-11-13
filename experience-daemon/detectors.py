@@ -64,7 +64,8 @@ AMBIENT_JUMP_COOLDOWN_SEC = 60.0
 # --- タッチ検出 ---
 # 連続タッチをまとめる時間窓（秒）。
 TOUCH_GROUP_WINDOW_SEC = 30.0
-TOUCH_KEYS = ("last_touch", "lastTouchEventTime")   # /sensors の、最後に触られた時刻の名前(新しい版が先)
+# /sensors の、最後に触られた時刻の名前(新しい版が先)
+TOUCH_KEYS = ("last_touch", "lastTouchEventTime")
 
 # --- オフライン検出 ---
 # ポーリング失敗がこの秒数以上続いたら offline_gap イベントとして記録する。
