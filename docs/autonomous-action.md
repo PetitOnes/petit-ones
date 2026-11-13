@@ -55,3 +55,9 @@ Claude Code は、大きすぎる `@` 添付を黙って落とす(実測: 70 KB 
 `PROMPT_FILE_WARN_KB`(既定 40)以上なら、(1) ログに `[prompt-size] …` を残し、(2) 本人のプロンプトに「## 注意: 自分のファイルが重い」として軽くする手順を入れ(消さず移す)、(3) `scripts/slack_notify.py` で 1 日 1 回 人にも知らせる(`state/.prompt-size-notified` に日付。`PROMPT_SIZE_SLACK=0` で止められる)。
 ダッシュボードも `SOUL.md` が同じしきい値を超えたら `[prompt-size]` をログに出す(会話のたびに system prompt へ全文入るため)。
 
+## 文面の置き場(2026-11-13)
+
+user prompt の文面は `prompts/autonomous/*.md`(全体は `user.md`、節ごとに `time_rule_*` `routine_mode_*` `mail_*` `experience` `permission_rules` `heavy_files`)。
+`autonomous-action.sh` は値(日時・パス・件数・digest など)を `scripts/render_prompt.py` に渡して組み立てるだけで、日本語の文は持たない。
+家ごとの言い回しは `PETIT_DATA_DIR/prompts/autonomous/<同名>.md` を置けば上書きされる(`--dry-run` で確かめる)。書き方は `prompts/README.md`。
+

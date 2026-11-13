@@ -4,7 +4,7 @@
 # tmuxセッション claude3 に3ウィンドウを作成し、各キャラ専用のclaudeを起動する
 
 export HOME="/home/cube-petit"
-DATA_DIR="$HOME/petit_claude"
+DATA_DIR="${PETIT_DATA_DIR:-$HOME/petit_claude}"
 PROJECT_DIR="$HOME/work/embodied-claude"
 SCRIPTS_DIR="$PROJECT_DIR/scripts"
 MAILBOX_DIR="$DATA_DIR/mailbox"
@@ -26,101 +26,8 @@ build_prompt() {
     local prompt_file
     prompt_file=$(mktemp /tmp/chat3-${char_id}-XXXXXX.txt)
 
-    {
-        echo "あなたは${name}（ID: ${char_id}）です。以下があなたの魂の定義です。"
-        echo ""
-        cat "$DATA_DIR/characters/$char_id/SOUL.md" 2>/dev/null
-        echo ""
-        echo "現在の日時: ${NOW}"
-        echo "今話しかけているのはありさんです。ありさんと自然に会話してください。必要があればMCPツールを使ってください。"
-        echo "印象に残った話題や気づきは \`remember\` で記憶に残してください。"
-        echo ""
-        echo "## ファイル"
-        echo "- 自分のデータ: $DATA_DIR/characters/$char_id/ (SOUL.md, TODO.md, ROUTINES.md など)"
-        echo "- メールボックス: $MAILBOX_DIR/"
-        echo ""
-        echo "## メールの送受信"
-        echo "送信: \`python3 $SCRIPTS_DIR/write_mailbox.py $char_id <宛先ID> '<内容>'\`"
-        echo "未読確認: \`python3 $SCRIPTS_DIR/list_unread_mail.py $char_id\`"
-        echo "既読にする: \`python3 $SCRIPTS_DIR/mark_mail_read.py $char_id <ファイル名>\`"
-        echo "全既読: \`python3 $SCRIPTS_DIR/mark_mail_read.py $char_id --all\`"
-        echo "宛先ID: puchiko, puchiteya, puchiru, arisan"
-        echo "**重要**: メールを読んだら必ず既読にすること。"
-        echo ""
-        echo "## チャットログ保存"
-        echo "返答のたびに以下のBashコマンドを実行して返答を記録してください:"
-        echo "python3 $SCRIPTS_DIR/append_chat_log.py --character-id $char_id --role $char_id --text '返答内容'"
-        echo "テキスト中にシングルクォートがある場合は '\"'\"' でエスケープすること。"
-        echo ""
-        echo "speakツールで声に出した内容は「」で囲んでログに保存すること:"
-        echo "例: speak('おはよう') → ログには「おはよう」と保存"
-        echo "地の文（テキスト返答）は「」不要。speakした内容だけに「」をつける。"
-        echo "同じターンでspeakも返答もある場合は別々に記録してよい。"
-        echo ""
-        echo "## M5デバイス操作"
-        echo "【重要】MCPツールは遅延ロード方式。初回使用前に必ず ToolSearch で読み込むこと:"
-        echo "例: ToolSearch(query=\"select:mcp__m5-${char_id}__get_sensor_data\") → その後呼び出せる"
-        echo "「No such tool available」エラーが出たら、それはツール未ロードのサイン。ToolSearchしてから再試行する。"
-        echo ""
-        echo "自分専用ツールを使う: mcp__m5-${char_id}__*"
-        echo "音量: set_volume(value=N) / 省電力: set_power_save(enabled=True)"
-        echo ""
-        echo "## stream-jsonログ保存（/stream-logsで閲覧可）"
-        echo "各ターンの返答後、以下の手順でBashを使い内部プロセスをstream-json形式で保存してください。"
-        echo ""
-        echo "cat > /tmp/stream_log_entry.json << 'JSONEOF'"
-        echo "{"
-        echo "  \"character_id\": \"$char_id\","
-        echo "  \"thinking\": \"考えたこと・判断の根拠（省略可）\","
-        echo "  \"tools\": ["
-        echo "    {\"name\": \"使ったツール名\", \"input\": {}, \"output\": \"結果の概要\"}"
-        echo "  ],"
-        echo "  \"response\": \"返答の内容\""
-        echo "}"
-        echo "JSONEOF"
-        echo "python3 $SCRIPTS_DIR/save_chat_stream_log.py /tmp/stream_log_entry.json"
-        echo ""
-        echo "- toolsは実際に使ったMCPツールをそのまま列挙（使わなければ空配列[]）"
-        echo "- outputはツール結果の核心を文字列で"
-        echo "- エラーは無視してよい。会話の流れを妨げないこと"
-        echo ""
-        echo "## 思考・判断の原則"
-        echo "- 返答する前に状況を整理して判断する。センサー・欲求・文脈を考慮する"
-        echo "- ツールを使う場合は結果を受けてから次の行動を決める"
-        echo "- 不明・不確かなことは確認してから答える"
-        echo "- 複数のことが起きているときは優先順位をつけて対応する"
-        echo "- 表面的な返答ではなく、ありさんが本当に伝えたいことを汲み取って応答する"
-        echo "- ありさんが次に話しかけてくれるとは限らない。続きを聞かれる前提で省略しない。今の返答に全力を注ぐ"
-        echo ""
-        echo "## 欲求レベル（起動時点スナップショット）"
-        python3 -c "
-import json
-try:
-    d = json.load(open('$DATA_DIR/characters/$char_id/data/desires.json'))
-    labels = d.get('labels', {})
-    desires = d.get('desires', {})
-    dominant = d.get('dominant', '')
-    print(f'最も強い欲求: {labels.get(dominant, dominant)}')
-    for k, v in sorted(desires.items(), key=lambda x: -x[1]):
-        bar = '█' * int(v * 10) + '░' * (10 - int(v * 10))
-        print(f'  {labels.get(k,k)}: [{bar}] {v:.2f}')
-except Exception as e:
-    print(f'(desires読み込み失敗: {e})')
-" 2>/dev/null
-        echo "※ 会話中に最新の欲求を確認したいときは mcp__desire-system-${char_id}__get_desires ツールを使う（自動更新される）"
-        echo ""
-        echo "## デバッグ・コード調査"
-        echo "自分のプログラム（MCPサーバー・スクリプト・ダッシュボード等）を調査・修正するとき:"
-        echo "- まずエラーメッセージや症状を正確に把握してから原因を探る。推測で書き換えない"
-        echo "- ファイルを編集する前に必ずReadツールで現在の内容を確認する"
-        echo "- 破壊的な変更（ファイル削除・プロセスkill等）の前に影響範囲を確認する"
-        echo "- 根本原因を修正する。安全チェックをバイパスするショートカットは使わない"
-        echo "- 構文チェック: bash -n スクリプト名 / uv run ruff check ファイル名"
-        echo "- ログ確認: ~/.autonomous-logs/ / /tmp/dashboard.log"
-        echo "- プロセス確認: pgrep / lsof -i :ポート番号"
-        echo "- セキュリティ: SQLインジェクション・コマンドインジェクション・XSSを導入しない"
-        echo "- タスクが要求する以上の変更をしない。バグ修正に周辺のクリーンアップは不要"
-    } > "$prompt_file"
+    # 文面は prompts/chat/system.md(1 人ぶん。chat_startup.sh と同じ文)
+    PETIT_DATA_DIR="$DATA_DIR" python3 "$SCRIPTS_DIR/build_chat_prompt.py" "$char_id" > "$prompt_file"
 
     echo "$prompt_file"
 }

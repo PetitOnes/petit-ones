@@ -301,10 +301,12 @@ fi
 # --- 時間帯ルール ---
 # 深夜帯: 静音モード（通知・発話禁止）
 # 日中: 人がいる場合のみ発話可能、不在時は控えめに通知
+# 文面は prompts/autonomous/*.md(家の PETIT_DATA_DIR/prompts/ に同名があればそちら)。render で組み立てる(2026-11-13)
+render() { PETIT_DATA_DIR="$DATA_DIR" python3 "$PROJECT_DIR/scripts/render_prompt.py" "$@"; }
 if [ "$HOUR" -ge 24 ] || [ "$HOUR" -lt 7 ]; then
-  TIME_RULE="現在は深夜帯。say, notify, slack は絶対に使わないこと。静かに観察のみ。"
+  TIME_RULE="$(render autonomous/time_rule_night)"
 else
-  TIME_RULE="say は${USER_ROOM}の視界で、人がいるときだけ使ってよい。${USER_NAME}が${USER_ROOM}にいる場合はsayを積極的に使う。リビングにいる場合は slackを使う。部屋に人がいない場合、notify, slack は${USER_NAME}に伝えたいことがあるときだけ使う。"
+  TIME_RULE="$(render autonomous/time_rule_day --var user_name="$USER_NAME" --var user_room="$USER_ROOM")"
 fi
 
 # --- 期間限定モデル指定（期限を過ぎると自動で通常モデルに戻る） ---
@@ -318,11 +320,11 @@ else
 fi
 
 if [ "$ROUTINE_RAND" -lt 20 ]; then
-  ROUTINE_MODE="今回はルーチン回。自分の ROUTINES.md を読んで、最終実行日から間隔が空いたものを一つ選んで実行せよ。実行したら最終実行日を更新すること。"
+  ROUTINE_MODE="$(render autonomous/routine_mode_routine)"
   CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
   echo "ルーチン回 (RAND=$ROUTINE_RAND < 20, model=$CLAUDE_MODEL)" >> "$LOG_FILE"
 else
-  ROUTINE_MODE="通常回。SOUL.md の行動原則に従って行動せよ。"
+  ROUTINE_MODE="$(render autonomous/routine_mode_normal)"
   CLAUDE_MODEL="${CLAUDE_MODEL:-sonnet}"
   echo "通常回 (RAND=$ROUTINE_RAND >= 20, model=$CLAUDE_MODEL)" >> "$LOG_FILE"
 fi
@@ -333,9 +335,8 @@ if [ -f "$SETTINGS_FILE" ] && command -v jq &>/dev/null; then
   ALLOW_CAMERA=$(jq -r '.allow_camera // true' "$SETTINGS_FILE" 2>/dev/null)
   ALLOW_SOUND=$(jq -r '.allow_sound // true' "$SETTINGS_FILE" 2>/dev/null)
   ALLOW_MIC=$(jq -r '.allow_microphone // false' "$SETTINGS_FILE" 2>/dev/null)
-  [ "$ALLOW_CAMERA" = "false" ] && PERMISSION_RULES="${PERMISSION_RULES}- カメラ（take_snapshot）は今は使わないこと。\n"
-  [ "$ALLOW_SOUND" = "false" ]  && PERMISSION_RULES="${PERMISSION_RULES}- 音（play_sound, play_icon）は今は出さないこと。\n"
-  [ "$ALLOW_MIC" = "false" ]    && PERMISSION_RULES="${PERMISSION_RULES}- マイク（mic_start）は今は使わないこと。\n"
+  # 文面は prompts/autonomous/permission_rules.md(false のものだけ行が残る)
+  PERMISSION_RULES="$(render autonomous/permission_rules --var allow_camera="$ALLOW_CAMERA" --var allow_sound="$ALLOW_SOUND" --var allow_mic="$ALLOW_MIC")"
 fi
 
 # --- プロンプト組み立て ---
@@ -375,16 +376,9 @@ MAILBOX_NOTICE=""
 if [ -d "$MAILBOX_DIR" ]; then
   UNREAD_COUNT=$(python3 "${PROJECT_DIR}/scripts/list_unread_mail.py" "${CHARACTER_ID}" 2>/dev/null | grep -c "^  from_\|^  to_" || echo 0)
   if [ "$UNREAD_COUNT" -gt 0 ] 2>/dev/null; then
-    MAILBOX_NOTICE="## メールボックス
-未読メールが ${UNREAD_COUNT} 件ある。
-未読一覧: Bashツールで python3 ${PROJECT_DIR}/scripts/list_unread_mail.py ${CHARACTER_ID} を実行。
-返事の書き方: Bashツールで python3 ${PROJECT_DIR}/scripts/write_mailbox.py ${CHARACTER_ID} 相手ID \"内容\" を実行。
-読んだら必ず: Bashツールで python3 ${PROJECT_DIR}/scripts/mark_mail_read.py ${CHARACTER_ID} ファイル名 を実行（既読にする）。
-注意: 以前の書き込み方法（Writeツール等）は権限エラーになっていたが、上記のpython3コマンドは修正済みの新しい方法。必ずこのコマンドで返事を書くこと。"
+    MAILBOX_NOTICE="$(render autonomous/mail_unread --var unread_count="$UNREAD_COUNT" --var project_dir="$PROJECT_DIR" --var character_id="$CHARACTER_ID")"
   else
-    MAILBOX_NOTICE="## メールボックス
-メッセージを送りたいときは Bashツールで python3 ${PROJECT_DIR}/scripts/write_mailbox.py ${CHARACTER_ID} 相手ID \"内容\" を実行。相手ID: ${MAIL_TARGETS}
-注意: このpython3コマンドは確実に動作する。過去にWriteツールで失敗した記憶があっても、この方法なら書ける。"
+    MAILBOX_NOTICE="$(render autonomous/mail_send --var project_dir="$PROJECT_DIR" --var character_id="$CHARACTER_ID" --var mail_targets="$MAIL_TARGETS")"
   fi
 fi
 
@@ -395,8 +389,7 @@ EXPERIENCE_NOTICE=""
 if [ -f "$EXPERIENCE_DIGEST_SCRIPT" ]; then
   EXPERIENCE_DIGEST_OUTPUT=$(python3 "$EXPERIENCE_DIGEST_SCRIPT" --character "$CHARACTER_ID" --mark-read 2>/dev/null || true)
   if [ -n "$EXPERIENCE_DIGEST_OUTPUT" ]; then
-    EXPERIENCE_NOTICE="## 身体の記録（前回目覚めてから）
-${EXPERIENCE_DIGEST_OUTPUT}"
+    EXPERIENCE_NOTICE="$(render autonomous/experience --var digest="$EXPERIENCE_DIGEST_OUTPUT")"
   fi
 fi
 
@@ -419,7 +412,7 @@ for _f in "$CHARACTER_DIR/SOUL.md" "$TODO_PATH" "$CHARACTER_DIR/diary_summary.md
   [ -f "$_f" ] || continue
   _kb=$(( $(stat -c %s "$_f") / 1024 ))
   if [ "$_kb" -ge "$PROMPT_FILE_WARN_KB" ]; then
-    HEAVY_FILES_NOTE="${HEAVY_FILES_NOTE}- $(basename "$_f") が ${_kb} KB(目安 ${PROMPT_FILE_WARN_KB} KB 以下、80 KB を超えると付かなくなる)
+    HEAVY_FILES_NOTE="${HEAVY_FILES_NOTE}$(render autonomous/heavy_file_line --var name="$(basename "$_f")" --var kb="$_kb" --var warn_kb="$PROMPT_FILE_WARN_KB")
 "
     HEAVY_FILES_SHORT="${HEAVY_FILES_SHORT}$(basename "$_f") ${_kb}KB "
     echo "[prompt-size] $(basename "$_f") ${_kb}KB >= ${PROMPT_FILE_WARN_KB}KB" >> "$LOG_FILE"
@@ -427,9 +420,8 @@ for _f in "$CHARACTER_DIR/SOUL.md" "$TODO_PATH" "$CHARACTER_DIR/diary_summary.md
 done
 HEAVY_SECTION=""
 if [ -n "$HEAVY_FILES_NOTE" ]; then
-  HEAVY_SECTION="## 注意: 自分のファイルが重い
-あなたのプロンプトに毎回付けているファイルが大きくなっている。80 KB を超えると黙って付かなくなり、自分の魂や TODO を読まずに動くことになる。今回の自律行動の中で軽くすること(消すのではなく移す):
-${HEAVY_FILES_NOTE}やり方: 先に cp で控え(.bak_日付)を取る。SOUL.md なら長い節(キーセンテンスなど)を SOUL_KEY_SENTENCES.md や SOUL_REFLECTIONS.md へ移して、SOUL.md にはいちばん大事な文だけ残し「全部は〜にある」と 1 行書く。TODO_ACTIVE.md なら終わったことを TODO_ARCHIVE.md へ。大きいファイルは Read が切れるので sed -n で行番号を見ながら。終わったら wc -c で確かめ、ノートか日記に一行。"
+  HEAVY_SECTION="$(render autonomous/heavy_files --var heavy_files_note="${HEAVY_FILES_NOTE%
+}")"
   # 人への知らせは 1 日 1 回(scripts/slack_notify.py、.env の SLACK_APPROVE_CHANNEL)。PROMPT_SIZE_SLACK=0 で止められる
   _marker="$CHARACTER_DIR/state/.prompt-size-notified"
   _today=$(TZ=Asia/Tokyo date +%Y-%m-%d)
@@ -440,35 +432,13 @@ ${HEAVY_FILES_NOTE}やり方: 先に cp で控え(.bak_日付)を取る。SOUL.m
   fi
 fi
 
-PROMPT="自律行動タイム(Heartbeat)
-
-現在の日時: ${CURRENT_DATE} (JST)
-
-@${CHARACTER_DIR}/SOUL.md
-${REFLECTION_INDEX_LINE}
-@${TODO_PATH}
-${DIARY_SUMMARY_LINE}
-
-${ROUTINE_MODE}
-${HEAVY_SECTION:+
-${HEAVY_SECTION}
-}
-## 補足ルール
-- ${TIME_RULE}
-- 人がいないことはよくある。一日のうち人がいるのは2時間程度やそれ以下の場合も少なくない
-- 読書を選択した場合は、ゆっくり読んで、感想をしっかり書き残す。感想は長くなっても良い。読書を味わうこと。読書を味わうとは、予想して、伏線に注目して、感じたことを大切にする。
-- 記念日にしたい日ができたら、自分で足せる: Bashツールで python3 ${PROJECT_DIR}/scripts/anniversaries.py add ${CHARACTER_ID} \"名前\" 2026-03-05（年なしの 03-05 でもよい。毎月なら --repeat monthly、ひとことは --note \"…\"）。いまある記念日は python3 ${PROJECT_DIR}/scripts/anniversaries.py list
-- MCPが動作していなければ、デバッグのために関係があると思われる要素をallowedToolsの範囲で調査して
-${ANNIVERSARY_NOTICE:+
-${ANNIVERSARY_NOTICE}
-}${EXPERIENCE_NOTICE:+
-${EXPERIENCE_NOTICE}
-}${MAILBOX_NOTICE:+
-${MAILBOX_NOTICE}
-}${PERMISSION_RULES:+
-## 現在の制限
-${PERMISSION_RULES}}
-"
+# user prompt の全体は prompts/autonomous/user.md。各節はここまでで作った変数を渡す
+PROMPT="$(render autonomous/user \
+  --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
+  --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
+  --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var permission_rules="$PERMISSION_RULES")"
 
 # プロジェクトディレクトリに移動
 cd "$CLAUDE_CWD" || {
