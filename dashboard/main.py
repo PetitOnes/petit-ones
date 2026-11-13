@@ -348,6 +348,7 @@ async def _generate_display_phrase(character_id: str) -> str:
             "--output-format", "json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=_claude_env(), cwd=str(CLAUDE_CWD),
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
         raw = stdout.decode()
@@ -673,6 +674,19 @@ document.getElementById("password").addEventListener("keydown", e => { if (e.key
 
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
+# ぷち専用の Claude 設定(2026-11-13)。家の .claude/ があれば CLAUDE_CONFIG_DIR にして、開発側の ~/.claude
+# (CLAUDE.md・自動メモリ・プラグイン)を読ませない。cwd も家にして、リポの CLAUDE.md を読ませない
+# (Claude Code は cwd とその祖先の CLAUDE.md / .claude/CLAUDE.md を全部読む)。autonomous-action.sh と同じ決まり
+PETIT_CLAUDE_CONFIG_DIR = Path(os.getenv("PETIT_CLAUDE_CONFIG_DIR", DATA_DIR / ".claude"))
+CLAUDE_CWD = DATA_DIR
+
+
+def _claude_env() -> dict[str, str]:
+    """ぷちの claude を起動するときの環境変数。親の CLAUDE* は落とし、ぷち用の設定ディレクトリだけ渡す。"""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    if PETIT_CLAUDE_CONFIG_DIR.is_dir():
+        env["CLAUDE_CONFIG_DIR"] = str(PETIT_CLAUDE_CONFIG_DIR)
+    return env
 
 
 def _load_user_display() -> dict:
@@ -1469,7 +1483,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             return f"エラー: {e}"
 
     # --- Claude backend (default) ---
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    env = _claude_env()
     if resolved_host:
         env["M5_HOST"] = resolved_host
     env.setdefault("ROVER_URL", "http://192.168.8.99,http://192.168.1.99")
@@ -1559,7 +1573,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         proc = await asyncio.create_subprocess_exec(
             *c, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-            env=env, cwd=str(PROJECT_DIR),
+            env=env, cwd=str(CLAUDE_CWD),
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -1608,13 +1622,13 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
 
 async def _generate_diary_with_claude(prompt: str) -> str:
     diary_model = os.getenv("CLAUDE_MODEL", "sonnet")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    env = _claude_env()
     proc = await asyncio.create_subprocess_exec(
         "claude", "--model", diary_model, prompt,
         "--output-format", "json",
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=env, cwd=str(PROJECT_DIR),
+        env=env, cwd=str(CLAUDE_CWD),
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
     raw = stdout.decode()
