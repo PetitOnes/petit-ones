@@ -56,6 +56,16 @@ def test_date_without_year():
         an.clean({"name": "x", "date": "13-01"})
 
 
+def test_add_keeps_who_and_skips_duplicates(tmp_path):
+    first, added = an.add({"name": "はじめて海を見た日", "date": "2026-08-01", "by": "puchi"}, tmp_path)
+    assert added and first["by"] == "puchi"
+    again, added = an.add({"name": "はじめて海を見た日", "date": "2026-08-01", "by": "other"}, tmp_path)
+    assert not added and again["id"] == first["id"]
+    assert len(an.load(tmp_path)) == 1
+    with pytest.raises(ValueError):
+        an.add({"name": "", "date": "2026-08-01"}, tmp_path)
+
+
 def test_once():
     it = item("発表の日", "2026-08-25", "once")
     assert an.occurs_on(it, Date(2026, 8, 25))

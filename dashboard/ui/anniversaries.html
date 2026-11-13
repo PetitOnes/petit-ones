@@ -47,7 +47,7 @@
 
     <div id="list"></div>
     <div class="p-empty" id="empty" style="display:none">まだ記念日はありません</div>
-    <p class="a-label">記念日の当日は、ぷちたちの自律行動に「今日は○○の日」と伝わり、ぷちログのその日にも出ます。</p>
+    <p class="a-label">記念日の当日は、ぷちたちの自律行動に「今日は○○の日」と伝わり、ぷちログのその日にも出ます。ぷちたちも、記念日にしたい日を自分で足せます(消す・直すは、このページから)。</p>
   </div>
 
   <script>
@@ -68,7 +68,8 @@
       return `<div class="${cls}" data-id="${esc(it.id)}">
         <div class="o-anniv-main"><b>${esc(it.name)}</b>
           <div class="o-anniv-sub">${from}・${REPEAT[it.repeat] || ""}${next ? "・" + next : ""}</div>
-          ${it.note ? `<div class="o-anniv-sub">${esc(it.note)}</div>` : ""}</div>
+          ${it.note ? `<div class="o-anniv-sub">${esc(it.note)}</div>` : ""}
+          ${it.by_name ? `<div class="o-anniv-sub">${esc(it.by_name)}が足した</div>` : ""}</div>
         <span class="o-anniv-left">${leftText(it)}</span>
         <button class="a-btn a-btn--sub a-btn--s" data-edit="${esc(it.id)}">直す</button>
         <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.id)}">消す</button>

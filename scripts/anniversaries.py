@@ -7,6 +7,7 @@
 
 - repeat: yearly(毎年その月日)/ monthly(毎月その日)/ once(その日だけ)
 - date は年なしでもよい("09-21")。年のない記念日は毎年その月日に出て、何年目かは数えない
+- by: 足した人・ぷちの id(だれが決めた記念日か。無くてもよい)
 - count: 最初の日から何年・何か月かを添えるか(「(1 年)」)。人の誕生日など、数えたくないものは false
 - 29〜31 日の記念日は、その日が無い月・年では月の最後の日
 - 最初の日(date)より前には出ない
@@ -15,9 +16,13 @@
 - ダッシュボード(記念日のページ、ぷちログのその日の行)
 - 自律行動(今日が記念日のときだけ、プロンプトに 1 行。`anniversaries.py today`)
 
+ぷちも自分で足せる(消す・直すは、ダッシュボードから人が)。
+
 Usage:
     python3 anniversaries.py today [--date YYYY-MM-DD]      # 今日の記念日を 1 行ずつ(無ければ何も出さない)
     python3 anniversaries.py list                           # 全部と、次に来る日
+    python3 anniversaries.py add <足す子の id> "<名前>" <日付> [--repeat yearly|monthly|once] [--note "ひとこと"]
+        # 日付は 2026-03-05 か、年なしの 03-05
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from pathlib import Path
 REPEATS = ("yearly", "monthly", "once")
 NAME_MAX = 40
 NOTE_MAX = 200
+ITEMS_MAX = 300        # 家ぜんたいの上限(足しすぎの歯止め)
 LOOKAHEAD_DAYS = 366   # 次に来る日を探す幅
 
 
@@ -70,7 +76,21 @@ def clean(raw: dict) -> dict:
     if len(note) > NOTE_MAX:
         raise ValueError(f"ひとことは {NOTE_MAX} 字まで")
     return {"id": str(raw.get("id") or uuid.uuid4().hex[:12]), "name": name, "date": date_str if no_year else day.isoformat(),
-            "repeat": repeat, "count": not no_year and raw.get("count", True) is not False, "note": note}
+            "repeat": repeat, "count": not no_year and raw.get("count", True) is not False, "note": note,
+            "by": str(raw.get("by", "")).strip()[:NAME_MAX]}
+
+
+def add(raw: dict, base: Path | None = None) -> tuple[dict, bool]:
+    """1 件足して保存する。同じ名前・同じ日のものがもうあれば、足さずにそれを返す。返すのは (その 1 件, 足したか)"""
+    item = clean(raw)
+    items = load(base)
+    for it in items:
+        if it["name"] == item["name"] and it["date"] == item["date"]:
+            return it, False
+    if len(items) >= ITEMS_MAX:
+        raise ValueError(f"記念日は {ITEMS_MAX} 件まで")
+    save(items + [item], base)
+    return item, True
 
 
 def load(base: Path | None = None) -> list[dict]:
@@ -181,7 +201,23 @@ def main() -> int:
     p_today = sub.add_parser("today", help="今日の記念日を 1 行ずつ(無ければ何も出さない)")
     p_today.add_argument("--date", help="今日の代わりに見る日(YYYY-MM-DD)")
     sub.add_parser("list", help="全部と、次に来る日")
+    p_add = sub.add_parser("add", help="記念日を足す")
+    p_add.add_argument("by", help="足す子の id")
+    p_add.add_argument("name")
+    p_add.add_argument("date", help="2026-03-05 か、年なしの 03-05")
+    p_add.add_argument("--repeat", default="yearly", choices=REPEATS)
+    p_add.add_argument("--note", default="")
     args = parser.parse_args()
+    if args.cmd == "add":
+        try:
+            item, added = add({"name": args.name, "date": args.date, "repeat": args.repeat, "note": args.note, "by": args.by})
+        except ValueError as e:
+            print(f"足せなかった: {e}", file=sys.stderr)
+            return 2
+        nxt = next_occurrence(item, Date.today())
+        when = f"次は {nxt.isoformat()}" if nxt else "もう来ない日"
+        print(f"{'足した' if added else 'もうある'}: 「{item['name']}」 {item['date']}({when})")
+        return 0
     items = load()
     if args.cmd == "today":
         try:

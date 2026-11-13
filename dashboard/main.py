@@ -1413,6 +1413,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
         f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
         f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
+        f"\n## 記念日\n"
+        f"- 記念日にしたい日ができたら、自分で足せる: `python3 {scripts_dir}/anniversaries.py add {character_id} '<名前>' <日付>`"
+        f"(日付は 2026-03-05 か、年なしの 03-05。毎月なら `--repeat monthly`、ひとことは `--note '…'`)\n"
+        f"- いまある記念日: `python3 {scripts_dir}/anniversaries.py list`\n"
         f"\n## 会話リレー\n"
         f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
         f"- 「ぷちこに話しかけて」「ぷちてゃと会話して」などと言われたら積極的に使う\n"
@@ -1873,7 +1877,8 @@ def _anniv_view(items: list[dict]) -> dict:
     rows = []
     for it in items:
         nxt = an.next_occurrence(it, today)
-        rows.append({**it, "next": nxt.isoformat() if nxt else None, "days_left": (nxt - today).days if nxt else None,
+        by_name = _user_label(it["by"], fallback=_char_display_name(it["by"])) if it.get("by") else ""
+        rows.append({**it, "by_name": by_name, "next": nxt.isoformat() if nxt else None, "days_left": (nxt - today).days if nxt else None,
                      "next_label": an.label(it, nxt) if nxt else it["name"]})
     rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] or 0, r["date"]))
     return {"items": rows, "upcoming": an.upcoming(items, today, days=30)}
@@ -1885,15 +1890,13 @@ def api_anniversaries():
 
 
 @app.post("/api/anniversaries")
-def api_anniversaries_add(body: AnniversaryBody):
+def api_anniversaries_add(body: AnniversaryBody, request: Request):
     an = _anniv()
     try:
-        item = an.clean(body.model_dump())
+        an.add({**body.model_dump(), "by": _get_username(request) or "arisan"}, DATA_DIR)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    items = an.load(DATA_DIR) + [item]
-    an.save(items, DATA_DIR)
-    return _anniv_view(items)
+    return _anniv_view(an.load(DATA_DIR))
 
 
 @app.put("/api/anniversaries/{item_id}")
@@ -1903,7 +1906,8 @@ def api_anniversaries_update(item_id: str, body: AnniversaryBody):
     if not any(it["id"] == item_id for it in items):
         return JSONResponse({"error": "not found"}, status_code=404)
     try:
-        item = an.clean({**body.model_dump(), "id": item_id})
+        keep_by = next(it.get("by", "") for it in items if it["id"] == item_id)   # 直しても、足した人はそのまま
+        item = an.clean({**body.model_dump(), "id": item_id, "by": keep_by})
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     items = [item if it["id"] == item_id else it for it in items]
