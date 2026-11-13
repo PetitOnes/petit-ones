@@ -23,6 +23,10 @@
 
 {{anniversary_notice}}
 {{/if}}
+{{#if mail_receipt_notice}}
+
+{{mail_receipt_notice}}
+{{/if}}
 {{#if experience_notice}}
 
 {{experience_notice}}

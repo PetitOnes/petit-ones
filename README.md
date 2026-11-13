@@ -138,6 +138,7 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── create_character.py   #   子を迎える(教科書の templates から器を写し、設定と cron を作る)
 │   ├── memory_sleep_all.sh   #   夜の記憶整理(characters/ の全員)
 │   ├── write_mailbox.py / mark_mail_read.py / list_unread_mail.py  # 手紙
+│   ├── mail_receipts.py      # 手紙が届いたこと(読まれた・スタンプ)を、書いたぷちに 1 回だけ知らせる
 │   ├── append_chat_log.py    #   /chat スキルのチャットログ保存
 │   ├── check_usage.py        #   トークン使用量(今日/今週/今月)
 │   ├── backup_petit.sh / restore_petit.sh
