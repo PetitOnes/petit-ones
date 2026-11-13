@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>記念日</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎂 記念日</h1></div>
+
+    <!-- 足す・直す欄。直すときは、一覧の「直す」でここに入る -->
+    <div class="m-card">
+      <span class="a-heading" id="formTitle">記念日を足す</span>
+      <div class="o-anniv-form">
+        <label class="is-wide"><span class="a-label">名前</span><input class="a-input" id="fName" maxlength="40" placeholder="たとえば ぷちるの誕生日"></label>
+        <label><span class="a-label">最初の日</span><input class="a-input" id="fDate" type="date"></label>
+        <label><span class="a-label">くり返し</span>
+          <select class="a-input" id="fRepeat">
+            <option value="yearly">毎年</option>
+            <option value="monthly">毎月</option>
+            <option value="once">その日だけ</option>
+          </select>
+        </label>
+        <label class="is-wide"><span class="a-label">ひとこと(なくてもよい。ぷちたちにも伝わります)</span><input class="a-input" id="fNote" maxlength="200"></label>
+        <div class="o-anniv-form-row">
+          <span class="o-anniv-msg" id="fMsg"></span>
+          <button class="a-btn a-btn--ghost a-btn--s" id="cancelBtn" style="display:none" onclick="resetForm()">やめる</button>
+          <button class="a-btn" id="saveBtn" onclick="save()">足す</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="list"></div>
+    <div class="p-empty" id="empty" style="display:none">まだ記念日はありません</div>
+    <p class="a-label">記念日の当日は、ぷちたちの自律行動に「今日は○○の日」と伝わり、ぷちログのその日にも出ます。</p>
+  </div>
+
+  <script>
+    const { esc, dayLabel } = PetitPage;
+    const REPEAT = { yearly: "毎年", monthly: "毎月", once: "その日だけ" };
+    let items = [], editing = null;
+
+    function leftText(it) {
+      if (it.days_left === null) return "おわり";
+      return it.days_left === 0 ? "今日" : it.days_left === 1 ? "あした" : `あと ${it.days_left} 日`;
+    }
+
+    function itemHtml(it) {
+      const cls = "o-anniv" + (it.days_left === 0 ? " is-today" : "") + (it.days_left === null ? " is-past" : "");
+      const next = it.next ? `次は ${esc(dayLabel(it.next))}` + (it.next_label !== it.name ? `(${esc(it.next_label.slice(it.name.length + 1, -1))})` : "") : "";
+      const [y, m, d] = it.date.split("-").map(Number);
+      return `<div class="${cls}" data-id="${esc(it.id)}">
+        <div class="o-anniv-main"><b>${esc(it.name)}</b>
+          <div class="o-anniv-sub">${y}/${m}/${d} から・${REPEAT[it.repeat] || ""}${next ? "・" + next : ""}</div>
+          ${it.note ? `<div class="o-anniv-sub">${esc(it.note)}</div>` : ""}</div>
+        <span class="o-anniv-left">${leftText(it)}</span>
+        <button class="a-btn a-btn--sub a-btn--s" data-edit="${esc(it.id)}">直す</button>
+        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.id)}">消す</button>
+      </div>`;
+    }
+
+    function render(res) {
+      items = res.items || [];
+      document.getElementById("list").innerHTML = items.map(itemHtml).join("");
+      document.getElementById("empty").style.display = items.length ? "none" : "";
+    }
+
+    function resetForm() {
+      editing = null;
+      for (const id of ["fName", "fDate", "fNote"]) document.getElementById(id).value = "";
+      document.getElementById("fRepeat").value = "yearly";
+      document.getElementById("fMsg").textContent = "";
+      document.getElementById("formTitle").textContent = "記念日を足す";
+      document.getElementById("saveBtn").textContent = "足す";
+      document.getElementById("cancelBtn").style.display = "none";
+    }
+
+    async function send(method, url, body) {
+      const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "うまくいきませんでした");
+      return data;
+    }
+
+    async function save() {
+      const body = { name: document.getElementById("fName").value, date: document.getElementById("fDate").value,
+                     repeat: document.getElementById("fRepeat").value, note: document.getElementById("fNote").value };
+      const msg = document.getElementById("fMsg");
+      msg.textContent = "";
+      try {
+        render(await send(editing ? "PUT" : "POST", "/api/anniversaries" + (editing ? "/" + encodeURIComponent(editing) : ""), body));
+        resetForm();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    document.getElementById("list").addEventListener("click", async e => {
+      const edit = e.target.closest("[data-edit]"), del = e.target.closest("[data-del]");
+      if (edit) {
+        const it = items.find(x => x.id === edit.dataset.edit);
+        if (!it) return;
+        editing = it.id;
+        document.getElementById("fName").value = it.name;
+        document.getElementById("fDate").value = it.date;
+        document.getElementById("fRepeat").value = it.repeat;
+        document.getElementById("fNote").value = it.note || "";
+        document.getElementById("formTitle").textContent = "記念日を直す";
+        document.getElementById("saveBtn").textContent = "直す";
+        document.getElementById("cancelBtn").style.display = "";
+        document.getElementById("fName").focus();
+      } else if (del) {
+        const it = items.find(x => x.id === del.dataset.del);
+        if (!it || !confirm(`「${it.name}」を消します`)) return;
+        try { render(await send("DELETE", "/api/anniversaries/" + encodeURIComponent(it.id))); if (editing === it.id) resetForm(); }
+        catch (e2) { document.getElementById("fMsg").textContent = e2.message; }
+      }
+    });
+
+    fetch("/api/anniversaries").then(r => r.json()).then(render).catch(() => {
+      document.getElementById("empty").style.display = "";
+      document.getElementById("empty").textContent = "読み込めませんでした";
+    });
+  </script>
+</body>
+</html>

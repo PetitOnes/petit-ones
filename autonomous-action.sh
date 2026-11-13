@@ -392,6 +392,18 @@ ${EXPERIENCE_DIGEST_OUTPUT}"
   fi
 fi
 
+# 記念日: 家の設定(config/anniversaries.json)で今日に当たるものがあるときだけ、プロンプトに足す。
+# ファイルもスクリプトも無ければ何も足さない(自律行動を壊さない)
+ANNIVERSARY_NOTICE=""
+ANNIVERSARY_SCRIPT="${PROJECT_DIR}/scripts/anniversaries.py"
+if [ -f "$ANNIVERSARY_SCRIPT" ]; then
+  ANNIVERSARY_OUTPUT=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$ANNIVERSARY_SCRIPT" today --date "${CURRENT_DATE%% *}" 2>/dev/null || true)
+  if [ -n "$ANNIVERSARY_OUTPUT" ]; then
+    ANNIVERSARY_NOTICE="## 今日の記念日
+${ANNIVERSARY_OUTPUT}"
+  fi
+fi
+
 PROMPT="自律行動タイム(Heartbeat)
 
 現在の日時: ${CURRENT_DATE} (JST)
@@ -408,7 +420,9 @@ ${ROUTINE_MODE}
 - 人がいないことはよくある。一日のうち人がいるのは2時間程度やそれ以下の場合も少なくない
 - 読書を選択した場合は、ゆっくり読んで、感想をしっかり書き残す。感想は長くなっても良い。読書を味わうこと。読書を味わうとは、予想して、伏線に注目して、感じたことを大切にする。
 - MCPが動作していなければ、デバッグのために関係があると思われる要素をallowedToolsの範囲で調査して
-${EXPERIENCE_NOTICE:+
+${ANNIVERSARY_NOTICE:+
+${ANNIVERSARY_NOTICE}
+}${EXPERIENCE_NOTICE:+
 ${EXPERIENCE_NOTICE}
 }${MAILBOX_NOTICE:+
 ${MAILBOX_NOTICE}

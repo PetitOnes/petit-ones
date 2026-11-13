@@ -12,6 +12,7 @@ import os
 import secrets
 import sqlite3
 import subprocess
+import sys
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -1848,6 +1849,78 @@ def ui_css(name: str):
     return Response((UI_DIR / name).read_text(encoding="utf-8"), media_type=media_type, headers={"Cache-Control": "no-cache"})
 
 
+# ---- 記念日(家の設定 config/anniversaries.json)。計算と保存は scripts/anniversaries.py(自律行動のプロンプトと同じもの)----
+def _anniv():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import anniversaries
+    return anniversaries
+
+
+class AnniversaryBody(BaseModel):
+    name: str
+    date: str
+    repeat: str = "yearly"
+    note: str = ""
+
+
+def _anniv_view(items: list[dict]) -> dict:
+    """一覧(次に来る日が近い順、もう来ないものは最後)と、30 日のうちに来るもの"""
+    an = _anniv()
+    today = datetime.now().date()
+    rows = []
+    for it in items:
+        nxt = an.next_occurrence(it, today)
+        rows.append({**it, "next": nxt.isoformat() if nxt else None, "days_left": (nxt - today).days if nxt else None,
+                     "next_label": an.label(it, nxt) if nxt else it["name"]})
+    rows.sort(key=lambda r: (r["days_left"] is None, r["days_left"] or 0, r["date"]))
+    return {"items": rows, "upcoming": an.upcoming(items, today, days=30)}
+
+
+@app.get("/api/anniversaries")
+def api_anniversaries():
+    return _anniv_view(_anniv().load(DATA_DIR))
+
+
+@app.post("/api/anniversaries")
+def api_anniversaries_add(body: AnniversaryBody):
+    an = _anniv()
+    try:
+        item = an.clean(body.model_dump())
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    items = an.load(DATA_DIR) + [item]
+    an.save(items, DATA_DIR)
+    return _anniv_view(items)
+
+
+@app.put("/api/anniversaries/{item_id}")
+def api_anniversaries_update(item_id: str, body: AnniversaryBody):
+    an = _anniv()
+    items = an.load(DATA_DIR)
+    if not any(it["id"] == item_id for it in items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        item = an.clean({**body.model_dump(), "id": item_id})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    items = [item if it["id"] == item_id else it for it in items]
+    an.save(items, DATA_DIR)
+    return _anniv_view(items)
+
+
+@app.delete("/api/anniversaries/{item_id}")
+def api_anniversaries_delete(item_id: str):
+    an = _anniv()
+    items = an.load(DATA_DIR)
+    rest = [it for it in items if it["id"] != item_id]
+    if len(rest) == len(items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    an.save(rest, DATA_DIR)
+    return _anniv_view(rest)
+
+
 # ---- ぷちログ(1 日のタイムライン)と日記の一覧。組み立ては petit_log.py、ページは dashboard/ui/ ----
 def _owner_name() -> str:
     """家の持ち主の表示名(config/people.json の arisan。無ければ最初の 1 人)"""
@@ -1865,6 +1938,7 @@ def _petit_log_sources(character_id: str):
         user_label=_user_label,
         name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
         owner_name=_owner_name(),
+        anniversaries=lambda day, _items=_anniv().load(DATA_DIR): _anniv().on_day(_items, day),
     )
 
 
@@ -1902,7 +1976,12 @@ def api_diary_day(character_id: str, date: str):
             "prev": prev_day, "next": next_day}
 
 
-_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html"}
+_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html"}
+
+
+@app.get("/anniversaries", response_class=HTMLResponse)
+def anniversaries_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/petitlog", response_class=HTMLResponse)
@@ -6599,6 +6678,7 @@ HTML = """<!DOCTYPE html>
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
+      anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
@@ -6744,7 +6824,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", library: "/library"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", library: "/library"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

@@ -13,6 +13,7 @@
   ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
   それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
+- 記念日(家の設定)に当たる日は、その日のいちばん上に 1 行出す
 - ひとりの時間の行には、その回に使った道具から決まった言い方で一言を添える(「様子を見て、眠った」など)。
   その子の言葉や中身は写さない
 """
@@ -81,6 +82,7 @@ class Sources:
     user_label: Callable[[str], str]   # 人の id → 表示名
     name_of: Callable[[str], str]      # ぷち・人の id → 表示名(メールの宛先)
     owner_name: str = ""               # 家の持ち主の表示名。体に人の手で起きたことに「〜に」と付ける(無ければ付けない)
+    anniversaries: Callable[[Date], list[dict]] | None = None   # その日の記念日 [{"label", "note"}](家の設定から。無ければ出さない)
 
 
 def _local(ts: str) -> datetime | None:
@@ -425,12 +427,15 @@ class _Index:
     def day(self, day: Date) -> list[dict]:
         """その日の行(新しい順)。画面に渡す形にして返す"""
         items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day)
+        if self.src.anniversaries:   # その日のいちばん上に出す(時刻は持たない)
+            top = datetime.combine(day, datetime.max.time())
+            items += [{"_ts": top, "kind": "anniv", "text": a["label"], "note": a.get("note", "")} for a in self.src.anniversaries(day)]
         runs = self.runs.get(day, [])
         out = []
         for it in sorted(items, key=lambda x: x["_ts"], reverse=True):
             ts = it["_ts"]
             row = {k: v for k, v in it.items() if not k.startswith("_")}
-            row["time"] = ts.strftime("%H:%M")
+            row["time"] = "" if it["kind"] == "anniv" else ts.strftime("%H:%M")
             if it["kind"] == "talk":
                 run = it["_run"]
                 if run["count"] == 0:
@@ -448,7 +453,7 @@ class _Index:
                 row["end"] = it["_end"].strftime("%H:%M")
                 if it["kind"] == "alone":
                     row["text"] = _alone_words(it["_file"], self.src.char_id)
-            if it["kind"] != "alone" and any(a <= ts <= b for a, b in runs):
+            if it["kind"] not in ("alone", "anniv") and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
             out.append(row)
         return out

@@ -40,6 +40,7 @@
       mail:   { icon: "✉️", chip: "メール" },
       body:   { icon: "🤲", chip: "体" },
       alone:  { icon: "🌙", chip: "ひとり" },
+      anniv:  { icon: "🎂", chip: "記念日" },
     };
     let charId = "", nextBefore = null, busy = false;
     let off = new Set();   // 出さない種類
@@ -85,6 +86,8 @@
         body = `${esc(it.to)}へメールを書いた<div class="o-log-text fold clamp o-log-sub">${esc(it.text)}${it.more ? "…" : ""}</div>`;
       } else if (it.kind === "body") {
         body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
+      } else if (it.kind === "anniv") {
+        body = `<b>${esc(it.text)}</b>` + (it.note ? ` <span class="o-log-sub">${esc(it.note)}</span>` : "");
       } else if (it.kind === "alone") {
         body = "ひとりの時間" + (it.text ? ` <span class="o-log-sub">${esc(it.text)}</span>` : "");
       }

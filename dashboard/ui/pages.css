@@ -54,3 +54,17 @@ html.embed .p-head { display: none; }
 
 .p-empty { padding: 40px 0; text-align: center; color: var(--ui-text-mute); font-size: var(--ui-fs-m); }
 .p-more { display: flex; justify-content: center; margin: 16px 0; }
+
+/* 記念日の一覧の 1 件と、足す・直す欄 */
+.o-anniv { display: flex; align-items: center; gap: 10px; padding: 12px 14px; margin-bottom: 8px; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); }
+.o-anniv.is-today { border-color: var(--ui-accent); background: var(--ui-accent-soft); }
+.o-anniv.is-past { opacity: 0.6; }
+.o-anniv-main { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.o-anniv-main b { font-family: var(--ui-font-head); font-size: 0.95rem; }
+.o-anniv-sub { font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+.o-anniv-left { flex: 0 0 auto; font-size: var(--ui-fs-s); font-weight: 700; color: var(--ui-accent-text); white-space: nowrap; }
+.o-anniv-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.o-anniv-form .is-wide { grid-column: 1 / -1; }
+.o-anniv-form .a-input { width: 100%; box-sizing: border-box; }
+.o-anniv-form-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; }
+.o-anniv-form-row .o-anniv-msg { flex: 1; font-size: var(--ui-fs-s); color: var(--ui-danger); }
