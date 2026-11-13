@@ -26,9 +26,28 @@ _LOCAL_BIN = str(Path.home() / ".local" / "bin")
 if _LOCAL_BIN not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = _LOCAL_BIN + os.pathsep + os.environ.get("PATH", "")
 
-VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "puchipuchi")
+# 音声認識(ASR :8765)・音声合成(TTS :8766)を動かしている PC。同じ PC なら localhost(m5-petit-mcp と同じ既定)
+VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "localhost")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765"
+# 同じ PC の m5-petit-voice-recognition は :8767(:8765 はこのダッシュボード自身)
 _ASR_FALLBACK_URL = os.environ.get("ASR_FALLBACK_URL", "http://localhost:8767")
+
+
+def _asr_post(path: str, *, data: dict | None, filename: str, wav_bytes: bytes, timeout: int = 30):
+    """ASR に音声を POST する。まず VOICE_API_HOST:8765、だめなら ASR_FALLBACK_URL。
+    VOICE_API_HOST=localhost のとき :8765 は自分自身なので 404 → それも次へ回す。最後まで失敗したら例外。"""
+    import requests as _rq
+    last: Exception | None = None
+    for url in (_ASR_URL, _ASR_FALLBACK_URL):
+        try:
+            r = _rq.post(f"{url}{path}", data=data, files={"file": (filename, io.BytesIO(wav_bytes), "audio/wav")}, timeout=timeout)
+            r.raise_for_status()
+            return r
+        except Exception as e:
+            last = e
+            continue
+    assert last is not None
+    raise last
 
 # 話者登録モード: {character_id: speaker_id} — 次のmic録音をClaudeに流さず登録用に使う
 _pending_speaker_registrations: dict[str, str] = {}
@@ -142,16 +161,8 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             with wave.open(buf, "wb") as w:
                 w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000)
                 w.writeframes(pcm_bytes)
-            buf.seek(0)
             def _register():
-                r = _requests.post(
-                    f"{_ASR_URL}/register_speaker",
-                    data={"speaker_id": speaker_id},
-                    files={"file": ("mic.wav", buf, "audio/wav")},
-                    timeout=30,
-                )
-                r.raise_for_status()
-                return r.json()
+                return _asr_post("/register_speaker", data={"speaker_id": speaker_id}, filename="mic.wav", wav_bytes=buf.getvalue()).json()
             result = await asyncio.to_thread(_register)
             print(f"[m5_watcher] {character_id}: speaker registered '{speaker_id}': {result}")
         except Exception as e:
@@ -2534,8 +2545,6 @@ async def api_voice_memo_register_speaker(person_id: str, filename: str):
         return JSONResponse({"error": "not found"}, status_code=404)
     import subprocess
     import tempfile as _tmpmod
-
-    import requests as _req
     with _tmpmod.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         out_path = f.name
     try:
@@ -2544,14 +2553,8 @@ async def api_voice_memo_register_speaker(person_id: str, filename: str):
             capture_output=True, check=True,
         )
         with open(out_path, "rb") as wav_f:
-            r = _req.post(
-                f"{_ASR_URL}/register_speaker",
-                data={"speaker_id": person_id},
-                files={"file": ("voice.wav", wav_f, "audio/wav")},
-                timeout=30,
-            )
-        r.raise_for_status()
-        result = r.json()
+            wav_bytes = wav_f.read()
+        result = _asr_post("/register_speaker", data={"speaker_id": person_id}, filename="voice.wav", wav_bytes=wav_bytes).json()
     finally:
         Path(out_path).unlink(missing_ok=True)
     reg = _load_registered(person_id)
