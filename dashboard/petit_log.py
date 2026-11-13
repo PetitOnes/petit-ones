@@ -30,8 +30,9 @@ BODY_GROUP_S = 10 * 60    # 同じ体の出来事が続くときに、1 件に�
 ALONE_MAX_S = 30 * 60     # ひとりの時間 1 回の長さの上限(記録の終わりが分からないとき用)
 DAYS_MAX = 7              # 1 回に返す日数の上限
 LOOKBACK_DAYS = 31        # 1 回の読みで、さかのぼって探す日数の上限(空の日が続くとき)
-MAIL_TEXT_MAX = 120
-MEMORY_TEXT_MAX = 400
+TEXT_MAX = 10000          # 記憶・メールの文は全部返す(画面で 3 行 → 12 行 → 全部、と開く)。これは並外れて長いものの歯止め
+MAIL_TEXT_MAX = TEXT_MAX
+MEMORY_TEXT_MAX = TEXT_MAX
 DIARY_HEAD_MAX = 120
 
 WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻が、これだけ近ければ同じ出来事

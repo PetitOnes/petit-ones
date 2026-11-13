@@ -32,7 +32,9 @@ html.embed .p-head { display: none; }
 .o-log-row > .o-log-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .o-log-row .o-log-sub { font-size: var(--ui-fs-s); color: var(--ui-text-mute); }
 .o-log-row .o-log-text { white-space: pre-wrap; color: var(--ui-text); }
-.o-log-row .o-log-text.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+.o-log-row .o-log-text.fold { cursor: pointer; }
+.o-log-row .o-log-text.clamp, .o-log-row .o-log-text.clamp-more { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.o-log-row .o-log-text.clamp-more { -webkit-line-clamp: 12; }
 .o-log-row img.o-log-photo { display: block; width: 96px; height: 96px; object-fit: cover; margin-top: 4px; border-radius: var(--ui-radius-s); border: 1px solid var(--ui-line); cursor: pointer; }
 /* ひとりの時間: 細い区切りとして出す。その幅に入る行は左に印 */
 .o-log-row.is-alone-run { color: var(--ui-text-mute); font-size: var(--ui-fs-s); padding: 5px 0; }
