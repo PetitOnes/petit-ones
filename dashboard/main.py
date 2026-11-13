@@ -275,8 +275,6 @@ def _load_display_char_info() -> dict:
     return {k: v for k, v in d.items() if not k.startswith("_")}
 
 
-_DISPLAY_CHAR_INFO = _load_display_char_info()
-
 
 async def _generate_display_phrase(character_id: str) -> str:
     """センサー + 欲求からキャラらしい一言を生成（haiku-4-5直呼び）"""
@@ -644,6 +642,10 @@ CLAUDE_CWD = DATA_DIR
 
 sys.path.insert(0, str(PROJECT_DIR / "scripts"))
 import render_prompt as _render_prompt  # noqa: E402  # ぷちに渡す文は prompts/ のテンプレート(2026-11-13)
+
+# 展示用の一言の紹介文。_render_prompt と DATA_DIR / PROJECT_DIR ができてから読む
+# (上の _load_display_char_info() の定義のすぐ下で読むと、まだ無くて起動に失敗する)
+_DISPLAY_CHAR_INFO = _load_display_char_info()
 
 
 def _prompt(template: str, /, **variables) -> str:
