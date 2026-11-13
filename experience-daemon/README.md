@@ -52,7 +52,7 @@ experience_state.json       # {"state": "awake|asleep|offline", "since": "..."}
 |---|---|
 | `picked_up` / `put_down` | 重力ベクトルの向きが25度以上変わる or 加速度分散スパイクが1秒以上継続→`picked_up`。3秒以上静止で`put_down`（`carried_sec`をdetailに） |
 | `ambient_jump` | 照度が3倍以上/1/3以下（かつ絶対差50以上）変化し2サンプル以上維持。60秒以内は同種を抑制 |
-| `touch` | `lastTouchEventTime`の変化を検知。30秒以内の連続タッチは1件に集約 |
+| `touch` | `/sensors` の `last_touch`(古いファームでは `lastTouchEventTime`)の変化を検知。30秒以内の連続タッチは1件に集約 |
 | `offline_gap` | ポーリング失敗が15秒以上続き復帰した時に1件（開始・終了・分数） |
 | `sleep` / `woken` | `/status`の`is_sleeping`遷移。true→falseの`woken`は`source:"unknown"`（出典特定はPhase 2） |
 | `battery_low` | 電池が20%/10%を下回った時に各1回（+5%回復で再アーム） |

@@ -257,3 +257,23 @@ def test_battery_low_fires_once_per_threshold_with_hysteresis():
     events += d.process_sensors(ts(6.0), sensor_sample(battery=19.0))
     low20_rearmed = [e for e in events if e.type == "battery_low" and e.detail["threshold"] == 20]
     assert len(low20_rearmed) == 2
+
+
+def test_touch_is_detected_with_current_firmware_key():
+    """いまのファームは last_touch で返す(古い版は lastTouchEventTime)。どちらでも「触られた」になる"""
+
+    def sample(value: int) -> dict:
+        s = sensor_sample()
+        s.pop("lastTouchEventTime")
+        s["last_touch"] = value
+        return s
+
+    d = ExperienceDetector()
+    events = []
+    events += d.process_sensors(ts(0.0), sample(0))
+    events += d.process_sensors(ts(1.0), sample(14486539))
+    events += d.process_sensors(ts(2.0), sample(14487001))
+    events += d.process_sensors(ts(40.0), sample(14487001))
+    touch_events = [e for e in events if e.type == "touch"]
+    assert len(touch_events) == 1
+    assert touch_events[0].detail == {"count": 2}

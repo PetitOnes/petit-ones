@@ -64,6 +64,7 @@ AMBIENT_JUMP_COOLDOWN_SEC = 60.0
 # --- タッチ検出 ---
 # 連続タッチをまとめる時間窓（秒）。
 TOUCH_GROUP_WINDOW_SEC = 30.0
+TOUCH_KEYS = ("last_touch", "lastTouchEventTime")   # /sensors の、最後に触られた時刻の名前(新しい版が先)
 
 # --- オフライン検出 ---
 # ポーリング失敗がこの秒数以上続いたら offline_gap イベントとして記録する。
@@ -364,9 +365,12 @@ class ExperienceDetector:
         return events
 
     def _process_touch(self, ts: datetime, sensors: dict) -> list[Event]:
-        if "lastTouchEventTime" not in sensors:
+        # 体が返す名前は、ファームの版で違う: いまは last_touch、古い版は lastTouchEventTime。
+        # 片方だけを見ていると、もう片方の体の「触られた」が 1 件も残らない(2026-11-13 に気づいた)
+        key = next((k for k in TOUCH_KEYS if k in sensors), None)
+        if key is None:
             return []
-        value = sensors["lastTouchEventTime"]
+        value = sensors[key]
         t = self._touch
         events: list[Event] = []
 
