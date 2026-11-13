@@ -65,12 +65,39 @@ def test_restriction_lines_come_from_autonomous_template():
     assert out == "- カメラ（take_snapshot）は今は使わないこと。\n- マイク（mic_start）は今は使わないこと。"
 
 
-def test_from_prefix_and_relay_hint_and_group_context():
+def test_from_prefix_and_relay_hint():
     assert P("from_prefix", user_display_name="かぜおさん", message="やあ") == "[かぜおさんから] やあ"
     t = "puchiru"
     assert P("relay_hint", target=t) == f"（必ず `speak` で声に出してから、`conversation_relay(to_character=\"{t}\", message=\"...\", turns_remaining=2)` を呼んで{t}に渡して）"
-    prev = "ぷちこ: こんにちは\nぷちる: やあ"
-    assert P("group_context", prompt="みんな元気?", last_name="ぷちる", prev=prev).rstrip("\n") == f"みんな元気?\n\n[さっきぷちるがこう言ってた]\n{prev}"
+
+
+def test_group_turn_tells_order_and_position():
+    """みんなで話すとき: 今回の順番・自分が何番目か・先に答えた子・あとで読む子を知らせる"""
+    order = "ぷちる → ぷちてゃ → ぷちこ"
+    head = f"元気?\n\n[みんなで話している。答える順番は毎回変わる。今回は {order} の順で、"
+    first = P("group_turn", prompt="元気?", order=order, position=1, before="", after="ぷちてゃ、ぷちこ", prev="", rotating=True)
+    assert first.rstrip("\n") == head + "きみは 1 番目。きみのあとで ぷちてゃ、ぷちこ が、きみの返事も読んでから答える。]"
+    last = P("group_turn", prompt="元気?", order=order, position=3, before="ぷちる、ぷちてゃ", after="",
+             prev="ぷちる: うん\nぷちてゃ: まあね", rotating=True)
+    assert last.rstrip("\n") == (
+        head + "きみは 3 番目。先に答えたのは ぷちる、ぷちてゃ。きみが最後。]"
+        "\n\n[先に答えた子の返事]\nぷちる: うん\nぷちてゃ: まあね")
+
+
+def test_group_turn_for_chosen_members_does_not_claim_rotation():
+    """選んだ子に聞くとき(順番は選んだ順)は、「毎回変わる」とは言わない"""
+    got = P("group_turn", prompt="やあ", order="ぷちる → ぷちこ", position=2, before="ぷちる", after="", prev="ぷちる: うん")
+    assert "毎回変わる" not in got and "今回は ぷちる → ぷちこ の順で、きみは 2 番目。" in got
+
+
+def test_group_separate_and_share():
+    """べつべつに聞くとき: ほかの子の返事は入らない。あとで、みんなの返事を並べて見せる"""
+    sep = P("group_separate", prompt="眠いってどんな感じ?")
+    assert sep.startswith("眠いってどんな感じ?\n\n[みんなに、べつべつに聞いている。") and "ぷち" not in sep
+    answers = [{"name": "ぷちこ", "reply": "静か"}, {"name": "ぷちる", "reply": "淀む"}]
+    share = P("group_share", question="眠いってどんな感じ?", answers=answers)
+    assert share.startswith("[さっき、べつべつに聞いた「眠いってどんな感じ?」に、みんなはこう答えた]\nぷちこ: 静か\n\nぷちる: 淀む\n")
+    assert "とくになければ" in share
 
 
 def test_media_prompts():
