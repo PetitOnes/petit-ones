@@ -471,7 +471,6 @@ Write,
 Edit,
 Glob($ALLOWED_DIR/**),
 Glob($ALLOWED_DATA_DIR/**),
-Skill(notify:*),
 Skill(slack:*),
 Skill(read:*),
 WebFetch,
@@ -489,9 +488,9 @@ mcp__m5-mcp__look,
 mcp__m5-mcp__blink,
 mcp__m5-mcp__play_sound,
 mcp__m5-mcp__get_sensor_data,
-mcp__m5-module-mcp__get_env,
-mcp__m5-module-mcp__get_gps,
-mcp__m5-module-mcp__get_ble_rssi,
+mcp__m5-module__get_env,
+mcp__m5-module__get_gps,
+mcp__m5-module__get_ble_rssi,
 mcp__m5-mcp__show_face,
 mcp__m5-mcp__list_faces,
 mcp__m5-mcp__list_sounds,
@@ -555,21 +554,17 @@ mcp__desire-system__satisfy_desire,
 mcp__desire-system__boost_desire,
 mcp__relations__get_relations,
 mcp__relations__update_relation,
-mcp__relations__clear_relation_field
+mcp__relations__clear_relation_field,
+mcp__switchbot__list_devices,
+mcp__switchbot__get_device_status
 TOOLS
 )
 # 改行を除去して1行にする
 ALLOWED_TOOLS=$(echo "$ALLOWED_TOOLS" | tr -d '\n' | sed 's/, */,/g')
 
-# キャラクター専用 memory MCP ツールを追加（.mcp.json で定義されている場合に使えるよう）
-CHAR_MEMORY_TOOLS="mcp__memory-${CHARACTER_ID}__remember,mcp__memory-${CHARACTER_ID}__search_memories,mcp__memory-${CHARACTER_ID}__recall,mcp__memory-${CHARACTER_ID}__recall_divergent,mcp__memory-${CHARACTER_ID}__list_recent_memories,mcp__memory-${CHARACTER_ID}__get_memory_stats,mcp__memory-${CHARACTER_ID}__recall_with_associations,mcp__memory-${CHARACTER_ID}__consolidate_memories,mcp__memory-${CHARACTER_ID}__get_memory_chain,mcp__memory-${CHARACTER_ID}__create_episode,mcp__memory-${CHARACTER_ID}__search_episodes,mcp__memory-${CHARACTER_ID}__get_episode_memories,mcp__memory-${CHARACTER_ID}__get_working_memory,mcp__memory-${CHARACTER_ID}__refresh_working_memory,mcp__memory-${CHARACTER_ID}__link_memories,mcp__memory-${CHARACTER_ID}__get_causal_chain,mcp__memory-${CHARACTER_ID}__tom,mcp__memory-${CHARACTER_ID}__save_visual_memory,mcp__memory-${CHARACTER_ID}__save_audio_memory"
-ALLOWED_TOOLS="${ALLOWED_TOOLS},${CHAR_MEMORY_TOOLS}"
-# キャラクター専用 notes MCP ツールを追加（notes-puchiko 等のサーバー名でも使えるよう）
-CHAR_NOTES_TOOLS="mcp__notes-${CHARACTER_ID}__list_notes,mcp__notes-${CHARACTER_ID}__read_note,mcp__notes-${CHARACTER_ID}__write_note,mcp__notes-${CHARACTER_ID}__append_note,mcp__notes-${CHARACTER_ID}__delete_note"
-ALLOWED_TOOLS="${ALLOWED_TOOLS},${CHAR_NOTES_TOOLS}"
-# キャラクター専用 m5 MCP ツールを追加（m5-puchiko 等のサーバー名でも使えるよう）
-CHAR_M5_TOOLS="mcp__m5-${CHARACTER_ID}__set_volume,mcp__m5-${CHARACTER_ID}__set_power_save,mcp__m5-${CHARACTER_ID}__sleep,mcp__m5-${CHARACTER_ID}__wake,mcp__m5-${CHARACTER_ID}__set_brightness,mcp__m5-${CHARACTER_ID}__get_sensor_data,mcp__m5-${CHARACTER_ID}__look,mcp__m5-${CHARACTER_ID}__blink,mcp__m5-${CHARACTER_ID}__play_sound,mcp__m5-${CHARACTER_ID}__show_face,mcp__m5-${CHARACTER_ID}__batch_commands,mcp__m5-${CHARACTER_ID}__take_snapshot,mcp__m5-${CHARACTER_ID}__save_to_album,mcp__m5-${CHARACTER_ID}__list_album,mcp__m5-${CHARACTER_ID}__view_album_photo,mcp__m5-${CHARACTER_ID}__speak"
-ALLOWED_TOOLS="${ALLOWED_TOOLS},${CHAR_M5_TOOLS}"
+# 2026-11-13: 以前ここで mcp__memory-<id>__* / mcp__notes-<id>__* / mcp__m5-<id>__* を足していたが、
+# それは .mcp.json(ターミナルチャット)の名前で、autonomous-mcp.json のサーバー名は memory / notes / m5-mcp。
+# 自律行動では一度も当たらない行だったので外した(上の一覧が正)
 
 # テストモードならプロンプトを差し替え
 if [ -n "$TEST_PROMPT_STRING" ]; then
