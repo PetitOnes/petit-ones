@@ -5,8 +5,10 @@
 
 - 日ごとに区切り、日の中は新しい順
 - 会話は、だれと・いつ・何回だけ。中身は返さない
-- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起きた)だけ。
+- 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた)だけ。
   明るさの変わり目・つながらなかった時間・電池の知らせは出さない
+- 目覚めは、ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
+  それ以外(体を 3 回触る・ダッシュボード・話しかけられて・体の入れ直し)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
 """
 
@@ -29,9 +31,11 @@ MAIL_TEXT_MAX = 120
 MEMORY_TEXT_MAX = 400
 DIARY_HEAD_MAX = 120
 
+WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻が、これだけ近ければ同じ出来事
 BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
 BODY_CONTACT = {"picked_up", "put_down", "touch"}
-BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起きた"}
+BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた"}
+WOKE_ITSELF = "自分で起きた"
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
 
@@ -83,6 +87,33 @@ def _title_from(name: str, char_id: str) -> str:
     return "_".join(rest)
 
 
+def _called_wake(log: Path, ts: datetime, char_id: str) -> bool:
+    """自律行動の記録(stream.jsonl)のなかで、ts のころに自分の体の wake を呼んでいるか。
+
+    行に時刻が無い古い記録は、呼んでいれば True(その回の幅に入っていることは呼ぶ側が見ている)
+    """
+    names = {"mcp__m5-mcp__wake", f"mcp__m5-{char_id}__wake"}
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        if '"tool_use"' not in line or '__wake"' not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") in names:
+                at = _local(ev.get("timestamp", ""))
+                if at is None or abs((ts - at).total_seconds()) <= WAKE_NEAR_S:
+                    return True
+    return False
+
+
 def _files(d: Path) -> list[Path]:
     try:
         return [f for f in d.iterdir() if f.is_file()]
@@ -97,6 +128,7 @@ class _Index:
         self.src = src
         self.by_day: dict[Date, list[dict]] = {}
         self.runs: dict[Date, list[tuple[datetime, datetime]]] = {}
+        self.run_logs: list[tuple[datetime, datetime, Path]] = []
         self._chat()
         self._album()
         self._voice()
@@ -191,6 +223,7 @@ class _Index:
                 continue
             end = min(max(end, ts), ts + timedelta(seconds=ALONE_MAX_S))
             self.runs.setdefault(ts.date(), []).append((ts, end))
+            self.run_logs.append((ts, end, f))
             self._add(ts, kind="alone", _end=end)
 
     def _memories(self, day: Date) -> list[dict]:
@@ -214,6 +247,11 @@ class _Index:
             out.append({"_ts": ts, "kind": "memory", "text": text[:MEMORY_TEXT_MAX], "more": len(text) > MEMORY_TEXT_MAX,
                         "category": category or "", "emotion": emotion or ""})
         return out
+
+    def _woke_itself(self, ts: datetime) -> bool:
+        """その目覚めは、ひとりの時間のなかで、その子が自分で体を起こしたものか"""
+        near = timedelta(seconds=WAKE_NEAR_S)
+        return any(a <= ts <= b + near and _called_wake(f, ts, self.src.char_id) for a, b, f in self.run_logs)
 
     def _body(self, day: Date) -> list[dict]:
         """体に起きたこと。
@@ -264,7 +302,7 @@ class _Index:
         for ts, kind in events:
             if (ts, kind) in busy:
                 continue
-            word = BODY_WORDS[kind]
+            word = WOKE_ITSELF if kind == "woken" and self._woke_itself(ts) else BODY_WORDS[kind]
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1
