@@ -47,6 +47,15 @@ def find_template(name: str, data_dir=None, project_dir=None) -> Path:
     raise FileNotFoundError(f"テンプレートが無い: {name} (探した: {[str(d) for d in prompt_dirs(data_dir, project_dir)]})")
 
 
+def find_resource(relpath: str, data_dir=None, project_dir=None) -> Path:
+    """テンプレート以外の資料(JSON など)も同じ順で探す。relpath は prompts/ からの相対(拡張子つき)。"""
+    for d in prompt_dirs(data_dir, project_dir):
+        p = d / relpath
+        if p.is_file():
+            return p
+    raise FileNotFoundError(f"資料が無い: {relpath} (探した: {[str(d) for d in prompt_dirs(data_dir, project_dir)]})")
+
+
 def truthy(v: Any) -> bool:
     if v is None or v is False:
         return False

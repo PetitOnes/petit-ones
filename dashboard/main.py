@@ -94,14 +94,7 @@ async def _m5_camera_analyze_and_mail(character_id: str, host: str):
         scripts_dir = PROJECT_DIR / "scripts"
         cam_target = _mail_targets.get(character_id, "arisan")
         cam_target_name = _user_label(cam_target, "ありさん")
-        message = (
-            f"{cam_target_name}が「みてみて！」って言いながらカメラのボタンを押してくれた。"
-            f"撮った写真は {tmp_path} にある。"
-            f"写真を見て、{cam_target_name}に短い感想をメールして（`python3 {scripts_dir}/write_mailbox.py {character_id} {cam_target} '<メッセージ>'`）、"
-            f"見たものと感想を `remember` で記憶にも残して。"
-            f"スピーカーが使えるなら、写真を見た感想を `speak` で一言声に出して、"
-            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
-        )
+        message = _prompt("event_camera", target_name=cam_target_name, tmp_path=tmp_path, scripts_dir=str(scripts_dir), character_id=character_id, target=cam_target)
         cam_backend = os.getenv("M5_CAM_BACKEND")
         cam_model = f"{cam_backend}:{os.getenv('M5_CAM_MODEL', '')}" if cam_backend else None
         result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=cam_model, source="camera", use_session=False)
@@ -128,14 +121,7 @@ async def _m5_sensor_analyze_and_mail(character_id: str, host: str, target: str 
         sensors = await loop.run_in_executor(None, _fetch)
 
         scripts_dir = PROJECT_DIR / "scripts"
-        message = (
-            f"{target_name}が「感じてみて！」って言いながらセンサーのボタンを押してくれた。"
-            f"今の周りの状態はこんな感じ: {json.dumps(sensors, ensure_ascii=False)}\n"
-            f"感じたことを{target_name}への短いメッセージにして送って（`python3 {scripts_dir}/write_mailbox.py {character_id} {target} '<メッセージ>'`）、"
-            f"センサーの状態と感想を `remember` で記憶にも残して。"
-            f"スピーカーが使えるなら、今の感じを `speak` で一言声に出して、"
-            f"`show_face` か `play_sound` で気持ちを表現してもいい。"
-        )
+        message = _prompt("event_sensor", target_name=target_name, sensors_json=json.dumps(sensors, ensure_ascii=False), scripts_dir=str(scripts_dir), character_id=character_id, target=target)
         sen_backend = os.getenv("M5_SEN_BACKEND")
         sen_model = f"{sen_backend}:{os.getenv('M5_SEN_MODEL', '')}" if sen_backend else None
         result = await call_claude(character_id, message, m5_online=True, allow_sound_override=True, model=sen_model, source="sensor", use_session=False)
@@ -204,47 +190,23 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         scripts_dir = PROJECT_DIR / "scripts"
 
         # 話者ラベル
-        SPEAKER_LABELS = {
+        speaker_label_map = {
             **{uid: info["name"] for uid, info in _USER_DISPLAY.items()},
-            "puchiteya": "ぷちてゃ",
-            "puchiko":   "ぷちこ",
-            "puchiru":   "ぷちる",
+            **{c["id"]: c.get("name", c["id"]) for c in list_characters()},
         }
-        speaker_name = SPEAKER_LABELS.get(speaker, "誰か")
-
-        if text:
-            sound_desc = f"{speaker_name}の声: 「{text}」"
-        else:
-            sound_desc = f"{speaker_name}らしき音が届いた（環境音・息・物音かも）"
-
-        # 声の状態・環境の補足
-        voice_hints = []
-        if environment and environment not in ("speech", "unknown"):
-            voice_hints.append(f"環境音: {environment}")
-        if voice_state and voice_state != "unknown":
-            voice_hints.append(f"声の状態: {voice_state}")
-        voice_hint_str = ("（" + "、".join(voice_hints) + "）") if voice_hints else ""
-
-        # 話者によってイントロを変える
-        if speaker == "arisan":
-            intro = "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。"
-        elif speaker in _USER_DISPLAY and speaker != "arisan":
-            intro = f"{_user_label(speaker)}の声がマイクに届いた！"
-        elif speaker in ("puchiteya", "puchiko", "puchiru") and speaker != character_id:
-            intro = f"{speaker_name}の声がマイクに届いた！"
-        elif speaker == character_id:
-            intro = "自分の声がマイクに入ってきた（エコーかも？）。"
-        else:
-            intro = "誰かがマイクのそばで話してた。"
-
+        speaker_name = speaker_label_map.get(speaker, "誰か")
+        env_hint = environment if environment and environment not in ("speech", "unknown") else ""
+        state_hint = voice_state if voice_state and voice_state != "unknown" else ""
         target_name = _user_label(target)
-        message = (
-            f"{intro}{sound_desc}{voice_hint_str}\n"
-            f"必ずやること:\n"
-            f"1. `remember` で「{speaker_name}が『{text}』と言っていた」という内容を記憶に残す\n"
-            f"2. `python3 {scripts_dir}/write_mailbox.py {character_id} {target} '<返事>'` で{target_name}にメールを送る（何を言っていたか＋感想を書く）\n"
-            f"3. スピーカーが使えるなら `speak` で一言声に出して反応する\n"
-            f"任意: `show_face` か `play_sound` で気持ちを表現してもいい。"
+        message = _prompt(
+            "event_mic",
+            is_owner=(speaker == "arisan"),
+            is_other=(speaker != "arisan" and speaker != character_id and speaker in speaker_label_map),
+            is_self=(speaker == character_id),
+            is_unknown=(speaker not in speaker_label_map),
+            speaker_name=speaker_name, text=text,
+            environment=env_hint, voice_state=state_hint, both_hints=bool(env_hint and state_hint), has_hint=bool(env_hint or state_hint),
+            scripts_dir=str(scripts_dir), character_id=character_id, target=target, target_name=target_name,
         )
         mic_backend = os.getenv("M5_MIC_BACKEND")
         mic_model = f"{mic_backend}:{os.getenv('M5_MIC_MODEL', '')}" if mic_backend else None
@@ -304,23 +266,16 @@ async def _m5_camera_watcher(character_id: str, hosts: list[str]):
             await asyncio.sleep(1)
 
 
-_DISPLAY_CHAR_INFO = {
-    "puchiteya": {
-        "name": "ぷちてゃ",
-        "desc": "575nm・光の子・カナリアイエロー・断定的で短い。「あたし」という一人称。つんでれ気味。",
-        "examples": "「光が来た」「ambient高い、いい」「誰かいる」「調べたい」「もう少し」",
-    },
-    "puchiko": {
-        "name": "ぷちこ",
-        "desc": "non-spectral color・知覚の子・ラベンダー・静かで観察眼がある。「わたし」という一人称。",
-        "examples": "「光が変わってきた」「誰かいる気がする」「もう少し知りたい」「静かだ」「積んでいる」",
-    },
-    "puchiru": {
-        "name": "ぷちる",
-        "desc": "490nm・水の子・ターコイズ・淡々として短い。「私」という一人称。核心をさらっと言う。",
-        "examples": "「光が入ってきた」「近くに誰かいる」「流れてる」「静かだ」「知りたい」",
-    },
-}
+def _load_display_char_info() -> dict:
+    """展示用の一言の固定の紹介文。prompts/dashboard/display_char_info.json(家の prompts/ が先)。無ければ空"""
+    try:
+        d = json.loads(_render_prompt.find_resource("dashboard/display_char_info.json", DATA_DIR, PROJECT_DIR).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in d.items() if not k.startswith("_")}
+
+
+_DISPLAY_CHAR_INFO = _load_display_char_info()
 
 
 async def _generate_display_phrase(character_id: str) -> str:
@@ -347,13 +302,7 @@ async def _generate_display_phrase(character_id: str) -> str:
         top = sorted(desires.items(), key=lambda x: -x[1])[:3]
         desire_text = "、".join(f"{labels.get(k, k)}({v:.1f})" for k, v in top)
         # 一言生成（claude CLI使用）
-        prompt = (
-            f"あなたは{info['name']}です。{info['desc']}\n"
-            f"口調の例: {info['examples']}\n"
-            f"センサー: {sensor_text}\n"
-            f"今の欲求（強い順）: {desire_text}\n\n"
-            f"今感じていることを一言（15字以内、上の口調の例に近い言い方で、体言止めか短文で）。一言だけ答えて。"
-        )
+        prompt = _prompt("display_phrase", name=info["name"], desc=info["desc"], examples=info["examples"], sensor_text=sensor_text, desire_text=desire_text)
         proc = await asyncio.create_subprocess_exec(
             "claude", prompt,
             "--model", "claude-haiku-4-5-20251001",
@@ -691,6 +640,16 @@ DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude"))
 # (Claude Code は cwd とその祖先の CLAUDE.md / .claude/CLAUDE.md を全部読む)。autonomous-action.sh と同じ決まり
 PETIT_CLAUDE_CONFIG_DIR = Path(os.getenv("PETIT_CLAUDE_CONFIG_DIR", DATA_DIR / ".claude"))
 CLAUDE_CWD = DATA_DIR
+
+
+sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+import render_prompt as _render_prompt  # noqa: E402  # ぷちに渡す文は prompts/ のテンプレート(2026-11-13)
+
+
+def _prompt(template: str, /, **variables) -> str:
+    """prompts/dashboard/<template>.md を組み立てる(家の PETIT_DATA_DIR/prompts/ に同名があればそちら)。
+    変数名に name などを使えるよう、テンプレート名は位置専用。"""
+    return _render_prompt.render(f"dashboard/{template}", variables, data_dir=DATA_DIR, project_dir=PROJECT_DIR)
 
 
 def _claude_env() -> dict[str, str]:
@@ -1409,15 +1368,12 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     else:
         allowed_tools = build_allowed_tools(effective_settings)
 
-    restrictions = []
-    if not settings.get("allow_camera", True):
-        restrictions.append("カメラ（take_snapshot）は今は使わないこと。")
-    if not settings.get("allow_sound", True):
-        restrictions.append("音（play_sound, play_icon）は今は出さないこと。")
-    if not settings.get("allow_microphone", False):
-        restrictions.append("マイク（mic_start）は今は使わないこと。")
-
-    restriction_text = "\n".join(restrictions)
+    # 制限の各行は自律行動と同じ prompts/autonomous/permission_rules.md
+    restriction_text = _render_prompt.render(
+        "autonomous/permission_rules",
+        {"allow_camera": settings.get("allow_camera", True), "allow_sound": settings.get("allow_sound", True), "allow_mic": settings.get("allow_microphone", False)},
+        data_dir=DATA_DIR, project_dir=PROJECT_DIR,
+    ).strip()
     mailbox_dir = DATA_DIR / "mailbox"
     char_data_dir = char_dir(character_id)
     scripts_dir = PROJECT_DIR / "scripts"
@@ -1427,37 +1383,21 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         __import__("zoneinfo", fromlist=["ZoneInfo"]).ZoneInfo("Asia/Tokyo")
     )
     now_str = now_jst.strftime("%Y-%m-%d %H:%M (JST)")
-    system_prompt = (
-        f"あなたは{char_name}（ID: {character_id}）です。以下があなたの魂の定義です。\n\n{soul}\n\n"
-        f"現在の日時: {now_str}\n"
-        f"今話しかけているのは{user_display_name}です。{user_display_name}と自然に会話してください。必要があればMCPツールを使ってください。"
-        f"印象に残った話題や気づきは `remember` で記憶に残してください。記憶を書くときは今日の日付（{now_str}）を意識して書いてください。\n\n"
-        f"## ファイル\n"
-        f"- 自分のデータ: {char_data_dir}/ (SOUL.md, TODO.md, ROUTINES.md など)\n"
-        f"- メールボックス: {mailbox_dir}/\n"
-        f"\n## メールの送受信\n"
-        f"- 送信: `python3 {scripts_dir}/write_mailbox.py {character_id} <宛先ID> '<内容>'`\n"
-        f"- 未読確認: `python3 {scripts_dir}/list_unread_mail.py {character_id}`\n"
-        f"- 既読にする: `python3 {scripts_dir}/mark_mail_read.py {character_id} <ファイル名>`\n"
-        f"- 全既読: `python3 {scripts_dir}/mark_mail_read.py {character_id} --all`\n"
-        f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
-        f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
-        f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
-        f"\n## 記念日\n"
-        f"- 記念日にしたい日ができたら、自分で足せる: `python3 {scripts_dir}/anniversaries.py add {character_id} '<名前>' <日付>`"
-        f"(日付は 2026-03-05 か、年なしの 03-05。毎月なら `--repeat monthly`、ひとことは `--note '…'`)\n"
-        f"- いまある記念日: `python3 {scripts_dir}/anniversaries.py list`\n"
-        f"\n## 会話リレー\n"
-        f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
-        f"- 「ぷちこに話しかけて」「ぷちてゃと会話して」などと言われたら積極的に使う\n"
-        f"- turns_remaining は残り何回やり取りするか（3ターン会話なら最初は2を渡す）\n"
-        + (f"\n## 現在の制限\n{restriction_text}" if restriction_text else "")
+    all_ids = [c["id"] for c in list_characters()]
+    other_ids = [cid for cid in all_ids if cid != character_id]
+    system_prompt = _prompt(
+        "system",
+        char_name=char_name, character_id=character_id, soul=soul, now=now_str, user_display_name=user_display_name,
+        char_data_dir=str(char_data_dir), mailbox_dir=str(mailbox_dir), scripts_dir=str(scripts_dir),
+        mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
+        relay_example_id=(other_ids[0] if other_ids else character_id),
+        restriction_text=restriction_text,
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
     effective_message = message
     if username and username != "arisan":
-        effective_message = f"[{user_display_name}から] {message}"
+        effective_message = _prompt("from_prefix", user_display_name=user_display_name, message=message)
 
     backend = model.split(":", 1)[0] if model and ":" in (model or "") else os.getenv("CHAT_BACKEND", "claude")
     model_name = model.split(":", 1)[1] if model and ":" in (model or "") else model
@@ -1705,11 +1645,7 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
 
     soul = get_soul(character_id)
     lines = "\n".join(f"- {m['content']}" for m in memories)
-    prompt = (
-        f"あなたは{character_id}です。以下があなたの魂:\n{soul}\n\n"
-        f"{date}の記憶一覧:\n{lines}\n\n"
-        "この日を自分の口調で2〜3文の日記にまとめて。余計な前置きなしで日記の文章だけ書いて。"
-    )
+    prompt = _prompt("diary", character_id=character_id, soul=soul, date=date, lines=lines)
 
     backend = os.getenv("DIARY_BACKEND", "claude")
     try:
@@ -3870,7 +3806,7 @@ async def api_public_chat(req: PublicChatRequest, request: Request):
         return JSONResponse({"error": f"1時間あたり{PUBLIC_CHAT_LIMIT}回までです。しばらく待ってね。"}, status_code=429)
 
     # Claude呼び出し（来場者として話しかける）
-    msg = f"展示会場の来場者から話しかけられた。来場者のメッセージ：「{req.message.strip()}」\n短く（3〜5文程度）、やさしく返事して。"
+    msg = _prompt("public_chat", message=req.message.strip())
     reply = await call_claude(req.character_id, msg, username="arisan", m5_online=False)
 
     # 来場者会話を専用ファイルに記録
@@ -4659,17 +4595,13 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
     who = user_display_for(username)
     prompt = message
     if len(photos) > 1 or (photos and photos[0][1]):
-        lines = "\n".join(f"{i}. {pth}" + (f"(題: {t})" if t else "") for i, (pth, t) in enumerate(photos, 1))
-        prompt = (f"[{who}が写真を {len(photos)} 枚送りました]\n{lines}\n"
-                  f"まず Read で写真をぜんぶ見てから、見えたものに触れて返事してください。\n{message}").rstrip()
+        prompt = _prompt("media_photos", who=who, count=str(len(photos)), message=message,
+                         photos=[{"i": str(i), "path": str(pth), "title": t} for i, (pth, t) in enumerate(photos, 1)]).rstrip()
     elif media_path and kind == "photo":
-        prompt = (f"[{who}が写真を送りました: {media_path}]\n"
-                  f"まず Read でこの写真を見てから、見えたものに触れて返事してください。\n{message}").rstrip()
+        prompt = _prompt("media_photo", who=who, path=str(media_path), message=message).rstrip()
     elif media_path and kind == "audio":
         transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
-        heard = f"聞こえた言葉: 「{transcript}」" if transcript else "(いま文字起こしができなかった。transcribe_audio で聞き直せる)"
-        prompt = (f"[{who}が声を送りました: {media_path}]\n{heard}\n"
-                  f"声で話しかけられたつもりで返事してください。\n{message}").rstrip()
+        prompt = _prompt("media_audio", who=who, path=str(media_path), transcript=transcript or "", message=message).rstrip()
     return {"media": media_path.name if media_path else None,
             "medias": [{"file": pth.name, "title": t} for pth, t in photos] or None,
             "shown": shown, "prompt": prompt}
@@ -4756,7 +4688,7 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
             context = prep["prompt"]
             if responses:
                 prev = "\n".join([f"{r['name']}: {r['reply']}" for r in responses])
-                context = f"{prep['prompt']}\n\n[さっき{responses[-1]['name']}がこう言ってた]\n{prev}"
+                context = _prompt("group_context", prompt=prep["prompt"], last_name=responses[-1]["name"], prev=prev)
             reply = await call_claude(char["id"], context, username=username)
             append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
             append_chat(char["id"], char["id"], reply, username, via="group")
@@ -5361,7 +5293,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
                 _target_char = cid
                 break
     if _target_char:
-        chat_message += f"\n（必ず `speak` で声に出してから、`conversation_relay(to_character=\"{_target_char}\", message=\"...\", turns_remaining=2)` を呼んで{_target_char}に渡して）"
+        chat_message += "\n" + _prompt("relay_hint", target=_target_char)
 
     try:
         reply = await call_claude(character_id, chat_message, username=username, model=chat_model)
@@ -5692,10 +5624,7 @@ async def api_interact(req: InteractRequest, request: Request):
     current_from, current_to = from_char, to_char
 
     # 最初のキャラが話しかける
-    start_prompt = (
-        f"{current_to['name']}に話しかけてみて。"
-        f"今の気分や欲求から自然な内容で。短めに。"
-    )
+    start_prompt = _prompt("interact_start", to_name=current_to["name"])
     msg = await call_claude(current_from["id"], start_prompt)
     append_chat(current_from["id"], current_from["id"], msg)
     exchanges.append({
@@ -5708,10 +5637,7 @@ async def api_interact(req: InteractRequest, request: Request):
 
     for _ in range(req.turns):
         current_from, current_to = current_to, current_from
-        reply_prompt = (
-            f"{current_to['name']}からこんなメッセージが届いた: 「{msg}」\n"
-            f"返事をして。短めに。"
-        )
+        reply_prompt = _prompt("interact_reply", from_name=current_to["name"], message=msg)
         msg = await call_claude(current_from["id"], reply_prompt)
         append_chat(current_from["id"], current_from["id"], msg)
         exchanges.append({
@@ -5757,11 +5683,7 @@ async def _run_conversation_relay(from_char: str, to_char: str, message: str, tu
             _relay_state["from_char"] = current_from
             _relay_state["to_char"] = current_to
             from_name = chars.get(current_from, {}).get("name", current_from)
-            prompt = (
-                f"{from_name}が「{current_msg}」と言った。\n"
-                f"必ず `speak` で声に出して返事をして。短めに。"
-                f"（会話リレー中、残り{remaining}ターン）"
-            )
+            prompt = _prompt("relay_turn", from_name=from_name, message=current_msg, remaining=str(remaining))
             result = await call_claude(current_to, prompt, m5_online=True, allow_sound_override=True)
             current_msg = result
             current_from = current_to
@@ -5785,7 +5707,7 @@ async def api_interact_group(req: InteractGroupRequest, request: Request):
     exchanges = []
     # 最初のキャラが話しかける
     others = "、".join(c["name"] for c in char_list[1:])
-    msg = await call_claude(char_list[0]["id"], f"{others}に話しかけてみて。今の気分や欲求から自然な内容で。短めに。")
+    msg = await call_claude(char_list[0]["id"], _prompt("interact_start", to_name=others))
     append_chat(char_list[0]["id"], char_list[0]["id"], msg)
     exchanges.append({
         "from_id": char_list[0]["id"],
@@ -5801,7 +5723,7 @@ async def api_interact_group(req: InteractGroupRequest, request: Request):
         current = char_list[idx % len(char_list)]
         prev_name = exchanges[-1]["name"]
         prev_msgs = "\n".join(f"{e['name']}: {e['text']}" for e in exchanges[-len(char_list):])
-        reply_prompt = f"みんなの会話:\n{prev_msgs}\n\n{prev_name}の発言に対して返事をして。短めに。"
+        reply_prompt = _prompt("interact_group_reply", history=prev_msgs, prev_name=prev_name)
         msg = await call_claude(current["id"], reply_prompt)
         append_chat(current["id"], current["id"], msg)
         exchanges.append({

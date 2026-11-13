@@ -1,0 +1,1 @@
+（必ず `speak` で声に出してから、`conversation_relay(to_character="{{target}}", message="...", turns_remaining=2)` を呼んで{{target}}に渡して）

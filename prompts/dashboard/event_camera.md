@@ -1,0 +1,1 @@
+{{target_name}}が「みてみて！」って言いながらカメラのボタンを押してくれた。撮った写真は {{tmp_path}} にある。写真を見て、{{target_name}}に短い感想をメールして（`python3 {{scripts_dir}}/write_mailbox.py {{character_id}} {{target}} '<メッセージ>'`）、見たものと感想を `remember` で記憶にも残して。スピーカーが使えるなら、写真を見た感想を `speak` で一言声に出して、`show_face` か `play_sound` で気持ちを表現してもいい。
