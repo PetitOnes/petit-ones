@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>欲求の様子</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🫧 欲求の様子</h1></div>
+
+    <div class="o-bar">
+      <label><select class="a-input" id="charSelect"></select> の欲求</label>
+      <select class="a-input o-bar-end" id="daysSelect" title="見る長さ">
+        <option value="3">3 日</option>
+        <option value="7" selected>7 日</option>
+        <option value="14">14 日</option>
+        <option value="31">31 日</option>
+      </select>
+    </div>
+
+    <div class="o-desire-key" id="key" style="display:none">
+      <span><i style="width:18px;height:2px;background:var(--ui-text-sub)"></i>欲求の強さ(下が 0、上が 1.0 = 上限)</span>
+      <span><i style="width:2px;height:8px;background:var(--ui-text-sub)"></i>満たした記憶(その欲求の言葉が入った記憶)</span>
+    </div>
+    <div id="list"></div>
+    <div class="p-empty" id="empty" style="display:none">まだ記録がありません</div>
+
+    <div class="m-card" id="effects" style="display:none">
+      <span class="a-heading">時間のほかに、欲求を動かすもの</span>
+      <div class="o-desire-more" id="effectsBody"></div>
+    </div>
+    <p class="a-label" id="howto" style="display:none">欲求は「最後に満たした記憶からの時間 ÷ 満たすまでの時間」で上がり、1.0 で止まります。5 分ごとに計算し直すので、道具(satisfy_desire)で下げたぶんは、満たした記憶が無ければ次の計算で元に戻ります。</p>
+  </div>
+
+  <script>
+    const { esc, charSelect } = PetitPage;
+    const W = 600, H = 72, TOP = 6, BOTTOM = 58;   // 線を描く幅と高さ(viewBox)。下の 14 は日付の目盛り
+    let charId = "", data = null;
+
+    const pct = v => v === null || v === undefined ? "–" : `${v}%`;
+    const hoursText = h => h === null || h === undefined ? "–" : (h >= 48 ? `${Math.round(h / 24)} 日` : `${h} 時間`);
+
+    function plotSvg(d, t0, t1, times) {
+      const x = t => (t - t0) / (t1 - t0) * W;
+      const y = v => BOTTOM - v * (BOTTOM - TOP);
+      // 日の変わり目の線と日付
+      let grid = "";
+      const day = new Date(t0); day.setHours(24, 0, 0, 0);
+      const step = Math.max(1, Math.ceil((t1 - t0) / 86400000 / 8));
+      for (let i = 0; day.getTime() < t1; day.setDate(day.getDate() + 1), i++) {
+        const gx = x(day.getTime()).toFixed(1);
+        grid += `<line class="grid" x1="${gx}" x2="${gx}" y1="${TOP}" y2="${BOTTOM}"/>`;
+        if (i % step === 0) grid += `<text class="tick" x="${gx}" y="${H - 2}" text-anchor="middle">${day.getMonth() + 1}/${day.getDate()}</text>`;
+      }
+      // 強さの線。記録が 20 分より空いたところは、線を切る
+      let path = "", prev = null;
+      d.values.forEach((v, i) => {
+        if (v === null || v === undefined) { prev = null; return; }
+        const gap = prev === null || times[i] - prev > 20 * 60000;
+        path += `${gap ? "M" : "L"}${x(times[i]).toFixed(1)},${y(v).toFixed(1)}`;
+        prev = times[i];
+      });
+      const rug = d.satisfied.map(s => { const sx = x(new Date(s).getTime()).toFixed(1); return `<line x1="${sx}" x2="${sx}" y1="${BOTTOM - 8}" y2="${BOTTOM}" stroke="var(--ui-text-sub)" stroke-width="1.5"/>`; }).join("");
+      return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(d.name)}の強さの移り変わり">
+        <line class="grid" x1="0" x2="${W}" y1="${TOP}" y2="${TOP}"/><line class="grid" x1="0" x2="${W}" y1="${BOTTOM}" y2="${BOTTOM}"/>${grid}
+        <path d="${path}" fill="none" stroke="color-mix(in srgb, ${esc(d.color)} 72%, #333)" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+        ${rug}<line class="hair" x1="0" x2="0" y1="${TOP}" y2="${BOTTOM}"/></svg>`;
+    }
+
+    function cardHtml(d, i, t0, t1, times) {
+      const words = d.keywords.length
+        ? `<div class="o-desire-words">${d.keywords.map(k => `<span>${esc(k)}</span>`).join("")}</div>`
+        : `<div>満たしたことになる言葉は、決まっていません</div>`;
+      const fixed = d.time_driven === false ? `<div>時間では上がらない欲求です(ふだんの強さ ${d.base_level ?? 0})</div>` : "";
+      const floor = d.time_driven !== false && d.base_level !== null && d.base_level !== undefined ? `<div>${d.base_level} より下には下がりません</div>` : "";
+      return `<div class="o-desire" data-i="${i}">
+        <div class="o-desire-head"><span class="o-desire-dot" style="background:${esc(d.color)}"></span><b>${esc(d.name)}</b><span class="o-desire-desc">${esc(d.description)}</span></div>
+        <div class="o-desire-stats">
+          <div class="o-desire-stat"><b>${d.now === null ? "–" : d.now.toFixed(2)}</b><span>いま</span></div>
+          <div class="o-desire-stat"><b>${pct(d.full_pct)}</b><span>上限にいた時間</span></div>
+          <div class="o-desire-stat"><b>${pct(d.top_pct)}</b><span>いちばん強かった時間</span></div>
+          <div class="o-desire-stat"><b>${d.satisfied.length} 回</b><span>満たした記憶</span></div>
+        </div>
+        <div class="o-desire-plot">${plotSvg(d, t0, t1, times)}<div class="o-desire-tip"></div></div>
+        <details class="o-desire-more"><summary>この欲求の決まり</summary>
+          <div>満たしてから ${hoursText(d.hours)} で、上限(1.0)まで上がります</div>${fixed}${floor}
+          <div>道具(satisfy_desire)で満たした回数: ${d.tool_satisfied} 回</div>
+          <div style="margin-top:6px">満たしたことになる言葉(記憶にこの言葉が入ると、そこから数え直します):</div>${words}
+        </details>
+      </div>`;
+    }
+
+    function render() {
+      const list = document.getElementById("list");
+      const has = data && data.desires && data.desires.length;
+      document.getElementById("empty").style.display = has ? "none" : "";
+      for (const id of ["key", "howto"]) document.getElementById(id).style.display = has ? "" : "none";
+      if (!has) { list.textContent = ""; document.getElementById("effects").style.display = "none"; return; }
+      const t0 = new Date(data.from).getTime(), t1 = new Date(data.to).getTime();
+      data._times = data.times.map(t => new Date(t).getTime());
+      list.innerHTML = data.desires.map((d, i) => cardHtml(d, i, t0, t1, data._times)).join("");
+      const fx = [...data.sensor_effects.map(t => ["体から", t]), ...data.cross_effects.map(t => ["ほかの欲求から", t])];
+      const prio = data.priority.map(id => (data.desires.find(d => d.id === id) || {}).name || id);
+      document.getElementById("effectsBody").innerHTML = fx.map(([k, t]) => `<div>・${esc(k)}: ${esc(t)}</div>`).join("")
+        + (prio.length ? `<div style="margin-top:6px">同じ強さのときに先になる順: ${prio.map(esc).join(" → ")}</div>` : "");
+      document.getElementById("effects").style.display = fx.length || prio.length ? "" : "none";
+    }
+
+    // 線の上をなぞると、その時刻の強さを出す
+    function hover(e) {
+      const plot = e.target.closest(".o-desire-plot");
+      if (!plot || !data) return;
+      const card = plot.closest(".o-desire"), d = data.desires[Number(card.dataset.i)];
+      const box = plot.getBoundingClientRect();
+      const t0 = new Date(data.from).getTime(), t1 = new Date(data.to).getTime();
+      const t = t0 + Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)) * (t1 - t0);
+      let best = -1, gap = Infinity;
+      data._times.forEach((ts, i) => { const g = Math.abs(ts - t); if (g < gap && d.values[i] !== null && d.values[i] !== undefined) { gap = g; best = i; } });
+      const tip = plot.querySelector(".o-desire-tip"), hair = plot.querySelector(".hair");
+      if (best < 0 || gap > 30 * 60000) { tip.style.display = "none"; hair.style.display = "none"; return; }
+      const when = new Date(data._times[best]);
+      const fx = (data._times[best] - t0) / (t1 - t0);
+      hair.setAttribute("x1", (fx * W).toFixed(1)); hair.setAttribute("x2", (fx * W).toFixed(1)); hair.style.display = "block";
+      tip.textContent = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}  ${d.values[best].toFixed(2)}`;
+      tip.style.left = Math.min(box.width - 50, Math.max(50, fx * box.width)) + "px";
+      tip.style.display = "block";
+    }
+    const list = document.getElementById("list");
+    list.addEventListener("pointermove", hover);
+    list.addEventListener("pointerdown", hover);
+    list.addEventListener("pointerleave", () => list.querySelectorAll(".o-desire-tip, .hair").forEach(el => { el.style.display = "none"; }), true);
+
+    async function load() {
+      if (!charId) return;
+      try {
+        data = await (await fetch(`/api/${charId}/desire_history?days=${document.getElementById("daysSelect").value}`)).json();
+      } catch (e) { data = null; }
+      render();
+    }
+    document.getElementById("daysSelect").onchange = load;
+    function start(id) { charId = id; load(); }
+    charSelect(document.getElementById("charSelect"), start).then(start);
+  </script>
+</body>
+</html>
