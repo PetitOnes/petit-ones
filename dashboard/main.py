@@ -870,6 +870,7 @@ class MailMetaUpdate(BaseModel):
     archived: bool | None = None
     starred: bool | None = None
     read: bool | None = None   # 見ている人が読んだか(read_by にその人の id を入れる・外す。ぷちの既読と同じ持ち方)
+    stamp: str | None = None   # 見ている人のスタンプ(決めた 5 つのどれか。"" で外す)。付けると既読にもなる
 
 
 def memory_db_path(character_id: str) -> Path:
@@ -1396,6 +1397,14 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     effective_message = message
     if username and username != "arisan":
         effective_message = _prompt("from_prefix", user_display_name=user_display_name, message=message)
+    if source == "chat":
+        # 手紙が届いたこと(読まれた・スタンプが付いた)を、まだ伝えていない分だけ、さらっと 1 回(2026-11-13)
+        try:
+            receipts = _mail_receipts().notice(DATA_DIR, character_id, mark=True)
+        except Exception:
+            receipts = []
+        if receipts:
+            effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
     backend = model.split(":", 1)[0] if model and ":" in (model or "") else os.getenv("CHAT_BACKEND", "claude")
     model_name = model.split(":", 1)[1] if model and ":" in (model or "") else model
@@ -1824,6 +1833,15 @@ def _anniv():
         sys.path.insert(0, scripts_dir)
     import anniversaries
     return anniversaries
+
+
+def _mail_receipts():
+    """手紙が届いたことの知らせ(読まれた・スタンプ)。計算は scripts/mail_receipts.py(自律行動と同じもの)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import mail_receipts
+    return mail_receipts
 
 
 class AnniversaryBody(BaseModel):
@@ -5528,6 +5546,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         info["starred"] = meta["starred"]
         info["read_by"] = meta.get("read_by", [])
         info["read"] = is_read
+        info["stamp"] = (meta.get("stamps") or {}).get(username, "")
         candidates.append(info)
     candidates.sort(key=lambda m: m["date"], reverse=True)
     total = len(candidates)
@@ -5550,6 +5569,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "starred": c["starred"],
             "read_by": c["read_by"],
             "read": c["read"],
+            "stamp": c["stamp"],
         })
     return {"total": total, "unread": unread, "offset": offset, "items": items}
 
@@ -5678,6 +5698,16 @@ def api_mailbox_update_meta(filename: str, body: MailMetaUpdate, request: Reques
         username = _get_username(request) or "arisan"
         read_by = [u for u in (current.get("read_by") or []) if u != username]
         current["read_by"] = read_by + [username] if body.read else read_by
+    if body.stamp is not None:
+        if body.stamp and body.stamp not in _mail_receipts().STAMPS:
+            return JSONResponse({"error": "そのスタンプはありません"}, status_code=400)
+        username = _get_username(request) or "arisan"
+        stamps = {k: v for k, v in (current.get("stamps") or {}).items() if k != username}
+        if body.stamp:
+            stamps[username] = body.stamp
+            if username not in (current.get("read_by") or []):   # スタンプを付けたら、読んだことにもする
+                current["read_by"] = (current.get("read_by") or []) + [username]
+        current["stamps"] = stamps
     mails[safe_name] = current
     _save_mailbox_metadata(data)
     return current
@@ -5921,6 +5951,10 @@ HTML = """<!DOCTYPE html>
     .mail-unread-mark { display: none; margin-left: 6px; padding: 1px 7px; border-radius: 8px; background: #e57373; color: #fff; font-size: 0.65rem; font-weight: 600; }
     .mail-item.is-unread .mail-unread-mark { display: inline-block; }
     .mail-read-btn { background: none; border: 1px solid #ccc; border-radius: 10px; font-size: 0.7rem; padding: 2px 8px; cursor: pointer; color: #666; white-space: nowrap; }
+    .mail-stamps { display: flex; gap: 4px; margin-top: 8px; }
+    .mail-stamp { width: 34px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 15px; background: rgba(255,255,255,0.6); font-size: 1rem; line-height: 1; cursor: pointer; opacity: 0.45; filter: grayscale(0.6); }
+    .mail-stamp:hover { opacity: 0.8; }
+    .mail-stamp.on { opacity: 1; filter: none; border-color: #e0a0a0; background: #fff; }
     .mail-read-all { margin: 0 0 10px auto; display: none; padding: 4px 12px; border: 1px solid #ccc; border-radius: 12px; background: #fff; font-size: 0.75rem; color: #666; cursor: pointer; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
     .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
@@ -7877,6 +7911,7 @@ HTML = """<!DOCTYPE html>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
         <div class="mail-body${bodyMd === null ? "" : " md"}">${bodyMd === null ? bodyText : bodyMd}</div>
+        ${m.sender_id ? `<div class="mail-stamps">${MAIL_STAMPS.map(([e, t]) => `<button class="mail-stamp${m.stamp === e ? " on" : ""}" title="${t}" onclick="toggleMailStamp('${fn}','${e}',this)">${e}</button>`).join("")}</div>` : ""}
         ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
           <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
           <div class="mail-reply-row">
@@ -7994,6 +8029,28 @@ HTML = """<!DOCTYPE html>
       showMailBadge(_mailUnread);
       document.getElementById("mailUnreadCount").textContent = _mailUnread ? ` ${_mailUnread}` : "";
       document.getElementById("mailReadAllBtn").style.display = _mailUnread ? "block" : "none";
+    }
+
+    // スタンプ(2026-11-13): 手紙に気持ちを 1 つ返す。もう一度押すと外れる。付けると既読にもなる。
+    // 書いたぷちには、次の自律行動か会話のときに「読んだ・スタンプが付いた」が 1 回だけ伝わる
+    const MAIL_STAMPS = [["💛", "すき"], ["😊", "うれしい"], ["✨", "すてき"], ["🥹", "じんとした"], ["👀", "読んだよ"]];
+    async function toggleMailStamp(filename, emoji, btn) {
+      const item = btn.closest(".mail-item");
+      const stamp = btn.classList.contains("on") ? "" : emoji;
+      try {
+        const res = await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
+          method: "PATCH", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({stamp})
+        });
+        if (!res.ok) return;
+        item.querySelectorAll(".mail-stamp").forEach(b => b.classList.toggle("on", b === btn && !!stamp));
+        if (stamp && item.classList.contains("is-unread")) {
+          item.classList.remove("is-unread");
+          const rb = item.querySelector(".mail-read-btn");
+          if (rb) rb.textContent = "未読に戻す";
+          if (currentMailTab !== "archived") _showMailUnread(_mailUnread - 1);
+        }
+      } catch(e) {}
     }
 
     async function toggleMailRead(filename, btn) {
