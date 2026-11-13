@@ -12,10 +12,13 @@ if [ ! -d "$DATA_DIR" ]; then
     exit 0
 fi
 
-# state file がなければ(心拍デーモンが動いていない家)、何も足さない。
-# 以前は時刻だけの 1 行を毎ターン足していたが、体の状態が入らないので意味がなかった(2026-11-13)。
+# state file がなければ(心拍デーモンが動いていない家)、いまの日時だけを短く足す。
+# 時刻はいつも分かっていてほしいので残す。体の状態が無いことの断り書き(heartbeat daemon not running)は
+# 毎ターン足しても意味がないので、やめた(2026-11-13)。
 # 心拍デーモン(heartbeat-daemon.sh)は launchd 前提で、Linux の家では動かない
 if [ ! -f "$STATE_FILE" ]; then
+    DOW=(日 月 火 水 木 金 土)
+    echo "いま: $(date '+%Y-%m-%d')(${DOW[$(date '+%w')]}) $(date '+%H:%M')"
     exit 0
 fi
 
