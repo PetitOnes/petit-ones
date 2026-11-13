@@ -7,6 +7,8 @@
 - 会話は、だれと・いつ・何回だけ。中身は返さない
 - 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた / 体が入れ直された)だけ。
   明るさの変わり目・つながらなかった時間・電池の知らせは出さない
+- 人の手で起きること(持ち上げられた・置かれた・触られた・起こされた)には、家の持ち主の名前を付ける
+  (「ありさんに持ち上げられた」)。体はだれの手かまでは分からないので、家の持ち主と見なして書く
 - 目覚めは、つながらなかった時間の直後なら「体が入れ直された」(再起動・電源の入れ直し)、
   ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
   それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
@@ -78,6 +80,7 @@ class Sources:
     memory_db: Path
     user_label: Callable[[str], str]   # 人の id → 表示名
     name_of: Callable[[str], str]      # ぷち・人の id → 表示名(メールの宛先)
+    owner_name: str = ""               # 家の持ち主の表示名。体に人の手で起きたことに「〜に」と付ける(無ければ付けない)
 
 
 def _local(ts: str) -> datetime | None:
@@ -350,6 +353,10 @@ class _Index:
                 out.append(ev)
         return out
 
+    def _by_owner(self, text: str) -> str:
+        """人の手で起きたことに、家の持ち主の名前を付ける(「ありさんに持ち上げられた」)"""
+        return f"{self.src.owner_name}に{text}" if self.src.owner_name else text
+
     def _body(self, day: Date) -> list[dict]:
         """体に起きたこと。
 
@@ -388,7 +395,7 @@ class _Index:
                 text = "抱っこされて、たくさん触れてもらった" if "picked_up" in kinds else "たくさん触られた"
             else:
                 text = "持ち上げられたり、置かれたりした"
-            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": text, "count": 1})
+            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": self._by_owner(text), "count": 1})
             busy.update(st)
 
         last: dict[str, dict] = {}
@@ -401,6 +408,10 @@ class _Index:
                     word = RESTARTED
                 elif self._woke_itself(ts):
                     word = WOKE_ITSELF
+                else:
+                    word = self._by_owner(word)
+            elif kind in BODY_CONTACT:
+                word = self._by_owner(word)
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1

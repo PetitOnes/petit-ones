@@ -1848,6 +1848,12 @@ def ui_css(name: str):
 
 
 # ---- ぷちログ(1 日のタイムライン)と日記の一覧。組み立ては petit_log.py、ページは dashboard/ui/ ----
+def _owner_name() -> str:
+    """家の持ち主の表示名(config/people.json の arisan。無ければ最初の 1 人)"""
+    info = _USER_DISPLAY.get("arisan") or next(iter(_USER_DISPLAY.values()), None)
+    return info["name"] if info else ""
+
+
 def _petit_log_sources(character_id: str):
     import petit_log
     return petit_log.Sources(
@@ -1857,6 +1863,7 @@ def _petit_log_sources(character_id: str):
         memory_db=memory_db_path(character_id),
         user_label=_user_label,
         name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
+        owner_name=_owner_name(),
     )
 
 
