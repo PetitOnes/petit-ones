@@ -129,7 +129,7 @@
     const canTouch = it => canEdit() && (!me.limited || it.by === me.username);
     const nameOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {name: id}).name;
     const colorOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {}).color || "#ccc";
-    const info = k => { for (const ym of Object.keys(cache)) if (cache[ym][k]) return cache[ym][k]; return {anniv: [], events: [], holiday: null, sky: null}; };
+    const info = k => { for (const ym of Object.keys(cache)) if (cache[ym][k]) return cache[ym][k]; return {anniv: [], events: [], holiday: null, sky: null, room: null}; };
     function saveQ() { q.set("view", view); q.set("date", sel); history.replaceState(null, "", location.pathname + "?" + q.toString()); }
 
     // ---- 読む(月ごとに覚える。週が月をまたぐときは両方) ----
@@ -206,8 +206,10 @@
       const an = inf.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
           ${canTouch(a) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('anniv', ${JSON.stringify(a.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('anniv', ${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})">消す</button>` : ""}</div>`);
       const sk = inf.sky;
-      const skyLine = sk ? `<div class="c-sky">${sk.moon_mark_emoji || sk.moon} 月齢 ${sk.moon_age}${sk.moon_mark ? `(${esc(sk.moon_mark)})` : ""}${sk.sunrise ? ` ・ 日の出 ${esc(sk.sunrise)} 日の入 ${esc(sk.sunset)}` : ""}${sk.term ? ` ・ きょうから ${esc(sk.term)}` : sk.current_term ? ` ・ ${esc(sk.current_term)}${sk.next_term ? `(${esc(sk.next_term.date.slice(5).replace("-", "/"))} から ${esc(sk.next_term.name)})` : ""}` : ""}</div>` : "";
-      document.getElementById("dayItems").innerHTML = skyLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`);
+      const skyLine = sk ? `<div class="c-sky">${sk.moon_mark_emoji || sk.moon} 月齢 ${sk.moon_age}${sk.moon_mark ? `(${esc(sk.moon_mark)})` : ""}${sk.sunrise ? ` ・ 日の出 ${esc(sk.sunrise)} 日の入 ${esc(sk.sunset)}` : ""}${sk.term ? ` ・ きょうから ${esc(sk.term)}` : sk.current_term ? ` ・ ${esc(sk.current_term)}` : ""}</div>` : "";
+      const rm = inf.room;
+      const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}`).join(" / ")}</div>` : "";
+      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`);
     }
 
     // ---- 右下の ＋ ----

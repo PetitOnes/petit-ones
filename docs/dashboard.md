@@ -208,6 +208,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `pages.css` / `page.js` | `ui/` のページの枠組みと共通の下ごしらえ |
 | `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
 | `md.js` | markdown を HTML にしたあとの後始末 |
+| （部屋） | SwitchBot のハブ 2・温湿度計・人感・電気を `scripts/room_log.py record` が 10 分ごと(cron)に家の `state/room/YYYYMMDD.jsonl` と `latest.json` に残す(鍵は家の `.env` の `SWITCHBOT_TOKEN/SECRET`。機器は種類で自動。`config/room.json` で絞る・言い換え)。ようす の「部屋」カード(`/api/room/latest`)、📅 の日の欄(`/api/room/day`、カレンダーの `room`)、ぷちへ「家の空気: …」(30 分以内の読みだけ。会話・自律行動) |
 | （からだ） | からだの使い方 = 見る(カメラ)・話す(声)・鳴らす(効果音)・聞く(マイク)。`settings.json` の `body`（無ければ古い `allow_camera` など）。からだ おやすみ = 見る・話す・鳴らす を止める（`rest.until` = 📍 や設定ページの「いまから n 分」、`rest.hours` = 毎日この時間）。決まりは `scripts/body_switches.py` 1 か所で、会話・体のイベント・自律行動とも同じ。止める道具は `--disallowedTools` で本当に使えなくし、文でも伝える（`prompts/autonomous/permission_rules.md`）。📍 の「からだ おやすみ」は 3 人まとめて（`/api/switches/rest`） |
 | （アクティブタイム） | 始まり ≦ いま < 終わり。終わりの時刻そのものは入らない（`autonomous-action.sh` の `check_entry`）。3 人の cron は 0・5・10 分とずれているので、終わりは cron の分より後ろ（:20 など）に。設定ページが「1 日に動く予定」を数え、終わりが cron の分と重なっていれば注意を出す |
 | `help.html` + `help.md` | 使い方（`/help`、道具の列の「📖 使い方」。はじめは「ほか」の中）。本文は `help.md`（「〜したいとき」の形、仕組みは書かない）。見出しの `{#id}` が飛び先で、設定ページの「？」はそこへ飛ぶ。検索欄で絞り込める |
