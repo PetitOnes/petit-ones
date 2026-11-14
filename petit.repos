@@ -9,7 +9,7 @@ repositories:
   m5-petit-relations:
     type: git
     url: https://github.com/PetitOnes/m5-petit-relations.git
-    version: 986bc4796f371280811b17fdd206d15ed464278f
+    version: 7c9fc7f3910d4c79d653ddb75a1f412d34b64eda
   m5-petit-desire:
     type: git
     url: https://github.com/PetitOnes/m5-petit-desire.git
