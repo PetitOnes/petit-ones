@@ -6801,6 +6801,37 @@ class MailSendRequest(BaseModel):
     to_ids: list[str]
     subject: str = ""
     body: str
+    reply_to: str = ""   # どの手紙への返事か(メールボックスの ↩️ から送ったとき、その手紙のファイル名)。返事を、元の手紙の下に出すため
+
+
+_MAIL_FILE_RE = re.compile(r"^from_(.+)_to_(.+?)_(\d{8})_(\d{4})")
+
+
+def _note_mail_reply(original: str, username: str, to_id: str, reply_path: str) -> None:
+    """返事を書いたことを、元の手紙の印(.metadata.json の replies)に残す。元の手紙が、その相手から自分あてのときだけ"""
+    name, reply = Path(original).name, Path(reply_path).name
+    m = _MAIL_FILE_RE.match(name)
+    if not m or m.group(1) != to_id or m.group(2) != username or not (DATA_DIR / "mailbox" / name).exists() or not reply:
+        return
+    data = _load_mailbox_metadata()
+    current = data.setdefault("mails", {}).setdefault(name, {"archived": False, "starred": False})
+    current["replies"] = [r for r in (current.get("replies") or []) if isinstance(r, dict)] + [{"by": username, "file": reply}]
+    _save_mailbox_metadata(data)
+
+
+def _mail_replies(meta: dict, username: str) -> list[dict]:
+    """その手紙に、この人が書いた返事 [{"date", "content"}](古い順)。返事の手紙が無くなっていれば出さない"""
+    out = []
+    for r in meta.get("replies") or []:
+        if not isinstance(r, dict) or r.get("by") != username:
+            continue
+        f = DATA_DIR / "mailbox" / Path(str(r.get("file") or "")).name
+        m = _MAIL_FILE_RE.match(f.name)
+        if not m or not f.is_file():
+            continue
+        d, t = m.group(3), m.group(4)
+        out.append({"date": f"{d[:4]}-{d[4:6]}-{d[6:8]} {t[:2]}:{t[2:]}", "content": _read_mail_cached(f)})
+    return out
 
 
 @app.post("/api/mail/send")
@@ -6829,6 +6860,11 @@ async def api_mail_send(req: MailSendRequest, request: Request):
         if proc.returncode != 0:
             return JSONResponse({"error": stderr.decode()}, status_code=500)
         results.append(stdout.decode().strip())
+    if req.reply_to and len(req.to_ids) == 1 and results:   # ↩️ からの返事: 元の手紙の下に出せるように、つながりを残す
+        try:
+            _note_mail_reply(req.reply_to, username, req.to_ids[0], results[0])
+        except Exception:
+            pass   # つながりを残せなくても、手紙は送れている
     return {"ok": True, "files": results}
 
 
@@ -7107,6 +7143,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
         info["read_by"] = meta.get("read_by", [])
         info["read"] = is_read
         info["stamp"] = (meta.get("stamps") or {}).get(username, "")
+        info["_meta"] = meta
         candidates.append(info)
     candidates.sort(key=lambda m: m["date"], reverse=True)
     total = len(candidates)
@@ -7131,6 +7168,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "read_by": c["read_by"],
             "read": c["read"],
             "stamp": c["stamp"],
+            "replies": _mail_replies(c["_meta"], username),   # この手紙に、自分が ↩️ から書いた返事
         })
     return {"total": total, "unread": unread, "offset": offset, "items": items}
 
@@ -7697,6 +7735,10 @@ HTML = """<!DOCTYPE html>
     .mail-heart { font-size: 1.15rem; line-height: 1; -webkit-text-stroke: 0.7px rgba(0,0,0,0.28); }
     .mail-read-all { margin: 0 0 10px auto; display: none; padding: 4px 12px; border: 1px solid #ccc; border-radius: 12px; background: #fff; font-size: 0.75rem; color: #666; cursor: pointer; }
     .mail-action-btn { background: none; border: none; font-size: 1.1rem; cursor: pointer; padding: 2px 4px; opacity: 0.4; transition: opacity 0.2s; }
+    /* この手紙に自分が書いた返事。本文の下に、少し下げて */
+    .mail-replied { margin: 8px 0 0 14px; padding: 6px 10px; border-left: 3px solid rgba(0,0,0,0.18); background: rgba(255,255,255,0.6); border-radius: 0 8px 8px 0; }
+    .mail-replied-head { font-size: 0.7rem; color: #999; margin-bottom: 2px; }
+    .mail-replied-body { font-size: 0.88rem; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: #555; }
     .mail-reply { margin-top: 8px; border-top: 1px dashed #e0e0e0; padding-top: 8px; }
     .mail-reply textarea { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; resize: vertical; }
     .mail-reply-row { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 6px; font-size: 0.8rem; }
@@ -9754,6 +9796,7 @@ HTML = """<!DOCTYPE html>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
         <div class="mail-body${bodyMd === null ? "" : " md"}">${bodyMd === null ? bodyText : bodyMd}</div>
         ${m.sender_id ? `<div class="mail-stamps">${MAIL_STAMPS.map(([e, t]) => `<button class="mail-stamp${m.stamp === e ? " on" : ""}${e === MAIL_HEART ? " is-heart" : ""}" title="${t}" onclick="toggleMailStamp('${fn}','${e}',this)">${e === MAIL_HEART ? `<span class="mail-heart" style="color:${sc || "#e57373"}">♥</span>` : e}</button>`).join("")}</div>` : ""}
+        <div class="mail-replies">${(m.replies || []).map(_mailRepliedHtml).join("")}</div>
         ${m.sender_id ? `<div class="mail-reply" style="display:none" data-to="${m.sender_id}">
           <textarea rows="3" placeholder="${m.sender.replace(/"/g,"&quot;")}に返事を書く…"></textarea>
           <div class="mail-reply-row">
@@ -9764,6 +9807,11 @@ HTML = """<!DOCTYPE html>
       </div>`;
     }
 
+    // この手紙に自分が書いた返事(↩️ から送った分)。本文の下に出す(2026-11-14 ありさん)
+    function _mailRepliedHtml(r) {
+      const text = String(r.content || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      return `<div class="mail-replied"><div class="mail-replied-head">↩️ 返事した ${String(r.date || "").replace(/</g, "&lt;")}</div><div class="mail-replied-body">${text}</div></div>`;
+    }
     // その場で返信(2026-10-16 ありさん): ↩️ で本文の下に返事欄を開き、差出人ひとりに /api/mail/send
     function toggleReply(btn) {
       const box = btn.closest(".mail-item").querySelector(".mail-reply");
@@ -9782,11 +9830,15 @@ HTML = """<!DOCTYPE html>
       try {
         const res = await fetch("/api/mail/send", {
           method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({to_ids: [box.dataset.to], subject: "", body})
+          body: JSON.stringify({to_ids: [box.dataset.to], subject: "", body, reply_to: box.closest(".mail-item").dataset.filename})
         });
         const data = await res.json();
         if (res.ok) {
           result.textContent = "✓ 送った！"; result.style.color = "#4caf50";
+          // 送った返事を、すぐ手紙の下に出す
+          const now = new Date(), p2 = n => String(n).padStart(2, "0");
+          const stamp = `${now.getFullYear()}-${p2(now.getMonth() + 1)}-${p2(now.getDate())} ${p2(now.getHours())}:${p2(now.getMinutes())}`;
+          box.closest(".mail-item").querySelector(".mail-replies").insertAdjacentHTML("beforeend", _mailRepliedHtml({date: stamp, content: body}));
           ta.value = "";
           setTimeout(() => { box.style.display = "none"; result.textContent = ""; }, 1200);
         } else {
