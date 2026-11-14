@@ -40,7 +40,12 @@
     .s-pane.on { display: block; }
     .s-checks { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 6px; }
     .s-check { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; font-size: 0.9rem; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
-    .s-check input { width: 18px; height: 18px; accent-color: var(--ui-accent-text); }
+    .s-check input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--ui-accent-text); }
+    .s-checks--col { flex-direction: column; align-items: stretch; }
+    .s-checks--col .s-check { border-radius: var(--ui-radius-ctl); padding: 8px 12px; min-height: 44px; }
+    .s-locked { position: relative; opacity: 0.55; }
+    .s-locked > *:not(.a-heading):not(summary):not(.s-lock-note) { pointer-events: none; }
+    .s-lock-note { display: block; margin: 0 0 8px; font-size: var(--ui-fs-s); color: var(--ui-danger); }
     /* くわしい設定: 開けることが分かるように、右に「ひらく ▾」。開いたら「とじる ▴」 */
     details.m-card > summary.a-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
     details.m-card > summary::-webkit-details-marker { display: none; }
@@ -90,6 +95,13 @@
         <p class="a-hint" style="margin:0 0 6px">▲▼ で並びを変える。出し方は 3 つ: <b>最初</b>(列に出す)/ <b>ほか</b>(「ほか」を押したら出る)/ <b>なし</b>(出さない)。</p>
         <div id="tools"></div>
         <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="saveUi({tools: defaultTools()})">はじめの並びに戻す</button>
+      </div>
+      <!-- 家の持ち主へのお願い(見られる子が決まっている人にだけ出す) -->
+      <div class="m-card" id="requestCard" style="display:none">
+        <span class="a-heading" id="requestTitle">お願いする</span>
+        <p class="a-hint" style="margin:0 0 8px">できないことになっていることや、消してほしいものを頼めます。手紙として届きます。</p>
+        <textarea class="a-input" id="requestText" rows="3" maxlength="2000" style="width:100%;box-sizing:border-box" placeholder="たとえば: ぷちるのアクティブタイムを変えたい"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span class="s-sub" id="requestMsg" style="flex:1"></span><button class="a-btn" onclick="sendRequest()">送る</button></div>
       </div>
       <!-- ログインしているときだけ出す(ログインの要らない家では出さない) -->
       <div class="m-card" id="logoutCard" style="display:none">
@@ -186,6 +198,7 @@
     const TOOL_ALL = {...TOOL};   // 👪 ひと 用(TOOL からは、見せない道具を外すことがある)
     let chars = [], ui = {}, active = null;   // active: "house" か "people" か ぷちの id
     let access = {users: [], tools: [], characters: []};   // 👪 ひと の中身(家の持ち主にだけ届く)
+    let meInfo = {};   // /api/me。can に、家の持ち主が「できない」と決めたことが入る
     let schedule = {weekday: [], weekend: []}, dayTab = "weekday";
 
     function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1600); }
@@ -358,6 +371,7 @@
       renderBody(bv);
       document.getElementById("hosts").innerHTML = (m5.m5_hosts || []).map(hostRow).join("");
       renderDayType();
+      lockSections();
     }
     async function saveChar() {
       const id = active;
@@ -371,11 +385,14 @@
       };
       const hosts = [...document.querySelectorAll("#hosts .host")].map(el => el.value.trim()).filter(Boolean);
       try {
+        // くわしい設定 を変えられないことになっている人は、体の宛先(その段の中身)を送らない
+        const advancedOk = !meInfo.can || meInfo.can.advanced !== false;
         const [a, b] = await Promise.all([
           fetch(`/api/${id}/settings`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)}),
-          fetch(`/api/${id}/config/m5_hosts`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({m5_hosts: hosts})}),
+          advancedOk ? fetch(`/api/${id}/config/m5_hosts`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({m5_hosts: hosts})}) : Promise.resolve({ok: true}),
         ]);
-        toast(a.ok && b.ok ? "保存しました" : "保存できなかった");
+        if (a.ok && b.ok) toast("保存しました");
+        else { const j = await (a.ok ? b : a).json().catch(() => ({})); toast(j.error || "保存できなかった"); }
       } catch (e) { toast("保存できなかった"); }
     }
 
@@ -385,13 +402,50 @@
       // 見られる子が決まっている人: 見せない道具は、並べる一覧にも出さない。家の持ち主: 👪 ひと の中身を読む
       try {
         const me = await (await fetch("/api/me")).json();
+        meInfo = me;
         for (const t of (me.hide_tools || [])) delete TOOL[t];
+        if (me.limited) {   // お願いを送る欄
+          document.getElementById("requestTitle").textContent = `${me.owner_name || "家の持ち主"}にお願いする`;
+          document.getElementById("requestCard").style.display = "";
+        }
         if (me.owner) { const r = await fetch("/api/access"); if (r.ok) access = await r.json(); }
       } catch (e) {}
       const want = q.get("char");
       await show(chars.some(c => c.id === want) ? want : "house");
     })();
   
+    // ---- できないことになっている段は、薄くして、押せなくする ----
+    const SECTION_CAN = [["アクティブタイム", "schedule"], ["自律行動", "autonomous"], ["からだの使い方", "switches"], ["からだ おやすみ", "rest"], ["くわしい設定", "advanced"]];
+    function lockSections() {
+      const can = meInfo.can;
+      if (!can) return;
+      for (const card of document.querySelectorAll("#paneChar .m-card")) {
+        const head = (card.querySelector(".a-heading") || {}).textContent || "";
+        const hit = SECTION_CAN.find(([word]) => head.includes(word));
+        const locked = !!hit && can[hit[1]] === false;
+        card.classList.toggle("s-locked", locked);
+        let note = card.querySelector(".s-lock-note");
+        if (locked && !note) {
+          note = document.createElement("span");
+          note.className = "s-lock-note";
+          note.textContent = `いまは変えられません。🏠 家 の「${meInfo.owner_name || "家の持ち主"}にお願いする」から頼めます`;
+          (card.querySelector(".a-heading") || card.firstElementChild).after(note);
+        } else if (!locked && note) note.remove();
+      }
+    }
+    async function sendRequest() {
+      const box = document.getElementById("requestText"), msg = document.getElementById("requestMsg");
+      const text = box.value.trim();
+      if (!text) { msg.textContent = "お願いの中身を書いてください"; return; }
+      try {
+        const r = await fetch("/api/request", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({text})});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "送れませんでした");
+        box.value = "";
+        msg.textContent = "送りました";
+      } catch (e) { msg.textContent = e.message; }
+    }
+
     // ---- 👪 ひと ----
     function renderPeople() {
       const el = document.getElementById("people");
@@ -404,6 +458,8 @@
           <div class="a-label">見せる道具(外すと、道具の列に出ず、ページも開けません)</div>
           <div class="s-checks">${tools}</div>
           ${logs ? `<div class="a-label" style="margin-top:12px">ぷちログを見られる子(自分の子のほかに)</div><div class="s-checks">${logs}</div>` : ""}
+          <div class="a-label" style="margin-top:12px">してよいこと(外すと、その人の画面からできなくなります。その人は、お願いを送れます)</div>
+          <div class="s-checks s-checks--col">${(access.can_labels || []).map(c => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-can="${esc(c.id)}" ${u.can[c.id] !== false ? "checked" : ""}> ${esc(c.label)}</label>`).join("")}</div>
         </div>`;
       }).join("") || '<div class="p-empty">見られる子が決まっている人は、いません</div>';
     }
@@ -411,7 +467,8 @@
       const box = e.target.closest("input[data-user]");
       if (!box) return;
       const user = box.dataset.user, all = sel => [...document.querySelectorAll(`#people input[data-user="${CSS.escape(user)}"]${sel}`)];
-      const body = {user, hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool), petitlog: all("[data-log]").filter(x => x.checked).map(x => x.dataset.log)};
+      const body = {user, hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool), petitlog: all("[data-log]").filter(x => x.checked).map(x => x.dataset.log),
+                    can: Object.fromEntries(all("[data-can]").map(x => [x.dataset.can, x.checked]))};
       try {
         const r = await fetch("/api/access", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
         if (!r.ok) throw new Error();
