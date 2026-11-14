@@ -2148,6 +2148,26 @@ class BodySettings(BaseModel):
     cam_to: str | None = None        # 設定ページの「CAM TO」(世話人の ID)
 
 
+def _body_from_status(st: dict) -> dict | None:
+    """体の /status が設定と電池もまとめて返す版(2026-11-14 のファームから)なら、そこから体の設定を作る。
+
+    返さない版(brightness が無い)なら None。そのときは、項目ごとに聞く
+    """
+    if not isinstance(st, dict) or not isinstance(st.get("brightness"), (int, float)):
+        return None
+    users = [{"id": u, "name": _user_label(u, u)} for u in st.get("cam_users", []) if isinstance(u, str)]
+
+    def _num(key: str) -> float | None:
+        v = st.get(key)
+        return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+    return {"online": True, "brightness": int(st["brightness"]),
+            "volume": int(st["volume"]) if _num("volume") is not None else None,
+            "power_save": st.get("power_save") if isinstance(st.get("power_save"), bool) else None,
+            "cam_to": st.get("cam_to") or None, "cam_users": users,
+            "battery": _num("battery"), "voltage": _num("voltage")}
+
+
 async def _body_settings(character_id: str, host: str) -> dict:
     """体のいまの設定を読む。読めなかった項目は None(CAM TO は、返さない版の体では None)"""
     import requests as req
@@ -2158,6 +2178,14 @@ async def _body_settings(character_id: str, host: str) -> dict:
             return r.text.strip() if r.status_code == 200 else None
         except Exception:
             return None
+
+    # まとめて返す版の体なら、1 回聞けば済む
+    try:
+        all_in_one = _body_from_status(json.loads(await asyncio.to_thread(_text, "/status") or "{}"))
+    except json.JSONDecodeError:
+        all_in_one = None
+    if all_in_one is not None:
+        return all_in_one
 
     # 体は一度に 1 つしか答えられない。同時に聞くと、答えが返らない項目が出る(2026-11-14 に、ぷちこの体で起きた)。
     # 順番に聞き、返らなかったものは 1 回だけ聞き直す
@@ -3246,6 +3274,7 @@ async def api_status(character_id: str):
     m5_online = host is not None
     m5_sleeping = False
     m5_ip = m5_tailscale_ip = ""   # 体が自分で言うアドレス(Wi-Fi と、あれば Tailscale)。「ぷちたちの状態」に出す
+    m5_body = None   # 体の設定と電池。体の /status がまとめて返す版のときだけ(ようす が体に 1 回聞けば済む)
     if m5_online:
         try:
             r = await asyncio.to_thread(lambda: req.get(f"http://{host}/status", timeout=2))
@@ -3253,11 +3282,12 @@ async def api_status(character_id: str):
             m5_sleeping = body.get("is_sleeping", False)
             m5_ip = str(body.get("ip") or "")
             m5_tailscale_ip = str(body.get("tailscale_ip") or "")
+            m5_body = _body_from_status(body)
         except Exception:
             pass
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
     return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping,
-            "m5_host": host or "", "m5_ip": m5_ip, "m5_tailscale_ip": m5_tailscale_ip}
+            "m5_host": host or "", "m5_ip": m5_ip, "m5_tailscale_ip": m5_tailscale_ip, "m5_body": m5_body}
 
 
 @app.get("/api/{character_id}/sensors")
@@ -7649,12 +7679,18 @@ HTML = """<!DOCTYPE html>
       const rows = await Promise.all(allChars.map(async c => {
         try {
           // 体につながっているか と、電池(体の /sensors にある battery % と voltage mV)を同時に聞く
-          const [res, sens, body] = await Promise.all([
-            fetch(`/api/${c.id}/status`),
-            fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({})),
-            fetch(`/api/${c.id}/body`).then(r => r.json()).catch(() => ({})),
-          ]);
-          const { m5_online, m5_sleeping, m5_host, m5_ip, m5_tailscale_ip } = await res.json();
+          // 体は一度に 1 つしか答えられない。新しいファームの体は /status で設定と電池もまとめて返すので、1 回で済む。
+          // 返さない体には、電池と設定を、順番に聞く
+          const res = await fetch(`/api/${c.id}/status`);
+          const { m5_online, m5_sleeping, m5_host, m5_ip, m5_tailscale_ip, m5_body } = await res.json();
+          let sens = {}, body = {};
+          if (m5_body) {
+            body = m5_body;
+            sens = {battery: m5_body.battery, voltage: m5_body.voltage};
+          } else if (m5_online) {
+            sens = await fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({}));
+            body = await fetch(`/api/${c.id}/body`).then(r => r.json()).catch(() => ({}));
+          }
           const color = c.color || "#cab8d9";
           // 2 段目は 3 つの列(起きているか・電池・アドレス)。列の幅を決めておくと、子が違っても電池の印が縦にそろう
           // 起きているか寝ているか(体がつながっているときだけ分かる)
