@@ -5416,6 +5416,7 @@ class UiSettings(BaseModel):
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
+    notebook_dot: bool | None = None  # 交換日記: 自分の番(3 人が一周)のときに 📖 へピンクの点を出すか(既定 true)
 
 
 @app.post("/api/ui")
@@ -5440,6 +5441,8 @@ def api_ui_set(req: UiSettings, request: Request = None):
         cur["house_title"] = req.house_title.strip()[:30]
     if req.send_key in ("enter", "ctrl_enter"):
         cur["send_key"] = req.send_key
+    if req.notebook_dot is not None:
+        cur["notebook_dot"] = bool(req.notebook_dot)
     if req.tools is not None:
         cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True)), "off": bool(t.get("off", False))}
                         for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
@@ -7947,14 +7950,14 @@ HTML = """<!DOCTYPE html>
       const one = t => {
         const d = TOOLS[t.id];
         const attr = d.pane ? `onclick="showPane('${d.pane}')"${_pane === d.pane ? ' data-on="1"' : ""}` : d.attr;
-        return tool(d.icon, d.name, attr, t.id === "notebook" && !!_notebookTurn.my_turn);
+        return tool(d.icon, d.name, attr, t.id === "notebook" && !!_notebookTurn.my_turn && _uiSettings.notebook_dot !== false);
       };
       const order = toolOrder();
       // 3 段階(2026-11-14 ありさん): 最初に表示(show) / ほかを押したら表示(!show) / 表示しない(off)
       const shown = order.filter(t => t.show && !t.off), more = order.filter(t => !t.show && !t.off);
       const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
       document.getElementById("toolRow").innerHTML = shown.map(one).join("")
-        + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"', !!_notebookTurn.my_turn && more.some(t => t.id === "notebook"))
+        + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"', !!_notebookTurn.my_turn && _uiSettings.notebook_dot !== false && more.some(t => t.id === "notebook"))
             + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">` + more.map(one).join("") + `</span>` : "");
     }
 

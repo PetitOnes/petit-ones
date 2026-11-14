@@ -188,6 +188,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 |---|---|
 | `topbar_color` | トップバーの色（`#rrggbb`）。無ければ、選んでいるぷちの色 |
 | `house_title` | トップバーの題。無ければ「`<COMPANION_NAME>`ち」 |
+| `notebook_dot` | 交換日記: 自分の番(3 人が一周)のときに 📖 へピンクの点を出すか。既定 true |
 | `tools` | 道具の列の並び。`[{"id": "album", "show": true, "off": false}, …]` の順。`show: true` は最初から列に、`show: false` は「ほか」を押したら、`off: true` は出さない |
 | `send_key` | 話しかける欄の送り方。`enter`（Enter で送信）か `ctrl_enter`（Ctrl+Enter で送信、Enter は改行） |
 
