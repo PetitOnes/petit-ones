@@ -355,6 +355,15 @@ HUMID_STEP = 10    # 同(%)
 PRESS_STEP = 3.0   # 同(hPa。低気圧が近づく・離れる目安)
 
 
+def _wants(character_id: str, base: Path | None) -> dict[str, bool]:
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import notices
+        return notices.enabled(character_id, base)
+    except Exception:
+        return {"temperature": True, "humidity": True, "pressure": True}
+
+
 def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
     """前にその子に伝えた値から、気温が TEMP_STEP・湿度が HUMID_STEP・気圧が PRESS_STEP 以上動いた機体だけ 1 行(ぷちたちの希望: 変わったときだけ)。
     はじめての回は、いまの値を覚えるだけで何も言わない。伝えたことは characters/<id>/state/room_told.json"""
@@ -375,17 +384,18 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
         told = None
     cur = {did: {k: dev[k] for k in ("temperature", "humidity", "pressure") if k in dev} for did, dev in snap["devices"].items()}
     cur = {k: v for k, v in cur.items() if v}
+    want = _wants(character_id, base)   # その子が受け取る種類(scripts/notices.py)。受け取らない種類は比べない(値は覚える)
     changes = []
     if isinstance(told, dict):
         for did, vals in cur.items():
             old = told.get(did) or {}
             name = snap["devices"][did].get("name", did)
             bits = []
-            if "temperature" in vals and isinstance(old.get("temperature"), (int, float)) and abs(vals["temperature"] - old["temperature"]) >= TEMP_STEP:
+            if want["temperature"] and "temperature" in vals and isinstance(old.get("temperature"), (int, float)) and abs(vals["temperature"] - old["temperature"]) >= TEMP_STEP:
                 bits.append(f"{old['temperature']}℃ → {vals['temperature']}℃")
-            if "humidity" in vals and isinstance(old.get("humidity"), (int, float)) and abs(vals["humidity"] - old["humidity"]) >= HUMID_STEP:
+            if want["humidity"] and "humidity" in vals and isinstance(old.get("humidity"), (int, float)) and abs(vals["humidity"] - old["humidity"]) >= HUMID_STEP:
                 bits.append(f"湿度 {old['humidity']}% → {vals['humidity']}%")
-            if "pressure" in vals and isinstance(old.get("pressure"), (int, float)) and abs(vals["pressure"] - old["pressure"]) >= PRESS_STEP:
+            if want["pressure"] and "pressure" in vals and isinstance(old.get("pressure"), (int, float)) and abs(vals["pressure"] - old["pressure"]) >= PRESS_STEP:
                 bits.append(f"気圧 {old['pressure']} → {vals['pressure']} hPa" + ("(下がってきた)" if vals["pressure"] < old["pressure"] else "(上がってきた)"))
             if bits:
                 changes.append(f"{name} " + "、".join(bits))

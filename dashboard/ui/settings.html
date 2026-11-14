@@ -225,6 +225,15 @@
           <span style="display:flex;align-items:center;gap:6px"><input type="number" class="a-input s-num" id="maxTurns" min="1" max="200" step="1"><span class="s-sub" id="maxTurnsNote"></span></span></div>
       </div>
       <div class="m-card">
+        <span class="a-heading">変わったときの一言</span><a class="s-help" data-help="notices" href="/help#notices" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 4px">空・家の空気・スマホの部屋は、毎回でなく変わったときだけ、この子に一言入る。どれを受け取るか。切っても、自分で見に行くことはできる。</p>
+        <div class="s-row"><span>🌡 気温が 2℃ 以上動いたとき</span><label class="a-toggle"><input type="checkbox" data-notice="temperature"><span></span></label></div>
+        <div class="s-row"><span>💧 湿度が 10% 以上動いたとき</span><label class="a-toggle"><input type="checkbox" data-notice="humidity"><span></span></label></div>
+        <div class="s-row"><span>🌀 気圧が 3 hPa 以上動いたとき</span><label class="a-toggle"><input type="checkbox" data-notice="pressure"><span></span></label></div>
+        <div class="s-row"><span>🌙 空(満月・新月・二十四節気の日)</span><label class="a-toggle"><input type="checkbox" data-notice="sky"><span></span></label></div>
+        <div class="s-row"><span>📱 家の人のスマホの部屋が変わったとき</span><label class="a-toggle"><input type="checkbox" data-notice="phone"><span></span></label></div>
+      </div>
+      <div class="m-card">
         <span class="a-heading">からだの使い方</span><a class="s-help" data-help="body-switches" href="/help#body-switches" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ふだん使ってよいもの。会話でも、ひとりの時間でも同じ決まり。</p>
         <div class="s-row"><span>👀 見る（カメラ）</span><label class="a-toggle"><input type="checkbox" id="bodySee"><span></span></label></div>
@@ -578,6 +587,7 @@
       document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
       switchDay("weekday");
       document.getElementById("maxTurns").value = s.max_turns ?? 20;
+      document.querySelectorAll("[data-notice]").forEach(x => { x.checked = (s.notices || {})[x.dataset.notice] !== false; });
       document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
       const bv = await fetch(`/api/${id}/switches`).then(r => r.json()).catch(() => null);
@@ -606,6 +616,7 @@
         body: {see: $("bodySee").checked, speak: $("bodySpeak").checked, sound: $("bodySound").checked, hear: $("bodyHear").checked},
         rest: {hours: $("restHoursOn").checked ? [[+$("restSh").value, +$("restSm").value, +$("restEh").value, +$("restEm").value]] : []},
         max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
+        notices: Object.fromEntries([...document.querySelectorAll("[data-notice]")].map(x => [x.dataset.notice, x.checked])),
       };
       const hosts = [...document.querySelectorAll("#hosts .host")].map(el => el.value.trim()).filter(Boolean);
       try {
@@ -641,7 +652,7 @@
     })();
   
     // ---- できないことになっている段は、薄くして、押せなくする ----
-    const SECTION_CAN = [["アクティブタイム", "schedule"], ["自律行動", "autonomous"], ["からだの使い方", "switches"], ["からだ おやすみ", "rest"], ["くわしい設定", "advanced"]];
+    const SECTION_CAN = [["アクティブタイム", "schedule"], ["自律行動", "autonomous"], ["変わったときの一言", "autonomous"], ["からだの使い方", "switches"], ["からだ おやすみ", "rest"], ["くわしい設定", "advanced"]];
     function lockSections() {
       const can = meInfo.can;
       if (!can) return;

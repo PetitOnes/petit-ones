@@ -468,7 +468,7 @@ fi
 # きょうの空: 満月・新月・節気の境目の日だけ 1 行(ぷちたちの希望: 毎回でなく変わったときだけ。scripts/sky.py changes)
 SKY_CHANGE=""
 if [ -f "${PROJECT_DIR}/scripts/sky.py" ]; then
-  SKY_CHANGE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sky.py" changes 2>/dev/null || true)
+  SKY_CHANGE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sky.py" changes --character "$CHARACTER_ID" 2>/dev/null || true)
 fi
 
 # 家の空気: この子に前に伝えた値から大きく動いたときだけ 1 行(伝えたら覚える。scripts/room_log.py changes --mark)

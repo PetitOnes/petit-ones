@@ -273,7 +273,17 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
     if mark:
         told_path.parent.mkdir(parents=True, exist_ok=True)
         told_path.write_text(json.dumps(told, ensure_ascii=False), encoding="utf-8")
+    if not _wants_phone(character_id, base):   # 受け取らない子(settings.json の notices.phone)。覚えだけ進めて、何も言わない
+        return ""
     return "\n".join(lines_out)
+
+
+def _wants_phone(character_id: str, base: Path | None) -> bool:
+    try:
+        import notices
+        return notices.wants(character_id, "phone", base)
+    except Exception:
+        return True
 
 
 def main() -> int:

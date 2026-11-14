@@ -575,7 +575,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
-SETTINGS_SECTIONS = {"schedule": ("active_hours", "day_type_override"), "autonomous": ("autonomous_skip",),
+SETTINGS_SECTIONS = {"schedule": ("active_hours", "day_type_override"), "autonomous": ("autonomous_skip", "notices"),
                      "switches": ("body",), "rest": ("rest",), "advanced": ("max_turns",)}
 
 
@@ -1304,6 +1304,8 @@ DEFAULT_SETTINGS = {
     "day_type_override": None,
     "autonomous_skip": 0,
     "max_turns": 20,          # 自律行動 1 回の最大ターン数(autonomous-action.sh が読む。環境変数 MAX_TURNS があればそちら)
+    # 変わったときの一言を受け取るか(scripts/notices.py。空・家の空気・スマホの部屋。入口はいつもある)
+    "notices": {"temperature": True, "humidity": True, "pressure": True, "sky": True, "phone": True},
 }
 
 
@@ -1852,7 +1854,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         restriction_text=restriction_text,
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
-        sky_change=_sky_change_text(),
+        sky_change=_sky_change_text(character_id),
         room_change=_room_change_text(character_id),
         phone_change=_phone_change_text(character_id),
         spot_change=_spot_change_text(character_id),
@@ -2337,6 +2339,15 @@ def _whereabouts():
     return whereabouts
 
 
+def _notices():
+    """変わったときの一言を、その子が受け取るか。決まりは scripts/notices.py"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import notices
+    return notices
+
+
 def _phone_place():
     """スマホの居場所(家の印 = SwitchBot の BLE を、スマホが聞く)。決まりは scripts/phone_place.py"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -2459,10 +2470,12 @@ def _sky():
     return sky
 
 
-def _sky_change_text() -> str:
-    """きょうの空の、変わった日(満月・新月・節気の境目)だけの 1 行。読めなければ空"""
+def _sky_change_text(character_id: str | None = None) -> str:
+    """きょうの空の、変わった日(満月・新月・節気の境目)だけの 1 行。読めなければ空。受け取らない子(notices.sky)にも空"""
     try:
         sk = _sky()
+        if character_id and not sk.wants_sky(character_id, DATA_DIR):
+            return ""
         return sk.change_line(datetime.now(sk.JST).date(), sk.load_place(DATA_DIR))
     except Exception:
         return ""
@@ -5889,6 +5902,8 @@ def api_save_settings(character_id: str, data: dict, request: Request = None):
         for key, fields in SETTINGS_SECTIONS.items():
             if _cannot(request, key) and any(f in data and data[f] != now.get(f) for f in fields):
                 return _cannot_response(key)
+    if "notices" in data:   # 知っている種類だけ、bool で
+        data["notices"] = _notices().clean(data["notices"])
     save_settings(character_id, data)
     return {"ok": True}
 
