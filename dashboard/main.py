@@ -493,14 +493,9 @@ def _get_allowed_characters(request: Request) -> list[str] | None:
     username = _get_username(request)
     if not username:
         return None
-    auth = _load_auth()
-    user = auth.get("users", {}).get(username, {})
-    chars = user.get("characters")
-    if chars:
-        return chars
-    role = _get_user_role(request)
-    if role == "admin":
-        return None
+    # auth.json に characters がある人は、見られる子が決まっている人。その子は、👪 ひと で決め直せる(config/access.json)
+    if _is_limited_user(username):
+        return _access_of(username)["children"]
     return None
 
 
@@ -522,30 +517,41 @@ def _is_limited(request: Request | None) -> bool:
 
 # ---- 見られる子が決まっている人に、何を見せるか(家の持ち主が ⚙️ 設定 → 👪 ひと で決める。config/access.json)----
 # hide_tools: 道具の列に出さない道具(ページも開けない)。petitlog: 自分の子のほかに、ぷちログを見られる子
-HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭
+HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(設定は外せない: ログアウトと、お願いの口があるため)
+    "yousu": (),
+    "petitlog": ("/petitlog",),
+    "diary": ("/diary",),
+    "anniv": ("/anniversaries", "/api/anniversaries"),
+    "desires": ("/desires",),
+    "sounds": ("/sounds", "/api/sounds"),
+    "album": ("/album", "/api/album"),
+    "voice": ("/voice_memo", "/api/voice_memo"),
+    "notes": ("/notes", "/api/my/notes"),
+    "notebook": ("/notebook",),
+    "kairanban": ("/kairanban",),
+    "library": ("/library",),
+    "kankei": ("/kankei",),
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
     "logs": ("/stream-logs", "/api/stream-logs"),
     "costs": ("/costs", "/api/costs"),
-    "kankei": ("/kankei",),
-    "kairanban": ("/kairanban",),
-    "library": ("/library",),
-    "notebook": ("/notebook",),
 }
+# 見せるのをおすすめするページ(毎日の暮らしで使うもの)。👪 ひと に「おすすめ」と出す
+RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "anniv", "album", "voice", "notes", "notebook"]
 ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
 # can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
 CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
-    ("rest", "からだ おやすみ を使う"),
-    ("body", "ようす から、体の設定(明るさ・音量・PSAVE・WHO)を変える"),
+    ("rest", "{kids}の からだ おやすみ を使う"),
+    ("body", "ようす から、{kids}の体の設定(明るさ・音量・PSAVE・WHO)を変える"),
     ("album_delete", "自分のアルバムの写真を消す"),
     ("voice_delete", "自分のボイスメモを消す"),
     ("notes_delete", "自分のノートを消す"),
     ("anniv", "記念日を足す・直す・消す(自分が足したもの)"),
-    ("sounds", "音を取り込む・消す・体へ送る"),
-    ("schedule", "設定: アクティブタイムを変える"),
-    ("autonomous", "設定: 自律行動を変える"),
-    ("switches", "設定: からだの使い方を変える"),
-    ("advanced", "設定: くわしい設定を変える"),
+    ("sounds", "音を取り込む・消す・{kids}の体へ送る"),
+    ("schedule", "設定: {kids}のアクティブタイムを変える"),
+    ("autonomous", "設定: {kids}の自律行動を変える"),
+    ("switches", "設定: {kids}のからだの使い方を変える"),
+    ("advanced", "設定: {kids}のくわしい設定を変える"),
 ]
 CAN_KEYS = [k for k, _ in CAN_LABELS]
 # 決まりを、入口(メソッドと道)で掛けるもの。設定の保存(/api/<id>/settings)は、中身を見て api_save_settings で掛ける
@@ -576,15 +582,49 @@ def _load_access() -> dict:
         return {}
 
 
+def _auth_children(user: str) -> list[str]:
+    """auth.json に書いてある、その人の子(はじめの値。👪 ひと で決め直すと、そちらが効く)"""
+    v = _load_auth().get("users", {}).get(user)
+    return list(v["characters"]) if isinstance(v, dict) and v.get("characters") else []
+
+
 def _access_of(user: str) -> dict:
-    """その人に見せるものの決まり。家の持ち主がまだ決めていなければ、はじめの決まり(ACCESS_DEFAULT)"""
+    """その人の決まり(家の持ち主が 👪 ひと で決める)。決めていない項目は、はじめの決まり。
+
+    children: その人の子(会話・記憶・設定まで、ぜんぶ見られる)。子は、下の 4 つも自動で「よい」
+    chat / mail_in / mail_out / petitlog: 子のほかに、話してよい子・手紙を受け取ってよい子・送ってよい子・ぷちログを見てよい子。
+      None は「まだ決めていない」: 会話とぷちログは子だけ、メールはどの子でも(いままでと同じ)
+    """
     cur = _load_access().get(user)
     cur = cur if isinstance(cur, dict) else {}
-    hide = cur.get("hide_tools") if isinstance(cur.get("hide_tools"), list) else ACCESS_DEFAULT["hide_tools"]
-    logs = cur.get("petitlog") if isinstance(cur.get("petitlog"), list) else ACCESS_DEFAULT["petitlog"]
+
+    def ids(key: str) -> list[str] | None:
+        v = cur.get(key)
+        return [c for c in v if isinstance(c, str)] if isinstance(v, list) else None
+
+    hide = ids("hide_tools")
     can_raw = cur.get("can") if isinstance(cur.get("can"), dict) else {}
-    return {"hide_tools": [t for t in hide if t in HIDEABLE_TOOLS], "petitlog": [c for c in logs if isinstance(c, str)],
+    children = ids("children")
+    return {"hide_tools": [t for t in (hide if hide is not None else ACCESS_DEFAULT["hide_tools"]) if t in HIDEABLE_TOOLS],
+            "children": children if children is not None else _auth_children(user),
+            "chat": ids("chat"), "mail_in": ids("mail_in"), "mail_out": ids("mail_out"),
+            "petitlog": ids("petitlog") or [],
             "can": {k: can_raw.get(k) is not False for k in CAN_KEYS}}
+
+
+def _ok_for(user: str, kind: str, char_id: str) -> bool:
+    """見られる子が決まっている人が、その子に対して kind(chat / mail_in / mail_out / petitlog)をしてよいか"""
+    acc = _access_of(user)
+    if char_id in acc["children"]:
+        return True
+    extra = acc[kind]
+    if extra is None:   # まだ決めていない: メールはどの子でも、会話は子だけ
+        return kind in ("mail_in", "mail_out")
+    return char_id in extra
+
+
+def _is_limited_user(user: str | None) -> bool:
+    return bool(user) and bool(_auth_children(user))
 
 
 def _cannot(request: Request | None, key: str) -> bool:
@@ -595,7 +635,7 @@ def _cannot(request: Request | None, key: str) -> bool:
 
 
 def _cannot_response(key: str) -> JSONResponse:
-    label = dict(CAN_LABELS).get(key, key)
+    label = dict(CAN_LABELS).get(key, key).replace("{kids}", "")
     return JSONResponse({"error": f"いまは、できないことになっています({label})。設定からお願いを送れます", "cannot": key}, status_code=403)
 
 
@@ -746,8 +786,11 @@ async def auth_middleware(request: Request, call_next):
             # ようす(体につながっているか・電池・体の設定を読む)は、どの子の分も見られる。中身(欲求・記憶)は api_status で外す
             peek = request.method == "GET" and len(parts) == 4 and parts[3] in ("status", "sensors", "body")
             # ぷちログは、家の持ち主が「見てよい」と決めた子の分も読める
-            if (is_char and request.method == "GET" and len(parts) == 4 and parts[3] == "petit_log"
-                    and candidate in _access_of(_get_username(request) or "")["petitlog"]):
+            who = _get_username(request) or ""
+            if is_char and request.method == "GET" and len(parts) == 4 and parts[3] == "petit_log" and _ok_for(who, "petitlog", candidate):
+                peek = True
+            # 会話(話す・これまでの会話を読む)は、家の持ち主が「話してよい」と決めた子の分も通す
+            if is_char and len(parts) >= 4 and parts[3] == "chat" and _ok_for(who, "chat", candidate):
                 peek = True
             if is_char and not peek and not _check_char_access(request, candidate):
                 return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
@@ -5130,6 +5173,15 @@ class RestBody(BaseModel):
     minutes: int | None = None   # いまから何分 からだ おやすみ(None・0 でやめる)
 
 
+def _group_chars(request: Request | None) -> list[dict]:
+    """みんな・だれか で話しかける子(見られる子が決まっている人は、話してよい子だけ)"""
+    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    who = _get_username(request) if request is not None else None
+    if not _is_limited_user(who):
+        return chars
+    return [c for c in chars if _ok_for(who, "chat", c["id"])]
+
+
 def _my_chars(request: Request | None) -> list[dict]:
     """その人が動かしてよい子(見られる子が決まっている人は、その子だけ)"""
     allowed = _get_allowed_characters(request) if request is not None else None
@@ -5552,7 +5604,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     """全キャラに順番にメッセージを送り、前の返答も含めて次のキャラに渡す。"""
     username = _get_username(request) or "arisan"
     user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    chars = _rotate_group([c for c in list_characters() if c["id"] in GROUP_CHAR_IDS])
+    chars = _rotate_group(_group_chars(request))
     now = datetime.now(timezone.utc).isoformat()
     responses = []
     append_group_log({"user": username, "type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
@@ -5650,7 +5702,7 @@ async def api_group_chat_stream(req: GroupChatRequest, request: Request):
     username = _get_username(request) or "arisan"
     key = (username, "group", req.client_msg_id) if req.client_msg_id else None
     # 同じ送信のつなぎ直しでは、順番を回し直さない(ジョブが残っていれば chars は使われない)
-    chars = [] if key in _chat_jobs else _rotate_group([c for c in list_characters() if c["id"] in GROUP_CHAR_IDS])
+    chars = [] if key in _chat_jobs else _rotate_group(_group_chars(request))
     return _stream_via_job(key, chars, req.message, username, "group", req.media, req.medias, separate=req.separate)
 
 
@@ -5658,7 +5710,7 @@ async def api_group_chat_stream(req: GroupChatRequest, request: Request):
 async def api_select_chat_stream(req: SelectChatRequest, request: Request):
     """選んだキャラに順番に聞き、返ってきた順にNDJSONでストリーム返却する。"""
     username = _get_username(request) or "arisan"
-    chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
+    chars_map = {c["id"]: c for c in _group_chars(request)}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     key = (username, "select", req.client_msg_id) if req.client_msg_id else None
     return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias, separate=req.separate, retry=req.retry)
@@ -5691,7 +5743,7 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
     """選んだキャラに順番にメッセージを送る。"""
     username = _get_username(request) or "arisan"
     user_info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
+    chars_map = {c["id"]: c for c in _group_chars(request)}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     if not chars:
         return {"responses": []}
@@ -6138,6 +6190,9 @@ async def api_mail_send(req: MailSendRequest, request: Request):
     for to_id in req.to_ids:
         if not valid.match(to_id):
             return JSONResponse({"error": f"invalid to ID: {to_id}"}, status_code=400)
+        # 見られる子が決まっている人: 「手紙を送ってよい」と決めてもらった子にだけ送れる
+        if _is_limited_user(username) and (CHARACTERS_DIR / to_id / "config").is_dir() and not _ok_for(username, "mail_out", to_id):
+            return JSONResponse({"error": f"{_char_display_name(to_id)}には、手紙を送れないことになっています"}, status_code=403)
         proc = await asyncio.create_subprocess_exec(
             "python3", str(scripts_dir / "write_mailbox.py"), from_id, to_id, content,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -6350,6 +6405,11 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
     name = f.stem
     if not (name.startswith(f"to_{username}") or f"_to_{username}_" in name):
         return None
+    # 見られる子が決まっている人: 家の持ち主が「手紙を受け取ってよい」と決めていない子からの手紙は、出さない
+    if name.startswith("from_") and _is_limited_user(username):
+        sender = name[len("from_"):name.index("_to_")] if "_to_" in name else ""
+        if (CHARACTERS_DIR / sender / "config").is_dir() and not _ok_for(username, "mail_in", sender):
+            return None
     parts = name.split("_")
     date_str = ""
     sender = ""
@@ -6713,8 +6773,11 @@ def api_me(request: Request):
     if out["limited"]:   # 見られる子、出さない道具、ぷちログを見られる子(自分の子が先)
         acc = _access_of(username)
         mine = _get_allowed_characters(request) or []
+        every = [c["id"] for c in list_characters()]
         out.update({"characters": mine, "hide_tools": acc["hide_tools"], "can": acc["can"],
-                    "petitlog": mine + [c for c in acc["petitlog"] if c not in mine],
+                    "petitlog": mine + [c for c in every if c not in mine and _ok_for(username, "petitlog", c)],
+                    "chat": [c for c in every if _ok_for(username, "chat", c)],
+                    "mail_out": [c for c in every if _ok_for(username, "mail_out", c)],
                     "owner_name": _user_label(OWNER_USER, OWNER_USER)})
     return out
 
@@ -6722,7 +6785,11 @@ def api_me(request: Request):
 class AccessBody(BaseModel):
     user: str
     hide_tools: list[str] | None = None
-    petitlog: list[str] | None = None
+    children: list[str] | None = None    # その人の子
+    chat: list[str] | None = None        # 子のほかに、話してよい子
+    mail_in: list[str] | None = None     # 子のほかに、手紙を受け取ってよい子
+    mail_out: list[str] | None = None    # 子のほかに、手紙を送ってよい子
+    petitlog: list[str] | None = None    # 子のほかに、ぷちログを見てよい子
     can: dict[str, bool] | None = None   # できること(CAN_KEYS)。送った項目だけ変える
 
 
@@ -6733,9 +6800,25 @@ def api_petitlog_characters(request: Request):
     allowed = _get_allowed_characters(request)
     if allowed is None:
         return chars
-    order = allowed + [c for c in _access_of(_get_username(request) or "")["petitlog"] if c not in allowed]
+    who = _get_username(request) or ""
     by_id = {c["id"]: c for c in chars}
-    return [by_id[i] for i in order if i in by_id]
+    order = [i for i in allowed if i in by_id] + [c["id"] for c in chars if c["id"] not in allowed and _ok_for(who, "petitlog", c["id"])]
+    return [by_id[i] for i in order]
+
+
+@app.get("/api/chat/characters")
+def api_chat_characters(request: Request):
+    """話せる子(トップページの「ぷちを選ぶ」用)。見られる子が決まっている人は、子が先、そのあと「話してよい」と決めてもらった子。
+
+    子でない子には chat_only が付く(話すことだけできる。記憶・設定・体の設定は見られない)
+    """
+    chars = list_characters()
+    allowed = _get_allowed_characters(request)
+    if allowed is None:
+        return chars
+    who = _get_username(request) or ""
+    mine = [c for c in chars if c["id"] in allowed]
+    return mine + [{**c, "chat_only": True} for c in chars if c["id"] not in allowed and _ok_for(who, "chat", c["id"])]
 
 
 @app.get("/api/access")
@@ -6745,12 +6828,16 @@ def api_access_get(request: Request):
         return JSONResponse({"error": "家の持ち主だけが見られます"}, status_code=403)
     chars = {c["id"]: c.get("name", c["id"]) for c in list_characters()}
     users = []
-    for user, mine in _limited_users().items():
+    for user in _limited_users():
         if user in chars:   # ぷち自身のログインは、ここでは扱わない
             continue
         acc = _access_of(user)
-        users.append({"id": user, "name": _user_label(user, user), "characters": mine, **acc})
-    return {"users": users, "tools": sorted(HIDEABLE_TOOLS), "characters": [{"id": k, "name": v} for k, v in chars.items()],
+        users.append({"id": user, "name": _user_label(user, user), "children": [c for c in acc["children"] if c in chars],
+                      # ぷちごとに、いま効いている答え(子は、ぜんぶ「よい」)
+                      **{k: [c for c in chars if _ok_for(user, k, c)] for k in ("chat", "mail_in", "mail_out", "petitlog")},
+                      "hide_tools": acc["hide_tools"], "can": acc["can"]})
+    return {"users": users, "tools": list(HIDEABLE_TOOLS), "recommended": RECOMMENDED_TOOLS,
+            "characters": [{"id": k, "name": v} for k, v in chars.items()],
             "can_labels": [{"id": k, "label": v} for k, v in CAN_LABELS]}
 
 
@@ -6761,14 +6848,17 @@ def api_access_set(body: AccessBody, request: Request):
     if body.user not in _limited_users():
         return JSONResponse({"error": "その人はいません"}, status_code=404)
     data = _load_access()
-    cur = _access_of(body.user)
+    cur = data.get(body.user) if isinstance(data.get(body.user), dict) else {}
+    known = {c["id"] for c in list_characters()}
     if body.hide_tools is not None:
         cur["hide_tools"] = [t for t in body.hide_tools if t in HIDEABLE_TOOLS]
-    if body.petitlog is not None:
-        known = {c["id"] for c in list_characters()}
-        cur["petitlog"] = [c for c in body.petitlog if c in known]
+    for key in ("children", "chat", "mail_in", "mail_out", "petitlog"):
+        value = getattr(body, key)
+        if value is not None:
+            cur[key] = [c for c in value if c in known]
     if body.can is not None:
-        cur["can"] = {**cur["can"], **{k: bool(v) for k, v in body.can.items() if k in CAN_KEYS}}
+        old = cur.get("can") if isinstance(cur.get("can"), dict) else {}
+        cur["can"] = {**old, **{k: bool(v) for k, v in body.can.items() if k in CAN_KEYS}}
     data[body.user] = cur
     path = _access_file()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -7460,7 +7550,7 @@ HTML = """<!DOCTYPE html>
     }
 
     async function loadCharacters() {
-      const res = await fetch("/api/characters");
+      const res = await fetch("/api/chat/characters");   // 子と、話してよいと決めてもらった子(chat_only)
       characters = await res.json();
       // みんなの一覧(色と名前)。見られる子が決まっている人でも、手紙の差出人の色・ようす に使う
       try { window._allChars = await (await fetch("/api/characters/all")).json(); } catch (e) { window._allChars = characters; }
@@ -7471,6 +7561,14 @@ HTML = """<!DOCTYPE html>
       }
       const solo = !!window._meInfo.limited && characters.length === 1;
       if (solo && currentCharId !== characters[0].id) { switchChar(characters[0].id); return; }
+      // 開いたときは、自分の子から(話せる子がほかにいて「みんな」が出る人でも)。1 回だけ
+      const firstChild = characters.find(c => !c.chat_only);
+      if (window._meInfo.limited && !window._startedAtChild && firstChild && currentCharId === "group") {
+        window._startedAtChild = true;
+        switchChar(firstChild.id);
+        return;
+      }
+      window._startedAtChild = true;
       // トップバーの「ぷちを選ぶ」: みんな・ぷちたち・だれか(2026-11-10 ありさん)
       const tabs = document.getElementById("charTabs");
       const opt = (id, dot, name, extra) => `<button class="char-opt${id === currentCharId ? " active" : ""}${extra || ""}" data-char-id="${id}" onclick="switchChar('${id}')">${dot}<span class="name">${name}</span>${id === "group" || id === "select" ? "" : '<span class="m5-dot"></span>'}</button>`;
@@ -7740,6 +7838,8 @@ HTML = """<!DOCTYPE html>
     }
     // 家の持ち主が「できない」と決めたことか(見られる子が決まっている人だけ。ほかの人は、いつでもできる)
     function canDo(key) { const can = (window._meInfo || {}).can; return !can || can[key] !== false; }
+    // 手紙を送ってよい相手か(見られる子が決まっている人は、家の持ち主が決めた子にだけ。人やほかの差出人には、いつでも)
+    function canMailTo(id) { const ok = (window._meInfo || {}).mail_out; return !ok || ok.includes(id) || !(window._allChars || []).some(c => c.id === id); }
     function pickMeNowHours(h) { _meNowHours = h; renderMeNow(); }
     function restWords() {
       const on = Object.values(_restAll).filter(r => r.on);
@@ -7791,8 +7891,9 @@ HTML = """<!DOCTYPE html>
       document.getElementById("twoColLayout").style.display = isGroupLike ? "block" : "";
       // ぷち 1 人の帯: みんな・だれかでは出さない。選び直したら閉じる
       toggleCharPanel(false);
-      document.getElementById("charBar").style.display = isGroupLike ? "none" : "";
       const barChar = characters.find(c => c.id === id);
+      // ぷち 1 人の帯(記憶・欲求・体)は、みんな・だれか と、話すだけの子では出さない
+      document.getElementById("charBar").style.display = isGroupLike || (barChar && barChar.chat_only) ? "none" : "";
       if (barChar) {
         document.getElementById("charBarDot").style.background = barChar.color || "#cab8d9";
         document.getElementById("charBarName").textContent = barChar.name || barChar.id;
@@ -8044,7 +8145,7 @@ HTML = """<!DOCTYPE html>
           const ts = m5_tailscale_ip && m5_tailscale_ip !== addr ? ` <span style="opacity:0.7" title="Tailscale のアドレス">/ ${safe(m5_tailscale_ip)}</span>` : "";
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
-          const mine = characters.some(x => x.id === c.id);   // 見られる子に入っていない子は、設定を変えられない
+          const mine = characters.some(x => x.id === c.id && !x.chat_only);   // 子でない子(話すだけの子も)は、設定を変えられない
           bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, body) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
@@ -8665,8 +8766,10 @@ HTML = """<!DOCTYPE html>
       if (_diaryDates.length > 0) renderDiaryContent(_diaryCache[_diaryDates[_diaryIdx]] || {});
     }
 
+    // 話すだけの子(子ではないが、話してよいと決めてもらった子)か。記憶・日記・体のことは読まない
+    function isChatOnly(id) { return !!(characters.find(c => c.id === (id || currentCharId)) || {}).chat_only; }
     async function updateDiary(resetToToday = false) {
-      if (currentCharId === "select" || currentCharId === "group") return;
+      if (currentCharId === "select" || currentCharId === "group" || isChatOnly()) return;
       const prevDate = _diaryDates.length > 0 ? _diaryDates[_diaryIdx] : null;
       _diaryCache = {};
       try {
@@ -8851,7 +8954,7 @@ HTML = """<!DOCTYPE html>
             <button class="mail-read-btn" onclick="toggleMailRead('${fn}',this)">${m.read ? "未読に戻す" : "既読にする"}</button>
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
             <button class="mail-action-btn" title="${archiveTitle}" onclick="toggleArchive('${fn}',${!m.archived},this)">${archiveIcon}</button>
-            ${m.sender_id ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
+            ${m.sender_id && canMailTo(m.sender_id) ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
           </div>
         </div>
         <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>

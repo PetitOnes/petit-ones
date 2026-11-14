@@ -42,6 +42,20 @@
     .s-check { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; font-size: 0.9rem; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
     .s-check input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--ui-accent-text); }
     .s-checks--col { flex-direction: column; align-items: stretch; }
+    .s-check.is-rec { border-color: var(--ui-accent-line); }
+    .s-rec { margin-left: 2px; padding: 1px 7px; font-size: 0.7rem; font-weight: 700; color: var(--ui-accent-text); background: var(--ui-accent-soft); border-radius: 999px; }
+    .s-rec.is-off { color: var(--ui-danger); background: var(--ui-danger-soft, #fbe2dc); margin-left: 8px; }
+    .s-matrix { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 0.9rem; }
+    .s-matrix th, .s-matrix td { padding: 4px 2px; text-align: center; border-bottom: var(--ui-line-w) solid var(--ui-line-soft); }
+    .s-matrix thead th { font-size: 0.75rem; font-weight: 700; color: var(--ui-text-sub); }
+    .s-matrix tbody th { text-align: left; font-weight: 700; white-space: nowrap; }
+    .s-matrix input { width: 22px; height: 22px; margin: 6px; accent-color: var(--ui-accent-text); }
+    .s-matrix input:disabled { opacity: 0.45; }
+    .s-cans { margin-top: 14px; border-top: var(--ui-line-w) solid var(--ui-line-soft); padding-top: 10px; }
+    .s-cans > summary { display: flex; align-items: center; cursor: pointer; font-size: var(--ui-fs-s); font-weight: 700; color: var(--ui-text-sub); list-style: none; }
+    .s-cans > summary::-webkit-details-marker { display: none; }
+    .s-cans > summary::before { content: "▸"; margin-right: 6px; }
+    .s-cans[open] > summary::before { content: "▾"; }
     .s-checks--col .s-check { border-radius: var(--ui-radius-ctl); padding: 8px 12px; min-height: 44px; }
     .s-locked { position: relative; opacity: 0.55; }
     .s-locked > *:not(.a-heading):not(summary):not(.s-lock-note) { pointer-events: none; }
@@ -114,7 +128,7 @@
     <!-- 👪 ひと: 見られる子が決まっている人に、何を見せるか(家の持ち主だけ) -->
     <section class="s-pane" id="panePeople">
       <div id="people"></div>
-      <p class="a-hint">ここで決められるのは、道具の列に出すものと、ぷちログを見られる子です。会話・記憶・体の設定は、その人の子だけのままです。</p>
+      <p class="a-hint">決めると、すぐに保存されます。その人の画面は、読み込み直すと変わります。</p>
     </section>
 
     <!-- ぷち 1 人 -->
@@ -447,34 +461,71 @@
     }
 
     // ---- 👪 ひと ----
+    // 人ごとに 3 つ: (1) ぷちごとの表(子・会話・メール・ぷちログ) (2) 見せるページ (3) してよいこと(たたんである)
+    const KINDS = [["children", "子"], ["chat", "会話"], ["mail_in", "受信"], ["mail_out", "送信"], ["petitlog", "ログ"]];
     function renderPeople() {
       const el = document.getElementById("people");
+      const rec = access.recommended || [];
       el.innerHTML = access.users.map(u => {
-        const mine = u.characters.map(id => (access.characters.find(c => c.id === id) || {}).name || id).join("・");
-        const tools = access.tools.filter(t => TOOL_ALL[t]).map(t => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-tool="${esc(t)}" ${u.hide_tools.includes(t) ? "" : "checked"}> ${TOOL_ALL[t].icon} ${esc(TOOL_ALL[t].name)}</label>`).join("");
-        const logs = access.characters.filter(c => !u.characters.includes(c.id)).map(c => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-log="${esc(c.id)}" ${u.petitlog.includes(c.id) ? "checked" : ""}> ${esc(c.name)}</label>`).join("");
+        const uid = esc(u.id);
+        const kids = u.children.map(id => (access.characters.find(c => c.id === id) || {}).name || id).join("・") || "(子はいません)";
+        const rows = access.characters.map(c => {
+          const child = u.children.includes(c.id);
+          const cell = ([key]) => {
+            const on = key === "children" ? child : child || (u[key] || []).includes(c.id);
+            return `<td><input type="checkbox" data-user="${uid}" data-kind="${key}" data-char="${esc(c.id)}" ${on ? "checked" : ""} ${child && key !== "children" ? "disabled" : ""}></td>`;
+          };
+          return `<tr><th>${esc(c.name)}</th>${KINDS.map(cell).join("")}</tr>`;
+        }).join("");
+        const pages = access.tools.filter(t => TOOL_ALL[t]).map(t => `<label class="s-check${rec.includes(t) ? " is-rec" : ""}"><input type="checkbox" data-user="${uid}" data-tool="${esc(t)}" ${u.hide_tools.includes(t) ? "" : "checked"}> ${TOOL_ALL[t].icon} ${esc(TOOL_ALL[t].name)}${rec.includes(t) ? '<span class="s-rec">おすすめ</span>' : ""}</label>`).join("");
+        const cans = (access.can_labels || []).map(c => `<label class="s-check"><input type="checkbox" data-user="${uid}" data-can="${esc(c.id)}" ${u.can[c.id] !== false ? "checked" : ""}> ${esc(c.label.replace("{kids}", kids === "(子はいません)" ? "子" : kids))}</label>`).join("");
+        const off = (access.can_labels || []).filter(c => u.can[c.id] === false).length;
         return `<div class="m-card"><span class="a-heading">${esc(u.name)}</span>
-          <p class="a-hint" style="margin:0 0 10px">${esc(u.name)}の子: ${esc(mine)}</p>
-          <div class="a-label">見せる道具(外すと、道具の列に出ず、ページも開けません)</div>
-          <div class="s-checks">${tools}</div>
-          ${logs ? `<div class="a-label" style="margin-top:12px">ぷちログを見られる子(自分の子のほかに)</div><div class="s-checks">${logs}</div>` : ""}
-          <div class="a-label" style="margin-top:12px">してよいこと(外すと、その人の画面からできなくなります。その人は、お願いを送れます)</div>
-          <div class="s-checks s-checks--col">${(access.can_labels || []).map(c => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-can="${esc(c.id)}" ${u.can[c.id] !== false ? "checked" : ""}> ${esc(c.label)}</label>`).join("")}</div>
+          <div class="a-label">ぷちごとに決める</div>
+          <table class="s-matrix"><thead><tr><th></th>${KINDS.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
+          <p class="a-hint" style="margin:6px 0 0"><b>子</b>にすると、その子の会話・記憶・設定まで見られて、会話・メール・ぷちログは自動で入ります。<b>受信</b>・<b>送信</b>はメール、<b>ログ</b>はぷちログです。</p>
+          <div class="a-label" style="margin-top:14px">見せるページ</div>
+          <div class="s-checks">${pages}</div>
+          <div style="display:flex;gap:8px;margin-top:8px"><button class="a-btn a-btn--sub a-btn--s" data-user="${uid}" data-pages="rec">おすすめにそろえる</button><button class="a-btn a-btn--ghost a-btn--s" data-user="${uid}" data-pages="all">ぜんぶ見せる</button></div>
+          <details class="s-cans" ${off ? "open" : ""}><summary>してよいこと(消す・変える)${off ? `<span class="s-rec is-off">${off} 個 外してある</span>` : ""}</summary>
+            <p class="a-hint" style="margin:6px 0">外すと、その人の画面からできなくなります。その人は、設定からお願いを送れます。</p>
+            <div class="s-checks s-checks--col">${cans}</div></details>
         </div>`;
       }).join("") || '<div class="p-empty">見られる子が決まっている人は、いません</div>';
     }
-    document.getElementById("people").addEventListener("change", async e => {
-      const box = e.target.closest("input[data-user]");
-      if (!box) return;
-      const user = box.dataset.user, all = sel => [...document.querySelectorAll(`#people input[data-user="${CSS.escape(user)}"]${sel}`)];
-      const body = {user, hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool), petitlog: all("[data-log]").filter(x => x.checked).map(x => x.dataset.log),
-                    can: Object.fromEntries(all("[data-can]").map(x => [x.dataset.can, x.checked]))};
+    function peopleBody(user) {
+      const all = sel => [...document.querySelectorAll(`#people input[data-user="${CSS.escape(user)}"]${sel}`)];
+      const of = kind => all(`[data-kind="${kind}"]`).filter(x => x.checked).map(x => x.dataset.char);
+      return {user, children: of("children"), chat: of("chat"), mail_in: of("mail_in"), mail_out: of("mail_out"), petitlog: of("petitlog"),
+              hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool),
+              can: Object.fromEntries(all("[data-can]").map(x => [x.dataset.can, x.checked]))};
+    }
+    async function savePeople(user, undo) {
       try {
-        const r = await fetch("/api/access", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+        const r = await fetch("/api/access", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(peopleBody(user))});
         if (!r.ok) throw new Error();
         access = await r.json();
         toast("決めました");
-      } catch (err) { toast("決められませんでした"); box.checked = !box.checked; }
+      } catch (err) { toast("決められませんでした"); if (undo) undo(); }
+      const open = [...document.querySelectorAll("#people details")].map(d => d.open);   // たたんであるかどうかは、そのまま
+      renderPeople();
+      document.querySelectorAll("#people details").forEach((d, i) => { if (open[i] !== undefined) d.open = open[i]; });
+    }
+    document.getElementById("people").addEventListener("change", e => {
+      const box = e.target.closest("input[data-user]");
+      if (!box) return;
+      // 子にしたら、その子の会話・メール・ぷちログも入れる
+      if (box.dataset.kind === "children" && box.checked) {
+        document.querySelectorAll(`#people input[data-user="${CSS.escape(box.dataset.user)}"][data-char="${CSS.escape(box.dataset.char)}"]`).forEach(x => { x.checked = true; });
+      }
+      savePeople(box.dataset.user, () => { box.checked = !box.checked; });
+    });
+    document.getElementById("people").addEventListener("click", e => {
+      const btn = e.target.closest("button[data-pages]");
+      if (!btn) return;
+      const rec = access.recommended || [];
+      document.querySelectorAll(`#people input[data-user="${CSS.escape(btn.dataset.user)}"][data-tool]`).forEach(x => { x.checked = btn.dataset.pages === "all" || rec.includes(x.dataset.tool); });
+      savePeople(btn.dataset.user);
     });
 
     // ログアウト: ログインしているときだけ、🏠 家 のいちばん下に出す
