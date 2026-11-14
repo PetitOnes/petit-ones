@@ -70,7 +70,7 @@ PUBLIC_CHAT_LIMIT = 5  # 1時間あたり最大リクエスト数
 _relay_state: dict = {"active": False, "cancel": False, "from_char": "", "to_char": "", "turns_remaining": 0, "characters": []}
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
@@ -527,6 +527,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "sounds": ("/sounds", "/api/sounds"),
     "album": ("/album", "/api/album"),
     "voice": ("/voice_memo", "/api/voice_memo"),
+    "video": ("/video_memo", "/api/video_memo"),   # 動画メモ(人が撮る。2026-11-14)
     "notes": ("/notes", "/api/my/notes"),
     "notebook": ("/notebook",),
     "kairanban": ("/kairanban",),
@@ -2881,7 +2882,8 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html"}
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html",
+             "video_memo": "videomemo.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
@@ -3108,6 +3110,60 @@ async def api_hello(request: Request):
     chars = [c for c in _pin_targets(request, "hello_to") if c["id"] in GROUP_CHAR_IDS]   # その人が設定で選んだ子(選んでいなければ、送ってよい子ぜんぶ)
     results = await asyncio.gather(*[_hello_one(c, username, config, night) for c in chars])
     return {"ok": True, "night": night, "results": list(results)}
+
+
+# ---- 動画メモ(人が撮る、10 秒までの小さい動画。家の人どうしで見られる。ぷちには渡していない。scripts/video_memo.py) ----
+def _video_memo():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import video_memo
+    return video_memo
+
+
+@app.get("/video_memo", response_class=HTMLResponse)
+def video_memo_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["video_memo"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/video_memo")
+def api_video_memo(request: Request):
+    """みんなの動画メモ(新しい順)。mine = 自分が撮ったもの(消せる)"""
+    vm = _video_memo()
+    me = _get_username(request) or OWNER_USER
+    items = [{**r, "name": _user_label(r["user"]), "color": _person_color(r["user"]), "mine": r["user"] == me} for r in vm.list_all(DATA_DIR)]
+    return {"items": items, "max_seconds": vm.MAX_SECONDS, "me": me}
+
+
+@app.post("/api/video_memo/upload")
+async def api_video_memo_upload(request: Request, file: UploadFile = File(...), title: str = Form("")):
+    """動画を取り込む。はじめの 10 秒を、小さい MP4 にして自分のメモに置く"""
+    vm = _video_memo()
+    me = _get_username(request) or OWNER_USER
+    raw = await file.read()
+    try:
+        item = await asyncio.to_thread(lambda: vm.save(DATA_DIR, me, raw, Path(file.filename or "").suffix, title))
+    except vm.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "item": {**item, "name": _user_label(me), "color": _person_color(me), "mine": True}}
+
+
+@app.get("/api/video_memo/file/{user}/{name}")
+def api_video_memo_file(user: str, name: str):
+    """動画メモの本体(<id>.mp4)か、一覧用の 1 枚(<id>.jpg)。FileResponse は途中からの読み(Range)に答える(iPhone の再生に要る)"""
+    memo_id, _, kind = name.rpartition(".")
+    path = _video_memo().path_of(DATA_DIR, user, memo_id, kind)
+    if path is None:
+        return JSONResponse({"error": "その動画メモはありません"}, status_code=404)
+    return FileResponse(path, media_type="video/mp4" if kind == "mp4" else "image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+@app.delete("/api/video_memo/{user}/{memo_id}")
+def api_video_memo_delete(user: str, memo_id: str, request: Request):
+    """動画メモを消す(自分が撮ったものだけ)"""
+    if user != (_get_username(request) or OWNER_USER):
+        return JSONResponse({"error": "消せるのは、自分が撮ったものだけです"}, status_code=403)
+    if not _video_memo().delete(DATA_DIR, user, memo_id):
+        return JSONResponse({"error": "その動画メモはありません"}, status_code=404)
+    return {"ok": True}
 
 
 @app.get("/sounds", response_class=HTMLResponse)
@@ -8512,6 +8568,7 @@ HTML = """<!DOCTYPE html>
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
+      video:     {icon: "🎬", name: "動画メモ",   pane: "video"},   // 人が撮る 10 秒までの動画(2026-11-14)。はじめは「ほか」の中
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
       kairanban: {icon: "📋", name: "回覧板",     pane: "kairanban"},
@@ -8702,7 +8759,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
