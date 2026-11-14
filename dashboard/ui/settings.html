@@ -135,6 +135,7 @@
         <p class="a-hint" style="margin:0 0 6px">▲▼ で並びを変える。出し方は 3 つ: <b>最初</b>(列に出す)/ <b>ほか</b>(「ほか」を押したら出る)/ <b>なし</b>(出さない)。</p>
         <div id="tools"></div>
         <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="saveUi({tools: defaultTools()})">はじめの並びに戻す</button>
+        <div class="s-row" style="margin-top:10px"><span>📖 交換日記に、自分の番のピンクの点を出す</span><label class="a-toggle"><input type="checkbox" id="notebookDot" onchange="saveUi({notebook_dot: this.checked})"><span></span></label></div>
       </div>
       <!-- 家の持ち主へのお願い(見られる子が決まっている人にだけ出す) -->
       <div class="m-card" id="requestCard" style="display:none">
@@ -319,6 +320,7 @@
       sw.disabled = !ui.topbar_saved;
       document.getElementById("keepColorBtn").disabled = !c || c === ui.topbar_saved;
       const key = ui.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
+      $("notebookDot").checked = ui.notebook_dot !== false;
       document.querySelectorAll("#sendKey [data-v]").forEach(b => b.classList.toggle("is-on", b.dataset.v === key));
       const order = toolOrder();
       document.getElementById("tools").innerHTML = order.map((t, i) => `<div class="s-row">
