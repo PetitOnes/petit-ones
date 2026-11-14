@@ -181,17 +181,40 @@ def record(base: Path | None = None) -> dict | None:
         if dev.get("move"):
             last_move[did] = snap["ts"]
     snap["last_move"] = last_move
+    _merge_presence(base, snap)
     tmp = rd / "latest.json.tmp"
     tmp.write_text(json.dumps(snap, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(rd / "latest.json")
     return snap
 
 
-def latest(base: Path | None = None) -> dict | None:
+def presence_last_move(base: Path | None = None) -> dict[str, str]:
+    """気配(presence_watch.py、1 分ごと)が覚えている、人感ごとの最後に動いた時刻。無ければ空"""
     try:
-        return json.loads((room_dir(base) / "latest.json").read_text(encoding="utf-8"))
+        raw = json.loads(((base or data_dir()) / "state" / "presence_state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {did: st["last_move"] for did, st in raw.items() if isinstance(st, dict) and st.get("last_move")}
+
+
+def _merge_presence(base: Path | None, snap: dict) -> dict:
+    """10 分ごとの読みでは、あいだの短い動きを見逃す(2026-11-14 ありさん「アプリでは 20:39 に動態検出」)。
+    1 分ごとに見ている気配のほうが新しければ、そちらの時刻を使う"""
+    lm = dict(snap.get("last_move") or {})
+    for did, ts in presence_last_move(base).items():
+        if ts > lm.get(did, ""):   # ISO の文字列は、そのまま前後が比べられる
+            lm[did] = ts
+    snap["last_move"] = lm
+    return snap
+
+
+def latest(base: Path | None = None) -> dict | None:
+    """いちばん新しい読み。人感の最後の動きは、気配の記録のほうが新しければそちら"""
+    try:
+        snap = json.loads((room_dir(base) / "latest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
+    return _merge_presence(base, snap)
 
 
 def day_rows(base: Path | None, day: datetime | str) -> list[dict]:
