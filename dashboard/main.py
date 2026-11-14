@@ -3239,6 +3239,46 @@ def api_kairanban_send(body: KairanbanSendBody, request: Request):
     return {"sent": sent, "items": kb.list_issues(DATA_DIR, petits)}
 
 
+# ---- 手紙の Slack 通知(人ごと。scripts/mail_notify.py。送るのは cron の mail_notify.py run) ----
+def _mail_notify():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import mail_notify
+    return mail_notify
+
+
+class MailNotifyBody(BaseModel):
+    on: bool = False
+    to: str = ""
+    quiet: list[int] | None = None
+
+
+@app.get("/api/mail_notify")
+def api_mail_notify(request: Request):
+    """自分の、手紙の Slack 通知の設定。house_ok = 送り先を空にすると家の知らせのチャンネルに出る人か"""
+    me = _get_username(request) or OWNER_USER
+    return {**_mail_notify().load_user(DATA_DIR, me), "house_ok": not _is_limited(request)}
+
+
+@app.post("/api/mail_notify")
+def api_mail_notify_set(body: MailNotifyBody, request: Request):
+    me = _get_username(request) or OWNER_USER
+    try:   # 家のチャンネルを使えるのは、家の世話人が送り先を空にしたときだけ
+        raw = {"on": body.on, "to": body.to, "quiet": body.quiet, "house": not _is_limited(request) and not body.to.strip()}
+        return {**_mail_notify().save_user(DATA_DIR, me, raw), "house_ok": not _is_limited(request)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/mail_notify/test")
+def api_mail_notify_test(request: Request):
+    """いま決めてある送り先へ、ためしに 1 行送る"""
+    try:
+        ok = _mail_notify().try_send(DATA_DIR, _get_username(request) or OWNER_USER)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True} if ok else JSONResponse({"error": "Slack に送れませんでした。送り先の ID と、ボットがそのチャンネルに入っているかを確かめてください"}, status_code=502)
+
+
 @app.get("/kairanban", response_class=HTMLResponse)
 def kairanban_page():
     # ほかのページと同じ部品(dashboard/ui/)で。トップページの中にも開ける(2026-11-14)

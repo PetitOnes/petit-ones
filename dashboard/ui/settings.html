@@ -122,13 +122,29 @@
         <span class="a-heading">📍 わたしのいま</span>
         <div class="s-row">
           <span>🏷️ 候補</span>
-          <span class="s-pin"><span id="nowPresets" style="display:flex;gap:6px"></span>
+          <span class="s-pin" style="min-width:0"><span id="nowPresets" style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;min-width:0"></span>
             <button class="a-btn a-btn--sub a-btn--s" onclick="savePresets()">決める</button></span>
         </div>
         <p class="a-hint" id="nowPresetsHint" style="margin:4px 0 10px"></p>
         <p class="a-hint" style="margin:0 0 8px">📍 の「👋 ここにいるよ」と「🌙 からだ おやすみ」を、だれに届けるか。押して選ぶ。</p>
         <div class="s-row"><span>👋 ここにいるよ</span><span class="s-pin" id="pinHello"></span></div>
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
+      </div>
+      <div class="m-card" id="notifyCard">
+        <span class="a-heading">🔔 Slack 通知(わたしあての手紙)</span>
+        <p class="a-hint" style="margin:0 0 4px">自分あての手紙が届いたら、Slack に「だれから、何通」だけを送る(本文は送らない)。5 分ごとにまとめて 1 回。スマホの Slack の通知で気づける。</p>
+        <div class="s-row"><span style="white-space:nowrap">📬 知らせる</span>
+          <span class="m-pills" style="flex:0 0 auto"><button class="a-pill" id="mnOn" onclick="setNotifyOn(true)">する</button><button class="a-pill" id="mnOff" onclick="setNotifyOn(false)">しない</button></span></div>
+        <div class="s-row"><span style="white-space:nowrap">🌙 出さない時間</span>
+          <span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <select class="a-input a-input--s" id="mnQuietOn" style="width:auto"><option value="0">なし</option><option value="1">あり</option></select>
+            <span id="mnQuietHours" style="display:inline-flex;align-items:center;gap:4px"><select class="a-input a-input--s" id="mnFrom" style="width:auto"><option value="0">0 時</option><option value="1">1 時</option><option value="2">2 時</option><option value="3">3 時</option><option value="4">4 時</option><option value="5">5 時</option><option value="6">6 時</option><option value="7">7 時</option><option value="8">8 時</option><option value="9">9 時</option><option value="10">10 時</option><option value="11">11 時</option><option value="12">12 時</option><option value="13">13 時</option><option value="14">14 時</option><option value="15">15 時</option><option value="16">16 時</option><option value="17">17 時</option><option value="18">18 時</option><option value="19">19 時</option><option value="20">20 時</option><option value="21">21 時</option><option value="22">22 時</option><option value="23">23 時</option></select>〜<select class="a-input a-input--s" id="mnTo" style="width:auto"><option value="0">0 時</option><option value="1">1 時</option><option value="2">2 時</option><option value="3">3 時</option><option value="4">4 時</option><option value="5">5 時</option><option value="6">6 時</option><option value="7">7 時</option><option value="8">8 時</option><option value="9">9 時</option><option value="10">10 時</option><option value="11">11 時</option><option value="12">12 時</option><option value="13">13 時</option><option value="14">14 時</option><option value="15">15 時</option><option value="16">16 時</option><option value="17">17 時</option><option value="18">18 時</option><option value="19">19 時</option><option value="20">20 時</option><option value="21">21 時</option><option value="22">22 時</option><option value="23">23 時</option></select></span>
+          </span></div>
+        <p class="a-hint" style="margin:4px 0 0">出さない時間に届いた分は、明けてからまとめて 1 回。</p>
+        <div class="s-row"><span style="white-space:nowrap">📮 送り先</span>
+          <input class="a-input a-input--s" id="mnDest" maxlength="20" placeholder="C… か U…" style="width:11em" autocapitalize="characters" spellcheck="false"></div>
+        <p class="a-hint" id="mnDestHint" style="margin:4px 0 8px"></p>
+        <div style="display:flex;gap:6px;align-items:center"><span class="a-hint" id="mnMsg" style="flex:1;margin:0"></span><button class="a-btn a-btn--sub a-btn--s" onclick="testNotify()">ためしに送る</button><button class="a-btn a-btn--s" onclick="saveNotify()">決める</button></div>
       </div>
       <div class="m-card">
         <span class="a-heading">家の中の場所</span>
@@ -345,6 +361,51 @@
       renderHouse();
       await loadRoomDevices();   // 場所の行に機体の粒を出すので、先に
       loadSpots();
+      loadNotify();
+    }
+    // 🔔 Slack 通知(自分あての手紙。config/mail_notify.json の自分の分。送るのは家の cron)
+    let notify = {on: false, to: "", quiet: null, house_ok: false};
+    function renderNotify() {
+      document.getElementById("mnOn").classList.toggle("is-on", !!notify.on);
+      document.getElementById("mnOff").classList.toggle("is-on", !notify.on);
+      const q = notify.quiet;
+      document.getElementById("mnQuietOn").value = q ? "1" : "0";
+      document.getElementById("mnFrom").value = q ? q[0] : 0;
+      document.getElementById("mnTo").value = q ? q[1] : 7;
+      document.getElementById("mnQuietHours").style.display = q ? "inline-flex" : "none";
+      document.getElementById("mnDest").value = notify.to || "";
+      document.getElementById("mnDestHint").textContent = "Slack のチャンネル ID(C…)か、自分のメンバー ID(U…。自分に直接届く)。チャンネルに送るなら、ボットをそのチャンネルに入れておく。"
+        + (notify.house_ok ? "空のままなら、家の知らせと同じチャンネルに出る。" : "空のままだと、どこにも送らない。");
+    }
+    function readNotify() {
+      const quietOn = document.getElementById("mnQuietOn").value === "1";
+      return {on: !!notify.on, to: document.getElementById("mnDest").value.trim(),
+              quiet: quietOn ? [Number(document.getElementById("mnFrom").value), Number(document.getElementById("mnTo").value)] : null};
+    }
+    async function loadNotify() {
+      try { const r = await fetch("/api/mail_notify"); if (r.ok) notify = await r.json(); } catch (e) {}
+      renderNotify();
+      document.getElementById("mnQuietOn").onchange = e => { document.getElementById("mnQuietHours").style.display = e.target.value === "1" ? "inline-flex" : "none"; };
+    }
+    function setNotifyOn(on) { notify = {...notify, ...readNotify(), on}; renderNotify(); saveNotify(); }
+    async function saveNotify() {
+      const msg = document.getElementById("mnMsg"); msg.textContent = "";
+      try {
+        const res = await fetch("/api/mail_notify", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(readNotify())});
+        const d = await res.json();
+        if (!res.ok) { msg.textContent = d.error || "決められませんでした"; return false; }
+        notify = d; renderNotify(); toast("決めました"); return true;
+      } catch (e) { msg.textContent = "決められませんでした"; return false; }
+    }
+    async function testNotify() {
+      const msg = document.getElementById("mnMsg");
+      if (!(await saveNotify())) return;   // いま画面にある送り先で試す
+      msg.textContent = "送っています…";
+      try {
+        const res = await fetch("/api/mail_notify/test", {method: "POST"});
+        const d = await res.json();
+        msg.textContent = res.ok ? "送りました。Slack を見てください" : (d.error || "送れませんでした");
+      } catch (e) { msg.textContent = "送れませんでした"; }
     }
     // 家の中の場所(config/spots.json)。部屋・場所と、その部屋の SwitchBot の機体
     let spotsList = [];
