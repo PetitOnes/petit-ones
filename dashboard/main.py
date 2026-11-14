@@ -11516,7 +11516,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     .form-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
     .form-row label { font-size: 0.85rem; color: #aaa; white-space: nowrap; }
     .author-label { font-size: 0.85rem; color: #7ec8e3; font-weight: 600; }
-    .form-textarea { width: 100%; background: #0d1b36; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 8px; padding: 10px; font-size: 0.9rem; min-height: 80px; resize: vertical; font-family: inherit; }
+    .form-textarea { width: 100%; background: #0d1b36; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 8px; padding: 10px; font-size: 0.9rem; line-height: 1.6; min-height: 80px; resize: vertical; font-family: inherit; box-sizing: border-box; }
     .form-textarea:focus { outline: none; border-color: #4a7abf; }
     .send-btn { background: #0f3460; border: 1px solid #4a7abf; color: #e0e0e0; padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; float: right; }
     .send-btn:hover { background: #1a4a7a; }
@@ -11649,6 +11649,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
           body: JSON.stringify({author, content})
         });
         document.getElementById("contentArea").value = "";
+        growArea();
         await loadEntries();
         loadTurn();
       } catch(e) {
@@ -11660,6 +11661,14 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     document.getElementById("contentArea").addEventListener("keydown", e => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) postEntry();
     });
+    // 書く欄は、書いた分だけ伸びる(長い文が小さな欄の中でスクロールして書きづらかった。2026-11-14 ありさん)。画面の 7 割まで伸びたら、そこからは欄の中でスクロール
+    function growArea() {
+      const ta = document.getElementById("contentArea");
+      ta.style.height = "auto";
+      ta.style.height = Math.max(80, Math.min(ta.scrollHeight + 2, Math.floor(window.innerHeight * 0.7))) + "px";
+    }
+    document.getElementById("contentArea").addEventListener("input", growArea);
+    window.addEventListener("resize", growArea);
 
     initNotebook();
   </script>
