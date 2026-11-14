@@ -171,3 +171,48 @@ def test_sns_posts_and_replies_show_without_their_words(tmp_path):
     assert sorted((r["text"], r["count"]) for r in rows) == [("ぷちSNS で返事した", 2), ("ぷちSNS に投稿した", 1)]
     assert "ひみつの文" not in json.dumps(rows, ensure_ascii=False)
     assert any("ぷちSNS で返事した(× 2)" in line for line in pl.day_lines(src, DAY))
+
+
+def test_alone_words_tell_what_was_used():
+    """ひとりの時間の一言: 使った道具から、何をしたかが分かる(その子の言葉は写さない)"""
+    own = "/home/x/petit_claude/characters/puchiko"
+    calls = [
+        ("mcp__m5-mcp__get_sensor_data", {}, "sense"),
+        ("mcp__m5-puchiko__take_snapshot", {}, "look"),
+        ("mcp__desire-system__get_desires", {}, "desire"),
+        ("mcp__memory-puchiko__recall", {"context": "x"}, "recall"),
+        ("mcp__memory__remember", {"content": "x"}, "memory"),
+        ("Read", {"file_path": f"{own}/ROUTINES.md"}, "reread"),
+        ("Grep", {"pattern": "x", "path": f"{own}/ROUTINES_DETAIL.md"}, "reread"),
+        ("Bash", {"command": f"tail -20 {own}/TODO_ACTIVE.md"}, "reread"),
+        ("Read", {"file_path": f"{own}/notes/poem.md"}, "note_read"),
+        ("Edit", {"file_path": f"{own}/ROUTINES.md"}, "edit_own"),
+        ("Write", {"file_path": f"{own}/notes/poem.md"}, "note"),
+        ("Bash", {"command": "python3 /x/scripts/list_unread_mail.py puchiko"}, "mail_check"),
+        ("mcp__m5-mcp__save_tts_memo", {"text": "x"}, "voice_memo"),
+        # よその子のファイル、家の外のファイル、ただの ls は一言にしない
+        ("Read", {"file_path": "/home/x/petit_claude/characters/puchiru/SOUL.md"}, None),
+        ("Read", {"file_path": "/home/x/work/petit-ones/README.md"}, None),
+        ("Bash", {"command": f"ls {own}"}, None),
+    ]
+    for name, args, want in calls:
+        assert pl._did(name, args, "puchiko") == want, (name, args)
+    assert pl._alone_words(set()) == "様子を見た"
+    assert pl._alone_words({"sleep"}) == "様子を見て、眠った"
+    assert pl._alone_words({"sense", "recall", "reread", "edit_own", "sleep"}) == "まわりを感じて、思い出して、自分のファイルを読み返して、自分のファイルを直して、眠った"
+
+
+def test_quiet_alone_runs_stay_out_of_the_diary(tmp_path):
+    """確かめた・思い出した・記憶に残した だけの回は日記の材料にしない。何かを書いた・直した回は入る"""
+    src = _house(tmp_path)
+    logs = src.auto_log_dir
+    logs.mkdir(parents=True, exist_ok=True)
+
+    def run(stamp: str, tools: list[tuple[str, dict]]) -> None:
+        lines = [json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": n, "input": a}]}}) for n, a in tools]
+        (logs / f"{stamp}_stream.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    run("20261113_100000", [("mcp__m5-mcp__get_sensor_data", {}), ("mcp__memory__remember", {"content": "x"})])
+    run("20261113_103000", [("mcp__m5-mcp__get_sensor_data", {}), ("Edit", {"file_path": f"{tmp_path}/characters/puchiko/ROUTINES.md"})])
+    alone = [line for line in pl.day_lines(src, DAY) if "ひとりの時間" in line]
+    assert len(alone) == 1 and alone[0].startswith("10:30") and alone[0].endswith("ひとりの時間: まわりを感じて、自分のファイルを直した")
