@@ -3535,7 +3535,7 @@ async def api_album_delete(person_id: str, filename: str, request: Request = Non
 # ===================== ボイスメモ =====================
 VOICE_MEMO_DIR = DATA_DIR / "voice_memo"
 VOICE_MEMO_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
-VOICE_MEMO_MAX = 10          # 人のボイスメモ
+VOICE_MEMO_MAX = 20          # 人のボイスメモ(2026-11-14 ありさん: 10 → 20。ぷちと同じ)
 VOICE_MEMO_MAX_PETIT = 20    # ぷちのボイスメモ(2026-11-10 ありさん)
 VOICE_MEMO_MAX_SEC = 30
 VOICE_MEMO_MAX_BYTES = 6 * 1024 * 1024  # 6MB ≈ 30秒の上限
@@ -12062,6 +12062,11 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     .memo-time { flex:0 0 auto; font-size:0.8rem; color:#aaa; font-variant-numeric:tabular-nums; white-space:nowrap; }
     .more-btn { flex:0 0 36px; width:36px; height:36px; border:none; border-radius:50%; background:none; color:#aaa; font-size:1.3rem; line-height:1; cursor:pointer; padding:0; }
     .lock-mark { display:none; }
+    /* まだ聞いていないもの(見ている人が)。名前の前に ● と、ふちの色 */
+    .new-mark { display:none; color:#ffb347; font-size:0.7rem; }
+    .memo-card.unheard .new-mark { display:inline; }
+    .memo-card.unheard { border-left:3px solid #ffb347; }
+    .memo-heard { font-size:0.72rem; color:#888; }
     .memo-card.locked .lock-mark { display:inline; }
     .memo-menu { position:absolute; right:8px; top:calc(100% - 8px); z-index:20; min-width:200px; padding:6px; border-radius:12px; background:#33334d; box-shadow:0 6px 24px rgba(0,0,0,0.35); display:flex; flex-direction:column; gap:2px; }
     .memo-menu a, .memo-menu button { display:block; width:100%; padding:10px 12px; border:none; border-radius:8px; background:none; color:#eee; font:inherit; font-size:0.9rem; text-align:left; text-decoration:none; cursor:pointer; white-space:nowrap; box-sizing:border-box; }
@@ -12250,17 +12255,24 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
         card.className = "memo-card";
         if (m.locked) card.classList.add("locked");
         const st = {filename: m.filename, locked: !!m.locked, registered: !!m.registered, speed: 1};
+        // 既読・未読(2026-11-14 ありさん): 見ている人がまだ聞いていない、ほかの人・子のボイスメモに ● 。
+        // 鳴らしたら聞いたことにする。聞いた人・子の名前は日時の下に
+        const heard = Array.isArray(m.listened_by) ? m.listened_by.slice() : [];
+        const mine = currentPerson === viewerId;
+        const heardLine = () => { const names = heard.filter(id => id !== currentPerson).map(id => (PERSONS.find(p => p.id === id) || {}).label || id); return names.length ? "聞いた: " + names.join("・") : (mine ? "まだ だれも聞いていない" : ""); };
+        if (!mine && !heard.includes(viewerId)) card.classList.add("unheard");
         const url = () => `/api/voice_memo/${currentPerson}/${st.filename}`;
         card.innerHTML = `
           <button class="play-btn" title="再生">▶</button>
           <div class="memo-info">
-            <div class="memo-label" title="${m.filename}"><span class="lock-mark">🔒 </span><span class="label-text">${label}</span></div>
+            <div class="memo-label" title="${m.filename}"><span class="new-mark" title="まだ聞いていない">● </span><span class="lock-mark">🔒 </span><span class="label-text">${label}</span></div>
             <div class="rename-form">
               <input class="rename-input" type="text" value="${label}" placeholder="新しい名前">
               <button class="rename-save">保存</button>
               <button class="rename-cancel">キャンセル</button>
             </div>
             <div class="memo-date">${dateStr} ${timeStr}</div>
+            <div class="memo-heard">${heardLine()}</div>
           </div>
           <span class="memo-time"></span>
           <button class="more-btn" title="ほかの操作" aria-haspopup="true">⋯</button>
@@ -12291,7 +12303,15 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
         audio.addEventListener("loadedmetadata", showTime);
         audio.addEventListener("durationchange", showTime);
         audio.addEventListener("timeupdate", showTime);
-        audio.addEventListener("play", () => { play.textContent = "⏸"; });
+        audio.addEventListener("play", () => {
+          play.textContent = "⏸";
+          if (!mine && !heard.includes(viewerId)) {   // 聞いた、と残す(自分の分は数えない)
+            heard.push(viewerId);
+            card.classList.remove("unheard");
+            q(".memo-heard").textContent = heardLine();
+            fetch(`/api/voice_memo/${currentPerson}/${encodeURIComponent(st.filename)}/listen?listener=${encodeURIComponent(viewerId)}`, {method: "POST"}).catch(() => {});
+          }
+        });
         audio.addEventListener("pause", () => { play.textContent = "▶"; showTime(); });
         audio.addEventListener("ended", () => { audio.currentTime = 0; play.textContent = "▶"; showTime(); });
         play.onclick = () => {
