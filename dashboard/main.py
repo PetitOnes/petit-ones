@@ -824,6 +824,13 @@ async def auth_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else ""
     if client_ip in _load_trusted_ips():
         return await call_next(request)
+    # スマホ(家の印を聞くアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
+    if path.startswith("/api/beacons/"):
+        user = _phone_place().person_for_key(request.headers.get("x-petit-key"), DATA_DIR)
+        if not user:
+            return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+        request.state.beacon_user = user
+        return await call_next(request)
     # 認証チェック
     role = _get_user_role(request)
     if role is None:
@@ -2328,6 +2335,15 @@ def _whereabouts():
     return whereabouts
 
 
+def _phone_place():
+    """スマホの居場所(家の印 = SwitchBot の BLE を、スマホが聞く)。決まりは scripts/phone_place.py"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import phone_place
+    return phone_place
+
+
 def _body():
     """からだの使い方(見る・話す・鳴らす・聞く)と からだ おやすみ。決まりは scripts/body_switches.py(自律行動と同じ)"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -2681,9 +2697,46 @@ def _whereabouts_view(d: dict, me: str) -> dict:
         if b:
             bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"] + (f"({b['spot']})" if b.get("spot") else ""))}
     mine = d["users"].get(me, {})
+    # スマホの居場所(家の印を聞いた結果)。報告が古ければ出ない
+    pp = _phone_place()
+    phones = {}
+    for u in pp.config(DATA_DIR)["phones"]:
+        w = pp.where(u, DATA_DIR)
+        if w:
+            phones[u] = {**w, "name": _user_label(u), "text": pp.words(w)}
     # 候補(自室・お外・会社)は、人ごとに決められる(⚙️ 設定 → 🏠 家 → 📍 わたしのいま)
-    return {"users": users, "bodies": bodies, "choices": wa.choices(d, _load_ui_settings(me).get("now_presets")), "me": me,
+    return {"users": users, "bodies": bodies, "phones": phones, "choices": wa.choices(d, _load_ui_settings(me).get("now_presets")), "me": me,
             "mine": mine.get("text", ""), "mine_since": mine.get("since", ""), "mine_until": mine.get("until", "")}
+
+
+class BeaconReport(BaseModel):
+    seen: dict[str, int] = {}    # 見えた印(機体の MAC)→ RSSI(dBm)
+
+
+def _beacon_user(request: Request) -> str | None:
+    """鍵(X-Petit-Key)で名乗ったスマホがだれのものか。auth_middleware が確かめ済みならそれ、ログイン無しの家でもここで確かめる"""
+    user = getattr(request.state, "beacon_user", None)
+    return user or _phone_place().person_for_key(request.headers.get("x-petit-key"), DATA_DIR)
+
+
+@app.get("/api/beacons/config")
+def api_beacons_config(request: Request):
+    """スマホのアプリに「これを聞いて」と渡す: 印の MAC と、報告の間隔"""
+    user = _beacon_user(request)
+    if not user:
+        return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+    pp = _phone_place()
+    return {"user": user, "macs": pp.macs(DATA_DIR), "interval_s": pp.INTERVAL_S}
+
+
+@app.post("/api/beacons/report")
+def api_beacons_report(body: BeaconReport, request: Request):
+    """スマホからの 1 回の報告(見えた印と強さ)。部屋に直して覚え、いまの居場所を返す"""
+    user = _beacon_user(request)
+    if not user:
+        return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+    cur = _phone_place().report(user, body.seen, DATA_DIR)
+    return {"room": cur["room"], "since": cur["since"], "levels": cur["levels"]}
 
 
 @app.get("/api/whereabouts")
@@ -8391,11 +8444,15 @@ HTML = """<!DOCTYPE html>
       const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
       const chips = _meNow.choices.map(c => `<button class="chip${c === _meNow.mine ? " active" : ""}" onclick="setMeNow(${JSON.stringify(c).replace(/"/g, "&quot;")})">${esc(c)}</button>`).join("");
       const others = Object.entries(_meNow.users).filter(([u]) => u !== _meNow.me).map(([, v]) => `${esc(v.name)}: ${esc(v.text)}`)
+        .concat(Object.entries(_meNow.phones || {}).filter(([u]) => u !== _meNow.me).map(([, p]) => `${esc(p.name)}のスマホ: ${esc(p.text)}`))
         .concat(Object.values(_meNow.bodies || {}).filter(b => b.text).map(b => `${esc(b.name)}: ${esc(b.text)}`)).join(" / ");
+      // 自分のスマホがどの部屋にいるか(家の印 = SwitchBot の機体の BLE を、スマホのアプリが聞いて報告したもの)
+      const myPhone = (_meNow.phones || {})[_meNow.me];
+      const phone = myPhone ? `<div class="others">📱 ${esc(myPhone.text)}${myPhone.room && myPhone.since ? `(${esc(_hm(myPhone.since))} から)` : ""}</div>` : "";
       const hours = ME_NOW_HOURS.map(([h, label]) => `<button class="chip hrs${h === _meNowHours ? " active" : ""}" onclick="pickMeNowHours(${h})">${label}</button>`).join("");
       const now = _meNow.mine ? `<div class="others">${esc(_meNow.mine)}: ${esc(_hm(_meNow.mine_since))} から${_meNow.mine_until ? `、${esc(_hm(_meNow.mine_until))} まで` : ""}</div>` : "";
       document.getElementById("meNowMenu").innerHTML =
-        now +
+        now + phone +
         `<div class="chips">${chips}</div>` +
         `<div class="row"><input id="meNowInput" placeholder="ほかの言葉で…" maxlength="30"><button class="chip" onclick="setMeNow(document.getElementById('meNowInput').value)">決める</button></div>` +
         `<div class="chips small">${hours}</div>` +
