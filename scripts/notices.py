@@ -4,7 +4,7 @@
 空・家の空気・スマホの部屋は、ぷちたちの希望で「毎回でなく変わったときだけ」渡している。
 どれを受け取るかは子ごとに決められる。置き場所は characters/<id>/config/settings.json の "notices":
 
-    {"notices": {"temperature": true, "humidity": true, "pressure": false, "sky": true, "phone": true}}
+    {"notices": {"temperature": true, "humidity": true, "pressure": false, "co2": true, "sky": true, "phone": true}}
 
 無いものは受け取る(true)。入口(sky.py line / room_log.py line / phone_place.py line)は設定に関わらずいつもある。
 
@@ -12,7 +12,7 @@
 
 Usage:
     python3 notices.py show <id>                 # その子が受け取るもの(JSON)
-    python3 notices.py set <id> <kind> on|off    # 受け取る・受け取らないを決める(kind: temperature / humidity / pressure / sky / phone)
+    python3 notices.py set <id> <kind> on|off    # 受け取る・受け取らないを決める(kind: temperature / humidity / pressure / co2 / sky / phone)
     python3 notices.py wants <id> <kind>         # 受け取るなら 0、受け取らないなら 1 で終わる(シェルの if 用)
 """
 
@@ -27,6 +27,7 @@ KINDS = {
     "temperature": "気温が 2℃ 以上動いたとき",
     "humidity": "湿度が 10% 以上動いたとき",
     "pressure": "気圧が 3 hPa 以上動いたとき",
+    "co2": "CO2 が 1000 ppm を超えたとき(戻ったときも)",
     "sky": "空(満月・新月・二十四節気の境目の日)",
     "phone": "家の人のスマホの部屋が変わったとき",
 }

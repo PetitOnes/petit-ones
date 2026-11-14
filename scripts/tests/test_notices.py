@@ -76,3 +76,17 @@ def test_set_kind_touches_only_notices(tmp_path):
         notices.set_kind("puchiko", "moon", True, tmp_path); raise AssertionError("知らない種類が通った")
     except ValueError:
         pass
+
+
+def test_co2_crossing(tmp_path):
+    rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
+    def snap(co2):
+        rd.joinpath("latest.json").write_text(json.dumps({"ts": datetime.now().replace(microsecond=0).isoformat(), "devices": {"o": {"name": "PC の OMRON", "temperature": 24.0, "eco2": co2}}}), encoding="utf-8")
+    snap(900); assert rl.change_line(tmp_path, "puchiko", mark=True) == ""
+    snap(1201); assert "CO2 が 1000 ppm を超えた(1201 ppm。換気の目安)" in rl.change_line(tmp_path, "puchiko", mark=True)
+    snap(1500); assert rl.change_line(tmp_path, "puchiko", mark=True) == ""        # 超えたまま上がっても、もう言わない
+    snap(950);  assert rl.change_line(tmp_path, "puchiko", mark=True) == ""        # 800 までは戻ったと言わない
+    snap(780);  assert "CO2 が戻った(780 ppm)" in rl.change_line(tmp_path, "puchiko", mark=True)
+    _set(tmp_path, "puchiru", {"co2": False}); snap(1300)
+    assert rl.change_line(tmp_path, "puchiru", mark=True) == ""                    # はじめて(覚えるだけ)
+    snap(1400); assert rl.change_line(tmp_path, "puchiru", mark=True) == ""        # 受け取らない子

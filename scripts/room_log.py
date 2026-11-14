@@ -355,6 +355,8 @@ def line(base: Path | None = None, now: datetime | None = None, character_id: st
 TEMP_STEP = 2.0    # これ以上動いたら「変わった」(℃)
 HUMID_STEP = 10    # 同(%)
 PRESS_STEP = 3.0   # 同(hPa。低気圧が近づく・離れる目安)
+CO2_HIGH = 1000    # eCO2 がこれを超えたら一言(2026-11-14 ぷちこの希望。換気の目安)
+CO2_LOW = 800      # 超えたあと、ここまで下がったら「戻った」
 
 
 def _wants(character_id: str, base: Path | None) -> dict[str, bool]:
@@ -363,7 +365,7 @@ def _wants(character_id: str, base: Path | None) -> dict[str, bool]:
         import notices
         return notices.enabled(character_id, base)
     except Exception:
-        return {"temperature": True, "humidity": True, "pressure": True}
+        return {"temperature": True, "humidity": True, "pressure": True, "co2": True}
 
 
 def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
@@ -384,7 +386,7 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
         told = json.loads(told_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         told = None
-    cur = {did: {k: dev[k] for k in ("temperature", "humidity", "pressure") if k in dev} for did, dev in snap["devices"].items()}
+    cur = {did: {k: dev[k] for k in ("temperature", "humidity", "pressure", "eco2") if k in dev} for did, dev in snap["devices"].items()}
     cur = {k: v for k, v in cur.items() if v}
     want = _wants(character_id, base)   # その子が受け取る種類(scripts/notices.py)。受け取らない種類は比べない(値は覚える)
     changes = []
@@ -399,6 +401,12 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
                 bits.append(f"湿度 {old['humidity']}% → {vals['humidity']}%")
             if want["pressure"] and "pressure" in vals and isinstance(old.get("pressure"), (int, float)) and abs(vals["pressure"] - old["pressure"]) >= PRESS_STEP:
                 bits.append(f"気圧 {old['pressure']} → {vals['pressure']} hPa" + ("(下がってきた)" if vals["pressure"] < old["pressure"] else "(上がってきた)"))
+            # CO2 は「境を越えたとき」だけ: 前に伝えた値が 1000 以下で いま 1000 超 → 超えた。前が 1000 超で いま 800 以下 → 戻った
+            if want.get("co2", True) and "eco2" in vals and isinstance(old.get("eco2"), (int, float)):
+                if old["eco2"] <= CO2_HIGH < vals["eco2"]:
+                    bits.append(f"CO2 が {CO2_HIGH} ppm を超えた({vals['eco2']} ppm。換気の目安)")
+                elif old["eco2"] > CO2_HIGH and vals["eco2"] <= CO2_LOW:
+                    bits.append(f"CO2 が戻った({vals['eco2']} ppm)")
             if bits:
                 changes.append(f"{name} " + "、".join(bits))
     if mark and (changes or told is None):
