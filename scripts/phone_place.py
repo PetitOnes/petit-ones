@@ -165,6 +165,7 @@ def _median_levels(history: list[dict]) -> dict[str, int]:
 
 def decide(cur_room: str | None, levels: dict[str, int], hysteresis_db: float) -> str | None:
     """いまの部屋と、部屋ごとの強さから、次の部屋。見える部屋が無ければ None"""
+    levels = {r: v for r, v in levels.items() if v > SILENT}   # まんなかが「見えていない」の部屋は候補にしない(引き分けで決めてしまわない)
     if not levels:
         return None
     best = max(levels, key=lambda r: levels[r])
