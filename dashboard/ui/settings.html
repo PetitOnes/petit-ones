@@ -36,9 +36,15 @@
     .s-save { width: 100%; margin-top: 14px; min-height: 48px; font-size: 1rem; }
     .s-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: var(--ui-radius-pill); background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
     .s-toast.on { opacity: 1; }
-    .s-pane { display: none; }
+    .s-pane { display: none; padding-top: 16px; }   /* 上の粒の列と、いちばん上のカードのあいだ */
     .s-pane.on { display: block; }
-    details.m-card > summary { cursor: pointer; }
+    /* くわしい設定: 開けることが分かるように、右に「ひらく ▾」。開いたら「とじる ▴」 */
+    details.m-card > summary.a-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
+    details.m-card > summary::-webkit-details-marker { display: none; }
+    details.m-card > summary::after { content: "ひらく ▾"; font-size: 0.85rem; font-weight: 700; color: var(--ui-accent-text); padding: 4px 12px; border: 1.5px solid var(--ui-accent-line); border-radius: var(--ui-radius-pill); }
+    details.m-card[open] > summary::after { content: "とじる ▴"; }
+    .s-count { margin: 6px 0 0; padding: 10px 12px; border-radius: var(--ui-radius-s); background: var(--ui-accent-soft); font-size: 0.9rem; color: var(--ui-text); }
+    .s-count b { font-size: 1.1rem; }
     .s-num { width: 72px !important; text-align: right; }
   </style>
 </head>
@@ -92,13 +98,14 @@
       </div>
       <div class="m-card">
         <span class="a-heading">自律行動（ひとりの時間）</span>
+        <div class="s-count" id="runCount"></div>
         <div class="s-row"><span>⏰ cron で動き出す時刻</span><span class="s-sub" id="cronInfo"></span></div>
         <div class="s-row"><span>🕺 今日のスケジュール</span>
           <select class="a-input" id="dayTypeOverride" onchange="renderDayType()">
             <option value="">自動（曜日通り）</option><option value="weekday">平日扱い</option><option value="weekend">休日扱い</option>
           </select></div>
         <div class="s-row"><span>⏱️ 自律行動の頻度</span>
-          <select class="a-input" id="autonomousSkip">
+          <select class="a-input" id="autonomousSkip" onchange="renderRunCount()">
             <option value="0">30分に1回（毎回）</option><option value="1">60分に1回（1回スキップ）</option><option value="2">90分に1回（2回スキップ）</option>
           </select></div>
         <div class="s-row"><span>🔁 1 回の最大ターン数（MAX_TURNS）</span>
@@ -197,17 +204,19 @@
     const minOpts = sel => [0, 10, 20, 30, 40, 50].map(m => `<option value="${m}"${m === sel ? " selected" : ""}>${String(m).padStart(2, "0")}</option>`).join("");
     function renderHours() {
       document.getElementById("hours").innerHTML = schedule[dayTab].map((h, i) => `<div class="s-hour">
-        <select onchange="schedule[dayTab][${i}][0]=+this.value">${hourOpts(h[0], 23)}</select>:<select onchange="schedule[dayTab][${i}][1]=+this.value">${minOpts(h[1])}</select>
+        <select onchange="schedule[dayTab][${i}][0]=+this.value; renderRunCount()">${hourOpts(h[0], 23)}</select>:<select onchange="schedule[dayTab][${i}][1]=+this.value; renderRunCount()">${minOpts(h[1])}</select>
         <span>〜</span>
-        <select onchange="schedule[dayTab][${i}][2]=+this.value">${hourOpts(h[2], 24)}</select>:<select onchange="schedule[dayTab][${i}][3]=+this.value">${minOpts(h[3])}</select>
+        <select onchange="schedule[dayTab][${i}][2]=+this.value; renderRunCount()">${hourOpts(h[2], 24)}</select>:<select onchange="schedule[dayTab][${i}][3]=+this.value; renderRunCount()">${minOpts(h[3])}</select>
         <button class="a-icon-btn x" title="消す" onclick="schedule[dayTab].splice(${i}, 1); renderHours()">✕</button>
       </div>`).join("") || `<p class="a-hint" style="margin:0">この日は動かない（時間帯なし）</p>`;
+      renderRunCount();
     }
     function switchDay(t) { dayTab = t; document.getElementById("tabWeekday").classList.toggle("is-on", t === "weekday"); document.getElementById("tabWeekend").classList.toggle("is-on", t === "weekend"); renderHours(); }
     function renderDayType() {
       const ov = document.getElementById("dayTypeOverride").value, dow = new Date().getDay();
       const weekend = ov === "weekend" || (ov === "" && (dow === 0 || dow === 6));
       document.getElementById("dayType").textContent = weekend ? "🏖 今日: 休日" : "📅 今日: 平日";
+      renderRunCount();
     }
     // crontab の行(分・時 …)を言葉に。「毎時 5 分・35 分」。それ以外の形はそのまま見せる
     function cronWords(entries) {
@@ -217,6 +226,38 @@
         if (/^\*\/\d+$/.test(e.minute) && e.hour === "*") return `${e.minute.slice(2)} 分ごと`;
         return `${e.minute} ${e.hour} ${e.dom} ${e.month} ${e.dow}（分 時 日 月 曜日）`;
       }).join(" / ");
+    }
+    // 1 日に何回動くか = cron の時刻(毎時 0・30 分 など)のうちアクティブタイムに入るもの ÷ 頻度(skip+1 回に 1 回)。平日・休日それぞれ
+    let cronEntries = [];
+    function cronMinutes() {
+      const mins = new Set();
+      for (const e of cronEntries) {
+        if (e.hour !== "*") return null;   // 時が決め打ちの形は数えない
+        if (/^[0-9,]+$/.test(e.minute)) e.minute.split(",").forEach(m => mins.add(parseInt(m)));
+        else if (/^\*\/\d+$/.test(e.minute)) { const n = parseInt(e.minute.slice(2)); for (let m = 0; m < 60; m += n) mins.add(m); }
+        else if (e.minute === "*") for (let m = 0; m < 60; m++) mins.add(m);
+        else return null;
+      }
+      return [...mins];
+    }
+    function runsPerDay(ranges, mins, skip) {
+      let n = 0;
+      for (let h = 0; h < 24; h++) for (const m of mins) {
+        const t = h * 60 + m;
+        if (ranges.some(r => r[0] * 60 + r[1] <= t && t < r[2] * 60 + r[3])) n++;
+      }
+      return Math.ceil(n / (skip + 1));
+    }
+    function renderRunCount() {
+      const el = document.getElementById("runCount");
+      const mins = cronMinutes();
+      if (!cronEntries.length || mins === null) { el.textContent = cronEntries.length ? "回数は数えられない形の cron" : "cron に登録が無いので、自律行動は動かない"; return; }
+      const skip = parseInt(document.getElementById("autonomousSkip").value) || 0;
+      const wd = runsPerDay(schedule.weekday, mins, skip), we = runsPerDay(schedule.weekend, mins, skip);
+      const today = (new Date().getDay() % 6 === 0) ? "休日" : "平日";
+      const ov = document.getElementById("dayTypeOverride").value;
+      const todayKind = ov === "weekday" ? "平日" : ov === "weekend" ? "休日" : today;
+      el.innerHTML = `1 日に動く予定: 平日 <b>${wd}</b> 回・休日 <b>${we}</b> 回 <span class="a-hint">(きょうは${esc(todayKind)}扱い → ${todayKind === "平日" ? wd : we} 回。cron の時刻のうちアクティブタイムに入る回 ÷ 頻度)</span>`;
     }
     function hostRow(v) { return `<div class="s-host"><input type="text" class="a-input host" value="${esc(v)}" placeholder="IP か ホスト名"><button class="a-icon-btn" title="消す" onclick="this.parentElement.remove()">✕</button></div>`; }
     function addHost(v) { document.getElementById("hosts").insertAdjacentHTML("beforeend", hostRow(v)); const ins = document.querySelectorAll("#hosts .host"); ins[ins.length - 1].focus(); }
@@ -228,9 +269,10 @@
       ]);
       const ah = s.active_hours || {};
       schedule = {weekday: JSON.parse(JSON.stringify(ah.weekday || [])), weekend: JSON.parse(JSON.stringify(ah.weekend || []))};
-      switchDay("weekday");
+      cronEntries = cron.entries || [];
       document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
       document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
+      switchDay("weekday");
       document.getElementById("maxTurns").value = s.max_turns ?? 20;
       document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
