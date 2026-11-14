@@ -6478,6 +6478,17 @@ def _char_display_name(char_id: str) -> str:
     return name
 
 
+def _person_color(user_id: str) -> str:
+    """人(世話人)の色: その人が決めたトップバーの色(ぷちの色に合わせているときは、取っておいた色)。
+
+    どちらも無ければ、家の人の設定(config/people.json)の色。人でなければ空
+    """
+    if user_id not in _USER_DISPLAY:
+        return ""
+    ui = _load_ui_settings(user_id)
+    return ui.get("topbar_color") or ui.get("topbar_saved") or _USER_DISPLAY[user_id].get("color", "")
+
+
 def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
     """ファイル名からメタ情報を抽出（コンテンツ未読）。対象外はNone。"""
     name = f.stem
@@ -6561,6 +6572,7 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             "date": c["date"],
             "sender": sender,
             "sender_id": c.get("sender_id", ""),
+            "sender_color": _person_color(c.get("sender_id", "")),   # 人(世話人)からの手紙の色。ぷちの手紙は、画面がその子の色で塗る
             "archived": c["archived"],
             "starred": c["starred"],
             "read_by": c["read_by"],
@@ -7316,8 +7328,9 @@ HTML = """<!DOCTYPE html>
 <body>
   <!-- メール作成モーダル -->
   <div id="mailModal" style="display:none;position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,0.5);align-items:center;justify-content:center">
-    <div style="background:#fff;border-radius:16px;padding:24px;width:min(90vw,420px);box-shadow:0 8px 32px rgba(0,0,0,0.2)">
-      <h3 style="margin:0 0 16px">✉️ メールを書く</h3>
+    <!-- 幅は画面いっぱい近く(スマホで書きやすく)、PC では 640px まで。高さが足りないときは中で送れる -->
+    <div style="background:#fff;border-radius:16px;padding:20px 16px;width:min(96vw,640px);max-height:92vh;max-height:92dvh;overflow:auto;box-sizing:border-box;box-shadow:0 8px 32px rgba(0,0,0,0.2)">
+      <h3 style="margin:0 0 14px">✉️ メールを書く</h3>
       <div style="margin-bottom:10px">
         <label style="font-size:0.85rem;color:#888;display:block;margin-bottom:6px">宛先（複数可）</label>
         <div style="display:flex;flex-wrap:wrap;gap:8px">
@@ -7330,15 +7343,15 @@ HTML = """<!DOCTYPE html>
       </div>
       <div style="margin-bottom:10px">
         <label style="font-size:0.85rem;color:#888;display:block;margin-bottom:4px">件名（省略可）</label>
-        <input id="mailSubject" type="text" placeholder="件名..." style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:0.95rem;box-sizing:border-box">
+        <input id="mailSubject" type="text" placeholder="件名..." style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:1rem;box-sizing:border-box">
       </div>
       <div style="margin-bottom:16px">
         <label style="font-size:0.85rem;color:#888;display:block;margin-bottom:4px">本文</label>
-        <textarea id="mailBody" rows="5" placeholder="メールの内容..." style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:0.95rem;box-sizing:border-box;resize:vertical"></textarea>
+        <textarea id="mailBody" rows="9" placeholder="メールの内容..." oninput="updateMailSend()" style="width:100%;min-height:9em;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:1rem;line-height:1.6;box-sizing:border-box;resize:vertical"></textarea>
       </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="closeMailModal()" style="padding:8px 18px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;font-size:0.9rem">キャンセル</button>
-        <button id="mailSendBtn" onclick="sendMail()" style="padding:8px 18px;border:none;border-radius:8px;background:#e57373;color:#fff;cursor:pointer;font-size:0.9rem;font-weight:bold">送信</button>
+        <button onclick="closeMailModal()" style="min-height:44px;padding:8px 18px;border:1px solid #ddd;border-radius:8px;background:#fff;cursor:pointer;font-size:0.9rem">キャンセル</button>
+        <button id="mailSendBtn" onclick="sendMail()" disabled style="min-height:44px;padding:8px 22px;border:none;border-radius:8px;background:#e57373;color:#fff;cursor:pointer;font-size:0.95rem;font-weight:bold">送信</button>
       </div>
       <div id="mailResult" style="margin-top:10px;font-size:0.85rem;color:#888"></div>
     </div>
@@ -9044,7 +9057,8 @@ HTML = """<!DOCTYPE html>
       const fn = m.filename.replace(/'/g,"\\'");
       // 差出人のぷちの色を背景に(2026-10-16 ありさん)
       // 色は、見られる子に入っていない子の手紙でも、その子の色(みんなの一覧から)
-      const sc = ((window._allChars || characters).find(c => c.id === m.sender_id) || {}).color;
+      // 人(世話人)からの手紙は、その人の色(m.sender_color = その人のトップバーの色)。自分から自分への手紙も、自分の色になる
+      const sc = ((window._allChars || characters).find(c => c.id === m.sender_id) || {}).color || m.sender_color;
       const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
       const senderStyle = sc ? `color:${readableText(sc)}` : "";
       return `<div class="mail-item${m.read ? "" : " is-unread"}" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
@@ -9329,9 +9343,27 @@ HTML = """<!DOCTYPE html>
 
     function openMailCompose() {
       document.getElementById("mailModal").style.display = "flex";
+      // 宛先: 自分と、手紙を送れないことになっている子は出さない
+      const me = (window._meInfo || {}).username;
+      document.querySelectorAll(".mail-to-check").forEach(el => {
+        const ok = el.value !== me && canMailTo(el.value);
+        el.closest("label").style.display = ok ? "flex" : "none";
+        if (!ok) el.checked = false;
+      });
       document.getElementById("mailBody").focus();
       document.getElementById("mailResult").textContent = "";
+      updateMailSend();
     }
+    // 送信は、宛先を選んで、本文を書いたら押せる(空のまま送らないように)
+    function updateMailSend() {
+      const btn = document.getElementById("mailSendBtn");
+      const ready = !!document.getElementById("mailBody").value.trim() && !!document.querySelector(".mail-to-check:checked");
+      btn.disabled = !ready;
+      btn.style.opacity = ready ? "1" : "0.4";
+      btn.style.cursor = ready ? "pointer" : "default";
+      btn.title = ready ? "" : "宛先を選んで、本文を書くと押せます";
+    }
+    document.addEventListener("change", e => { if (e.target.classList && e.target.classList.contains("mail-to-check")) updateMailSend(); });
     function closeMailModal() {
       document.getElementById("mailModal").style.display = "none";
     }
@@ -9363,7 +9395,7 @@ HTML = """<!DOCTYPE html>
       } catch(e) {
         document.getElementById("mailResult").textContent = "通信エラー";
         document.getElementById("mailResult").style.color = "#e57373";
-      } finally { btn.disabled = false; btn.textContent = "送信"; }
+      } finally { btn.textContent = "送信"; updateMailSend(); }   // 送ったあとは本文が空なので、また押せなくなる
     }
     document.getElementById("mailModal").addEventListener("click", e => {
       if (e.target === document.getElementById("mailModal")) closeMailModal();
