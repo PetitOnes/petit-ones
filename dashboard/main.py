@@ -731,6 +731,51 @@ async def api_account_request(body: AccountRequestBody, request: Request):
     return {"ok": True}   # そのユーザー名がいるかどうかは、返事では教えない
 
 
+def _favicon_colors() -> list[str]:
+    """点の色 3 つ: その家のぷちたちの色(並びは一覧の順)。3 人に足りなければ、足りない分は薄い紫"""
+    colors = [c.get("color") for c in list_characters() if re.fullmatch(r"#[0-9a-fA-F]{6}", str(c.get("color") or ""))][:3]
+    return colors + FAVICON_FALLBACK[len(colors):]
+
+
+def _favicon_svg() -> str:
+    a, b, c = _favicon_colors()
+    dot = 'r="8.5" stroke="#3A322D" stroke-opacity="0.22" stroke-width="1.2"'
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="15" fill="#FFFDF8" stroke="#E3D6C2" stroke-width="2"/>'
+            f'<circle cx="14.5" cy="32" {dot} fill="{a}"/><circle cx="32" cy="32" {dot} fill="{b}"/><circle cx="49.5" cy="32" {dot} fill="{c}"/></svg>')
+
+
+def _favicon_png(size: int) -> bytes:
+    """SVG の印を出せないブラウザ(Safari・ホーム画面)のための PNG。同じ絵を PIL で描く"""
+    from PIL import ImageDraw
+    k = 4   # 大きく描いて縮める(ふちをなめらかに)
+    n = size * k
+    img = Image.new("RGBA", (n, n), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    u = n / 64
+    d.rounded_rectangle([2 * u, 2 * u, 62 * u, 62 * u], radius=15 * u, fill="#FFFDF8", outline="#E3D6C2", width=max(1, round(2 * u)))
+    for cx, color in zip((14.5, 32, 49.5), _favicon_colors()):
+        d.ellipse([(cx - 8.5) * u, 23.5 * u, (cx + 8.5) * u, 40.5 * u], fill=color, outline=(58, 50, 45, 70), width=max(1, round(1.2 * u)))
+    buf = io.BytesIO()
+    img.resize((size, size), Image.LANCZOS).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+@app.get("/favicon.svg")
+def favicon_svg():
+    return Response(_favicon_svg(), media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/favicon.ico")
+def favicon_ico():
+    return Response(_favicon_png(64), media_type="image/png", headers={"Cache-Control": "max-age=3600"})
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+def favicon_touch():
+    return Response(_favicon_png(180), media_type="image/png", headers={"Cache-Control": "max-age=3600"})
+
+
 @app.post("/api/auth/logout")
 async def api_logout():
     resp = JSONResponse({"ok": True})
@@ -755,11 +800,16 @@ async def api_auth_me(request: Request):
     return {"authenticated": False, "auth_enabled": True}
 
 
+# タブの印(favicon): 3 つの点。色は、その家のぷちたちの色(家の設定から。コードには色を書かない)
+FAVICON_PATHS = ("/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png")
+FAVICON_FALLBACK = ["#e0d8f0", "#cab8d9", "#9b8ec4"]   # ぷちがまだいない家の色
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     # 認証不要のパス
-    if path in ("/api/auth/login", "/api/auth/logout", "/api/auth/me") or path.startswith("/login") or path.startswith("/public") or path.startswith("/api/public"):
+    if path in FAVICON_PATHS or path in ("/api/auth/login", "/api/auth/logout", "/api/auth/me") or path.startswith("/login") or path.startswith("/public") or path.startswith("/api/public"):
         return await call_next(request)
     if not _auth_enabled():
         return await call_next(request)
