@@ -339,3 +339,37 @@ def test_setting_to_is_noted_on_hand_events():
     assert touch_events[0].detail == {"count": 1, "strokes": 1, "cam_to": "keeper"}
     # 明るさが変わった、のような出来事には付けない
     assert all("cam_to" not in e.detail for e in events if e.type not in ("touch",))
+
+
+def test_restart_is_seen_from_uptime():
+    """体が uptime_s(起動してからの秒数)を返すなら、小さくなったときに再起動を 1 件残す"""
+    d = ExperienceDetector()
+    events = []
+    events += d.process_status(ts(0.0), {"is_sleeping": False, "uptime_s": 5000})
+    events += d.process_status(ts(2.0), {"is_sleeping": False, "uptime_s": 5002})
+    after = {"is_sleeping": False, "reset_reason": "sw"}
+    events += d.process_status(ts(40.0), {**after, "uptime_s": 12})
+    events += d.process_status(ts(42.0), {**after, "uptime_s": 14})
+    restarted = [e for e in events if e.type == "restarted"]
+    assert len(restarted) == 1
+    assert restarted[0].detail == {"uptime_s": 12, "reason": "sw"}
+    assert restarted[0].ts == ts(28.0)   # 起動したとき(気づいたとき − 12 秒)
+    # 起きていた体の再起動なので、「起こされた」は出ない
+    assert [e.type for e in events] == ["restarted"]
+
+
+def test_sleeping_body_restart_gives_restart_and_woken_with_a_mark():
+    d = ExperienceDetector()
+    d.process_status(ts(0.0), {"is_sleeping": True, "uptime_s": 900})
+    status = {"is_sleeping": False, "uptime_s": 8, "reset_reason": "panic"}
+    events = d.process_status(ts(30.0), status)
+    assert [e.type for e in events] == ["restarted", "woken"]
+    # uptime_s は、再起動を見分けられる体、という印
+    assert events[1].detail == {"source": "unknown", "uptime_s": 8}
+
+
+def test_body_without_uptime_is_unchanged():
+    d = ExperienceDetector()
+    d.process_status(ts(0.0), {"is_sleeping": True})
+    events = d.process_status(ts(2.0), {"is_sleeping": False})
+    assert [(e.type, e.detail) for e in events] == [("woken", {"source": "unknown"})]

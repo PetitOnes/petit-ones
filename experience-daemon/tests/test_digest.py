@@ -167,3 +167,23 @@ def test_setting_is_added_without_saying_whose_hand(tmp_path, monkeypatch):
     assert "くらい運ばれた（設定は other）" in text   # 名前の設定が無い ID は、そのまま
     assert "タッチされた（2回）" in text and "タッチされた（2回）（" not in text
     assert "に撫でられた" not in text
+
+
+def test_restart_is_told_with_the_reason(tmp_path, monkeypatch):
+    monkeypatch.setattr(ed, "DATA_DIR", tmp_path)
+    character = "testchar"
+    base = datetime.now() - timedelta(minutes=30)
+
+    def at(minute: int) -> str:
+        return (base + timedelta(minutes=minute)).isoformat(timespec="seconds")
+
+    _write_events(_today_path(tmp_path, character), [
+        {"ts": at(1), "type": "restarted", "detail": {"uptime_s": 9, "reason": "sw"}},
+        {"ts": at(2), "type": "restarted", "detail": {"uptime_s": 9, "reason": "panic"}},
+        {"ts": at(3), "type": "restarted", "detail": {"uptime_s": 9}},
+    ])
+    lines, _now = ed.build_digest(character)
+    text = "\n".join(lines)
+    assert "体が再起動した（書き込みか、命令で）" in text
+    assert "体が再起動した（体の不具合で、ひとりでに）" in text
+    assert any(line.endswith("体が再起動した") for line in lines)

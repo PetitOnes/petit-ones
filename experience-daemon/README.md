@@ -55,6 +55,7 @@ experience_state.json       # {"state": "awake|asleep|offline", "since": "..."}
 | `touch` | `/sensors` の `last_touch`(古いファームでは `lastTouchEventTime`)の変化を検知。30秒以内の連続タッチは1件に集約。体が `tap_count` / `stroke_count`(起動してからの通算)も返すなら、detail に `taps` / `strokes` を足す(撫でたのか、短く触ったのか) |
 | `offline_gap` | ポーリング失敗が15秒以上続き復帰した時に1件（開始・終了・分数） |
 | `sleep` / `woken` | `/status`の`is_sleeping`遷移。true→falseの`woken`は`source:"unknown"`（出典特定はPhase 2） |
+| `restarted` | `/status` の `uptime_s`(起動してからの秒数)が前より小さくなったら 1 件。時刻は起動したとき。`reason`(`reset_reason`: poweron / sw / panic / wdt / brownout など)を detail に。返さない体では出ない |
 | `battery_low` | 電池が20%/10%を下回った時に各1回（+5%回復で再アーム） |
 
 体が `/sensors` で `cam_to`(体の設定ページの「CAM TO」= 世話人の ID)を返すなら、`touch` / `picked_up` / `put_down` の detail に同じ名前で残す。

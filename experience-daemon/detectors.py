@@ -23,7 +23,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ============================================================================
 # 閾値定数（根拠つき）
@@ -173,6 +173,7 @@ class _BatteryState:
 @dataclass
 class _SleepState:
     last_is_sleeping: bool | None = None
+    last_uptime: float | None = None  # 体が起動してからの秒数(返す体だけ)。小さくなったら再起動
 
 
 class ExperienceDetector:
@@ -485,19 +486,37 @@ class ExperienceDetector:
     # ------------------------------------------------------------------
 
     def process_status(self, ts: datetime, status: dict) -> list[Event]:
-        if "is_sleeping" not in status:
-            return []
-        is_sleeping = bool(status["is_sleeping"])
         s = self._sleep
+        events: list[Event] = []
+
+        # 体の再起動: /status の uptime_s(起動してからの秒数)が前より小さくなっていたら、
+        # 再起動した。
+        # 時刻は、起動したとき(いま − uptime_s)。返さない体では見ない(2026-11-14)
+        uptime = status.get("uptime_s")
+        has_uptime = isinstance(uptime, (int, float)) and not isinstance(uptime, bool)
+        if has_uptime:
+            if s.last_uptime is not None and uptime < s.last_uptime:
+                detail: dict = {"uptime_s": int(uptime)}
+                if isinstance(status.get("reset_reason"), str) and status["reset_reason"]:
+                    detail["reason"] = status["reset_reason"]
+                booted = ts - timedelta(seconds=float(uptime))
+                events.append(Event(ts=booted, type="restarted", detail=detail))
+            s.last_uptime = float(uptime)
+
+        if "is_sleeping" not in status:
+            return events
+        is_sleeping = bool(status["is_sleeping"])
 
         if s.last_is_sleeping is None:
             s.last_is_sleeping = is_sleeping
-            return []
+            return events
 
-        events: list[Event] = []
         if is_sleeping and not s.last_is_sleeping:
             events.append(Event(ts=ts, type="sleep", detail={}))
         elif not is_sleeping and s.last_is_sleeping:
-            events.append(Event(ts=ts, type="woken", detail={"source": "unknown"}))
+            detail = {"source": "unknown"}
+            if has_uptime:  # 再起動を自分で見分けられる体、という印(読む側が、推測をしなくて済む)
+                detail["uptime_s"] = int(uptime)
+            events.append(Event(ts=ts, type="woken", detail=detail))
         s.last_is_sleeping = is_sleeping
         return events

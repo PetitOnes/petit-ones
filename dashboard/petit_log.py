@@ -42,9 +42,11 @@ WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻�
 RESTART_NEAR_S = 5        # つながらなかった時間の終わりから、これだけのうちに起きていたら、体の入れ直し
 BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
 BODY_CONTACT = {"picked_up", "put_down", "touch"}
-BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた"}
+BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた",
+              "restarted": "体が入れ直された", "restarted_self": "体がひとりでに立ち上がり直した"}
 WOKE_ITSELF = "自分で起きた"
 RESTARTED = "体が入れ直された"
+RESTART_SELF_REASONS = {"panic", "wdt", "brownout"}   # 体の不具合・固まった・電圧。人が入れ直したのではない
 # ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順
 ALONE_DID = [
     ("wake", "起きて", "起きた"),
@@ -372,14 +374,23 @@ class _Index:
         """
         events: list[tuple[datetime, str]] = []
         back_online: list[datetime] = []   # つながらなかった時間の終わり(日をまたぐものは前の日の記録にある)
+        seen_restart: list[datetime] = []  # 体が知らせた再起動に、記録する側が気づいた時刻
+        knows_restart: set[datetime] = set()   # 再起動を自分で見分けられる体の、目覚めの時刻
         for ev in self._experience(day - timedelta(days=1)) + self._experience(day):
             if ev.get("type") == "offline_gap" and isinstance(ev.get("detail"), dict):
                 end = _local(ev["detail"].get("end", ""))
                 if end is not None:
                     back_online.append(end)
             ts = _local(ev.get("ts", ""))
-            if ts is not None and ts.date() == day and ev.get("type") in BODY_WORDS:
-                events.append((ts, ev["type"]))
+            kind, detail = ev.get("type"), ev.get("detail") if isinstance(ev.get("detail"), dict) else {}
+            if kind == "restarted" and ts is not None:
+                # 体が自分で知らせた再起動(起動からの秒数を返す体)。わけが不具合なら「ひとりでに」
+                kind = "restarted_self" if detail.get("reason") in RESTART_SELF_REASONS else "restarted"
+                seen_restart.append(ts + timedelta(seconds=float(detail.get("uptime_s") or 0)))   # 気づいたとき
+            elif kind == "woken" and ts is not None and "uptime_s" in detail:
+                knows_restart.add(ts)   # 再起動を自分で見分けられる体の目覚め。推測はしない
+            if ts is not None and ts.date() == day and kind in BODY_WORDS:
+                events.append((ts, kind))
         events.sort()
 
         # 触れ合い(持ち上げ・置く・触る)が詰まって続いた時間
@@ -410,8 +421,10 @@ class _Index:
                 continue
             word = BODY_WORDS[kind]
             if kind == "woken":
-                if any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):
-                    word = RESTARTED
+                if any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in seen_restart):
+                    continue   # 再起動して起きた。「体が入れ直された」の行がもうある
+                if ts not in knows_restart and any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):
+                    word = RESTARTED   # 起動からの秒数を返さない体では、つながらなかった直後の目覚めを再起動と見る(推測)
                 elif self._woke_itself(ts):
                     word = WOKE_ITSELF
                 else:
