@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>おかね</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* おかね(API 代)。ほかのページと同じ部品で。数字は、今日・今月・残り の 3 つを上に、あとは内訳(だれが・何に・どの日に) */
+    .c-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+    .c-tile { padding: 12px 14px; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); }
+    .c-tile .k { font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .c-tile .v { margin: 2px 0; font-family: var(--ui-font-head); font-size: 1.5rem; font-weight: 700; color: var(--ui-text); font-variant-numeric: tabular-nums; }
+    .c-tile .s { font-size: 0.72rem; color: var(--ui-text-mute); line-height: 1.5; }
+    @media (max-width: 520px) { .c-tiles { grid-template-columns: 1fr 1fr; } .c-tile.is-wide { grid-column: 1 / -1; } }
+    .c-track { height: 14px; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; overflow: hidden; }
+    .c-fill { height: 100%; border-radius: 999px 4px 4px 999px; }
+    .c-note { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); font-variant-numeric: tabular-nums; }
+    .c-state { font-weight: 700; }
+    /* 内訳の 1 行: 名前 | 棒 | 金額 */
+    .c-row { display: grid; grid-template-columns: 7.5em 1fr 4.2em; align-items: center; gap: 10px; padding: 5px 0; font-size: 0.9rem; }
+    .c-row .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text); }
+    .c-row .n.is-today { font-weight: 700; color: var(--ui-accent-text); }
+    .c-row .m { text-align: right; color: var(--ui-text); font-variant-numeric: tabular-nums; }
+    .c-bar-bg { height: 10px; background: var(--ui-surface-soft); border-radius: 999px; overflow: hidden; }
+    .c-bar { height: 100%; min-width: 2px; border-radius: 999px 4px 4px 999px; background: var(--ui-accent-text); }
+    .c-days .c-row { grid-template-columns: 5.6em 1fr 4.2em; padding: 3px 0; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>💰 おかね</h1></div>
+    <div id="main"></div>
+    <div class="p-empty" id="empty">読み込み中…</div>
+  </div>
+  <script>
+    const { esc } = PetitPage;
+    // 何に使ったか(記録の source)の言い方。知らない種類は、そのまま出す
+    const SOURCE_LABELS = { autonomous: "ひとりの時間", chat: "会話", sensor: "体のセンサー", camera: "体のカメラ", mic: "体のマイク", diary: "日記", display_phrase: "体のひとこと" };
+    const money = v => "$" + Number(v || 0).toFixed(2);
+    const bar = (share, color) => `<div class="c-bar-bg"><div class="c-bar" style="width:${Math.max(0, Math.min(100, share))}%${color ? `;background:${esc(color)}` : ""}"></div></div>`;
+
+    (async () => {
+      const empty = document.getElementById("empty");
+      let d, chars = [];
+      try {
+        d = await (await fetch("/api/costs")).json();
+        try { chars = await (await fetch("/api/characters/all")).json(); } catch (e) {}
+      } catch (e) { empty.textContent = "読み込めませんでした"; return; }
+      empty.style.display = "none";
+      const used = d.budget > 0 ? d.month_total / d.budget * 100 : 0;
+      // 予算の使い方: 色だけでなく、言葉でも(ゆとり / そろそろ / 上限に近い)
+      const state = used > 85 ? ["上限に近い", "var(--ui-danger)"] : used > 60 ? ["そろそろ", "#B8860B"] : ["ゆとり", "var(--ui-ok, #4c9a6a)"];
+      const perDay = d.budget / 30;
+      const byChar = Object.entries(d.by_character || {}).sort((a, b) => b[1] - a[1]);
+      const bySrc = Object.entries(d.by_source || {}).sort((a, b) => b[1] - a[1]);
+      const srcTotal = bySrc.reduce((a, [, v]) => a + v, 0);
+      const days = Object.keys(d.daily || {}).sort().reverse();   // 新しい日を上に
+      const dayMax = Math.max(0.01, ...days.map(k => d.daily[k].total));
+      const nameOf = id => (chars.find(c => c.id === id) || {}).name || id || "(だれでもない)";
+      const colorOf = id => (chars.find(c => c.id === id) || {}).color || "";
+
+      document.getElementById("main").innerHTML = `
+        <div class="c-tiles">
+          <div class="c-tile"><div class="k">今日</div><div class="v">${money(d.today)}</div><div class="s">目安 ${money(perDay)} / 日</div></div>
+          <div class="c-tile"><div class="k">今月(${esc(d.cycle_start)}〜)</div><div class="v">${money(d.month_total)}</div><div class="s">この日までの目安 ${money(d.ideal)}<br>この 30 日 ${money(d.days30)}</div></div>
+          <div class="c-tile is-wide"><div class="k">残り</div><div class="v">${money(d.remaining)}</div><div class="s">月 ${money(d.budget)}(${esc(String(d.days_remaining))} 日まで)</div></div>
+        </div>
+        <div class="m-card"><span class="a-heading">今月の予算</span>
+          <div class="c-track"><div class="c-fill" style="width:${Math.min(100, used)}%;background:${state[1]}"></div></div>
+          <div class="c-note"><span>使った ${money(d.month_total)}(${used.toFixed(1)}%)<span class="c-state" style="color:${state[1]}"> ・ ${state[0]}</span></span><span>残り ${money(d.remaining)}</span></div>
+        </div>
+        <div class="m-card"><span class="a-heading">だれが(今月)</span>
+          ${byChar.map(([id, v]) => `<div class="c-row"><span class="n">${esc(nameOf(id))}</span>${bar(d.month_total > 0 ? v / d.month_total * 100 : 0, colorOf(id))}<span class="m">${money(v)}</span></div>`).join("") || '<div class="p-empty">まだありません</div>'}
+        </div>
+        <div class="m-card"><span class="a-heading">何に(今月)</span>
+          ${bySrc.map(([k, v]) => `<div class="c-row"><span class="n">${esc(SOURCE_LABELS[k] || k)}</span>${bar(srcTotal > 0 ? v / srcTotal * 100 : 0)}<span class="m">${money(v)}</span></div>`).join("") || '<div class="p-empty">まだありません</div>'}
+        </div>
+        <div class="m-card c-days"><span class="a-heading">どの日に(${esc(d.cycle_start)}〜)</span>
+          ${days.map(k => `<div class="c-row"><span class="n${k === d.today_str ? " is-today" : ""}">${esc(k.slice(5).replace("-", "/"))}${k === d.today_str ? " 今日" : ""}</span>${bar(d.daily[k].total / dayMax * 100)}<span class="m">${money(d.daily[k].total)}</span></div>`).join("") || '<div class="p-empty">まだありません</div>'}
+        </div>`;
+    })();
+  </script>
+</body>
+</html>
