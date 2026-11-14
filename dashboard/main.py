@@ -1168,13 +1168,14 @@ SENSOR_ALLOWED_TOOLS = ",".join([
 ])
 
 
-def build_allowed_tools(settings: dict) -> str:
+def build_allowed_tools(switches: dict) -> str:
+    """会話の道具一覧。switches は body_switches.effective() の {see, speak, sound, hear}(話す は BASE_TOOLS にあり、止めるときは --disallowedTools)"""
     tools = BASE_TOOLS.copy()
-    if settings.get("allow_camera", True):
+    if switches.get("see", True):
         tools += CAMERA_TOOLS
-    if settings.get("allow_sound", True):
+    if switches.get("sound", True):
         tools += SOUND_TOOLS
-    if settings.get("allow_microphone", False):
+    if switches.get("hear", False):
         tools += MIC_TOOLS
     tools += FILE_TOOLS
     return ",".join(tools)
@@ -1292,7 +1293,8 @@ def save_settings(character_id: str, data: dict) -> None:
         cur = {}
     if not isinstance(cur, dict):
         cur = {}
-    cur.update(data)
+    for k, v in data.items():   # body・rest は中の項目ごとに(rest.until を「毎日の時間」の保存で消さない)
+        cur[k] = {**cur[k], **v} if k in ("body", "rest") and isinstance(v, dict) and isinstance(cur.get(k), dict) else v
     with open(p, "w", encoding="utf-8") as f:
         json.dump(cur, f, ensure_ascii=False, indent=2)
 
@@ -1448,25 +1450,19 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     if m5_online is None:
         m5_online = resolved_host is not None
 
-    effective_settings = settings.copy()
+    # からだの使い方(見る・話す・鳴らす・聞く)と からだ おやすみ。自律行動と同じ決まり(scripts/body_switches.py、2026-11-14)
+    _bs = _body()
+    body_eff = _bs.effective(settings)
+    switches = dict(body_eff["switches"])
     if not m5_online:
-        effective_settings["allow_camera"] = False
-        effective_settings["allow_sound"] = False
-        effective_settings["allow_microphone"] = False
-    if allow_sound_override and m5_online:
-        effective_settings["allow_sound"] = True
-
-    if source in _m5_sources:
-        allowed_tools = SENSOR_ALLOWED_TOOLS
-    else:
-        allowed_tools = build_allowed_tools(effective_settings)
-
+        switches = {k: False for k in switches}
+    if allow_sound_override and m5_online and not body_eff["rest"]:   # 体のイベントの返事は効果音を出してよい(おやすみ中は出さない)
+        switches["sound"] = True
+    allowed_tools = SENSOR_ALLOWED_TOOLS if source in _m5_sources else build_allowed_tools(switches)
+    # 止める道具は --disallowedTools で本当に使えなくする(--dangerously-skip-permissions でも効く)
+    disallowed_tools = _bs.disallowed_tools(switches)
     # 制限の各行は自律行動と同じ prompts/autonomous/permission_rules.md
-    restriction_text = _render_prompt.render(
-        "autonomous/permission_rules",
-        {"allow_camera": settings.get("allow_camera", True), "allow_sound": settings.get("allow_sound", True), "allow_mic": settings.get("allow_microphone", False)},
-        data_dir=DATA_DIR, project_dir=PROJECT_DIR,
-    ).strip()
+    restriction_text = _render_prompt.render("autonomous/permission_rules", _bs.template_vars(body_eff), data_dir=DATA_DIR, project_dir=PROJECT_DIR).strip()
     mailbox_dir = DATA_DIR / "mailbox"
     char_data_dir = char_dir(character_id)
     scripts_dir = PROJECT_DIR / "scripts"
@@ -1576,6 +1572,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     stream_path = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
 
     _common_flags = ["--mcp-config", str(mcp_config), "--strict-mcp-config", "--allowedTools", allowed_tools,
+                     *(["--disallowedTools", ",".join(disallowed_tools)] if disallowed_tools else []),
                      "--dangerously-skip-permissions",
                      "--output-format", "stream-json",
                      "--verbose"]
@@ -1668,6 +1665,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             stream_path2 = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
             cmd2 = ["claude", "--model", model_name, "--append-system-prompt", system_prompt,
                     "--mcp-config", str(mcp_config), "--strict-mcp-config", "--allowedTools", allowed_tools,
+                    *(["--disallowedTools", ",".join(disallowed_tools)] if disallowed_tools else []),
                     "--dangerously-skip-permissions",
                     "--output-format", "stream-json",
                     "--verbose"]
@@ -1948,6 +1946,15 @@ def _whereabouts():
         sys.path.insert(0, scripts_dir)
     import whereabouts
     return whereabouts
+
+
+def _body():
+    """からだの使い方(見る・話す・鳴らす・聞く)と からだ おやすみ。決まりは scripts/body_switches.py(自律行動と同じ)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import body_switches
+    return body_switches
 
 
 def _whereabouts_text(character_id: str) -> str:
@@ -4867,6 +4874,46 @@ def api_set_m5_hosts(character_id: str, data: dict):
     return {"ok": True, "m5_hosts": hosts}
 
 
+class RestBody(BaseModel):
+    minutes: int | None = None   # いまから何分 からだ おやすみ(None・0 でやめる)
+
+
+@app.get("/api/switches/rest")
+def api_switches_rest_all_get():
+    """みんなの からだ おやすみ の様子(📍 のメニュー用)"""
+    out = {}
+    for c in list_characters():
+        v = _body().view(get_settings(c["id"]))["rest"]
+        out[c["id"]] = {"name": c.get("name", c["id"]), "on": v["on"], "until": v["until"], "why": v["why"]}
+    return {"chars": out}
+
+
+@app.post("/api/switches/rest")
+def api_switches_rest_all(body: RestBody):
+    """みんな一度に、いまから n 分 からだ おやすみ(0 でやめる)"""
+    try:
+        for c in list_characters():
+            _body().set_rest(c["id"], body.minutes, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return api_switches_rest_all_get()
+
+
+@app.get("/api/{character_id}/switches")
+def api_get_switches(character_id: str):
+    """からだの使い方(ふだん・いま)と からだ おやすみ(設定ページ用)。/api/<id>/body は体そのもの(明るさ・音量)なので別"""
+    return _body().view(get_settings(character_id))
+
+
+@app.post("/api/{character_id}/switches/rest")
+def api_switches_rest(character_id: str, body: RestBody):
+    try:
+        _body().set_rest(character_id, body.minutes, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _body().view(get_settings(character_id))
+
+
 @app.get("/api/{character_id}/settings")
 def api_get_settings(character_id: str):
     return get_settings(character_id)
@@ -7264,8 +7311,10 @@ HTML = """<!DOCTYPE html>
     const ME_NOW_HOURS = [[null, "消すまで"], [1, "1 時間"], [3, "3 時間"], [8, "8 時間"]];   // 何時間そうか(決めたときからの長さ)
     let _meNowHours = null;
     function _hm(iso) { const t = iso ? new Date(iso) : null; return t && !isNaN(t) ? `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}` : ""; }
+    let _restAll = {};   // みんなの からだ おやすみ(/api/switches/rest)
     async function loadMeNow() {
       try { _meNow = await fetch("/api/whereabouts").then(r => r.json()); } catch (e) { return; }
+      try { _restAll = (await fetch("/api/switches/rest").then(r => r.json())).chars || {}; } catch (e) {}
       document.getElementById("meNowText").textContent = _meNow.mine || "";
       document.getElementById("meNowBtn").title = _meNow.mine ? `わたしのいま: ${_meNow.mine}` : "わたしのいま";
       if (document.getElementById("meNowMenu").style.display !== "none") renderMeNow();
@@ -7286,11 +7335,23 @@ HTML = """<!DOCTYPE html>
         (others ? `<div class="others">${others}</div>` : "") +
         // 「ここにいるよ」: ぷちたちに合図を送る(🌱 ようす にあるものと同じ)
         `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button></div>` +
-        `<div class="others" id="meNowHelloMsg"></div>`;
+        `<div class="others" id="meNowHelloMsg"></div>` +
+        // からだ おやすみ(2026-11-14 ありさん): 3 人まとめて、いまから n 分 カメラ・声・効果音を止める。考える・書くはいつも通り
+        `<div class="others" style="margin-top:8px">🌙 からだ おやすみ(カメラ・声・音を止める): ${restWords()}</div>` +
+        `<div class="chips small">${[[30, "30 分"], [60, "1 時間"], [180, "3 時間"]].map(([m, l]) => `<button class="chip" onclick="setRestAll(${m})">${l}</button>`).join("")}` +
+        (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>`;
       const inp = document.getElementById("meNowInput");
       inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
     }
     function pickMeNowHours(h) { _meNowHours = h; renderMeNow(); }
+    function restWords() {
+      const on = Object.values(_restAll).filter(r => r.on);
+      return on.length ? on.map(r => `${r.name} ${r.until} まで`).join(" / ") : "なし";
+    }
+    async function setRestAll(minutes) {
+      try { _restAll = (await fetch("/api/switches/rest", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({minutes})}).then(r => r.json())).chars || {}; } catch (e) { return; }
+      renderMeNow();
+    }
     function toggleMeNow(ev) {
       if (ev) ev.stopPropagation();
       const m = document.getElementById("meNowMenu");

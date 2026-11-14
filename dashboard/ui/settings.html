@@ -121,10 +121,28 @@
           <span style="display:flex;align-items:center;gap:6px"><input type="number" class="a-input s-num" id="maxTurns" min="1" max="200" step="1"><span class="s-sub" id="maxTurnsNote"></span></span></div>
       </div>
       <div class="m-card">
-        <span class="a-heading">体の道具の許可</span>
-        <div class="s-row"><span>📷 カメラ</span><label class="a-toggle"><input type="checkbox" id="allowCamera"><span></span></label></div>
-        <div class="s-row"><span>🔊 音</span><label class="a-toggle"><input type="checkbox" id="allowSound"><span></span></label></div>
-        <div class="s-row"><span>🎤 マイク</span><label class="a-toggle"><input type="checkbox" id="allowMic"><span></span></label></div>
+        <span class="a-heading">からだの使い方</span>
+        <p class="a-hint" style="margin:0 0 4px">ふだん使ってよいもの。会話でも、ひとりの時間でも同じ決まり。</p>
+        <div class="s-row"><span>👀 見る（カメラ）</span><label class="a-toggle"><input type="checkbox" id="bodySee"><span></span></label></div>
+        <div class="s-row"><span>🗣 話す（声）</span><label class="a-toggle"><input type="checkbox" id="bodySpeak"><span></span></label></div>
+        <div class="s-row"><span>🔔 鳴らす（効果音）</span><label class="a-toggle"><input type="checkbox" id="bodySound"><span></span></label></div>
+        <div class="s-row"><span>👂 聞く（マイク）</span><label class="a-toggle"><input type="checkbox" id="bodyHear"><span></span></label></div>
+      </div>
+      <div class="m-card">
+        <span class="a-heading">🌙 からだ おやすみ</span>
+        <p class="a-hint" style="margin:0 0 6px">見る・話す・鳴らす を止める（聞く はそのまま）。考える・書く・調べる・手紙はいつも通り。</p>
+        <div class="s-count" id="restNow"></div>
+        <div class="m-pills" style="flex-wrap:wrap;margin:8px 0 4px">
+          <button class="a-pill" onclick="restNow(30)">いまから 30 分</button>
+          <button class="a-pill" onclick="restNow(60)">1 時間</button>
+          <button class="a-pill" onclick="restNow(180)">3 時間</button>
+          <button class="a-pill" id="restOffBtn" onclick="restNow(0)">やめる</button>
+        </div>
+        <div class="s-row"><span>毎日この時間</span><label class="a-toggle"><input type="checkbox" id="restHoursOn" onchange="renderRestHours()"><span></span></label></div>
+        <div class="s-hour" id="restHours" style="display:none;margin-top:6px">
+          <select id="restSh"></select>:<select id="restSm"></select><span>〜</span><select id="restEh"></select>:<select id="restEm"></select>
+        </div>
+        <p class="a-hint" style="margin:8px 0 0">「いまから」のボタンはすぐ効く。毎日の時間は下の「保存」で決まる。日をまたいでよい（23:00〜7:00）。</p>
       </div>
       <details class="m-card">
         <summary class="a-heading">くわしい設定</summary>
@@ -271,6 +289,28 @@
       w.style.display = edges.length ? "" : "none";
       w.textContent = edges.length ? `注意: ${edges.join("、")} の終わりは、この子の cron の分(${mins.map(m => `${m} 分`).join("・")})とちょうど同じなので、その回は入らない。終わりを 10 分あとにすると入る。` : "";
     }
+    // ---- からだの使い方・からだ おやすみ(/api/<id>/switches)。決まりは scripts/body_switches.py ----
+    const $ = id => document.getElementById(id);
+    function renderBody(v) {
+      if (!v) { $("restNow").textContent = "読めなかった"; return; }
+      for (const [k, el] of [["see", "bodySee"], ["speak", "bodySpeak"], ["sound", "bodySound"], ["hear", "bodyHear"]]) $(el).checked = !!v.base[k];
+      $("restNow").innerHTML = v.rest.on ? `いま: <b>おやすみ中</b>（${esc(v.rest.until)} まで。${esc(v.rest.why)}）` : "いま: ふだん通り";
+      $("restOffBtn").style.display = v.rest.on ? "" : "none";
+      const h = v.rest.hours && v.rest.hours[0];
+      $("restHoursOn").checked = !!h;
+      const [sh, sm, eh, em] = h || [23, 0, 7, 0];
+      $("restSh").innerHTML = hourOpts(sh, 23); $("restSm").innerHTML = minOpts(sm); $("restEh").innerHTML = hourOpts(eh, 24); $("restEm").innerHTML = minOpts(em);
+      renderRestHours();
+    }
+    function renderRestHours() { $("restHours").style.display = $("restHoursOn").checked ? "" : "none"; }
+    async function restNow(minutes) {
+      try {
+        const r = await fetch(`/api/${active}/switches/rest`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({minutes})});
+        if (!r.ok) { toast("できなかった"); return; }
+        renderBody(await r.json());
+        toast(minutes ? `${minutes >= 60 ? minutes / 60 + " 時間" : minutes + " 分"} おやすみ` : "おやすみをやめた");
+      } catch (e) { toast("できなかった"); }
+    }
     function hostRow(v) { return `<div class="s-host"><input type="text" class="a-input host" value="${esc(v)}" placeholder="IP か ホスト名"><button class="a-icon-btn" title="消す" onclick="this.parentElement.remove()">✕</button></div>`; }
     function addHost(v) { document.getElementById("hosts").insertAdjacentHTML("beforeend", hostRow(v)); const ins = document.querySelectorAll("#hosts .host"); ins[ins.length - 1].focus(); }
     async function loadChar(id) {
@@ -288,9 +328,8 @@
       document.getElementById("maxTurns").value = s.max_turns ?? 20;
       document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
-      document.getElementById("allowCamera").checked = s.allow_camera ?? true;
-      document.getElementById("allowSound").checked = s.allow_sound ?? true;
-      document.getElementById("allowMic").checked = s.allow_microphone ?? false;
+      const bv = await fetch(`/api/${id}/switches`).then(r => r.json()).catch(() => null);
+      renderBody(bv);
       document.getElementById("hosts").innerHTML = (m5.m5_hosts || []).map(hostRow).join("");
       renderDayType();
     }
@@ -300,9 +339,8 @@
         active_hours: schedule,
         day_type_override: document.getElementById("dayTypeOverride").value || null,
         autonomous_skip: parseInt(document.getElementById("autonomousSkip").value) || 0,
-        allow_camera: document.getElementById("allowCamera").checked,
-        allow_sound: document.getElementById("allowSound").checked,
-        allow_microphone: document.getElementById("allowMic").checked,
+        body: {see: $("bodySee").checked, speak: $("bodySpeak").checked, sound: $("bodySound").checked, hear: $("bodyHear").checked},
+        rest: {hours: $("restHoursOn").checked ? [[+$("restSh").value, +$("restSm").value, +$("restEh").value, +$("restEm").value]] : []},
         max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
       };
       const hosts = [...document.querySelectorAll("#hosts .host")].map(el => el.value.trim()).filter(Boolean);

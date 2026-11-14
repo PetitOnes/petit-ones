@@ -122,7 +122,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの道具の列「⚙️ 設定」（はじめは「ほか」の中。`/settings`、中身は `dashboard/ui/settings.html`）の「🏠 家」から変えられる。
 
-道具の列「⚙️ 設定」は 1 ページ（`/settings`。アルバムと同じく会話の場所に出る）。上の粒で 家 / 各ぷち を切り替える（1 人を選んでいればその子、「みんな」「だれか」なら家が最初に出る）。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
+道具の列「⚙️ 設定」は 1 ページ（`/settings`。アルバムと同じく会話の場所に出る）。上の粒で 家 / 各ぷち を切り替える（1 人を選んでいればその子、「みんな」「だれか」なら家が最初に出る）。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・からだの使い方 `body`・からだ おやすみ `rest`）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
 
 | 項目 | 中身 |
 |---|---|
@@ -142,8 +142,9 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `pages.css` / `page.js` | `ui/` のページの枠組みと共通の下ごしらえ |
 | `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
 | `md.js` | markdown を HTML にしたあとの後始末 |
+| （からだ） | からだの使い方 = 見る(カメラ)・話す(声)・鳴らす(効果音)・聞く(マイク)。`settings.json` の `body`（無ければ古い `allow_camera` など）。からだ おやすみ = 見る・話す・鳴らす を止める（`rest.until` = 📍 や設定ページの「いまから n 分」、`rest.hours` = 毎日この時間）。決まりは `scripts/body_switches.py` 1 か所で、会話・体のイベント・自律行動とも同じ。止める道具は `--disallowedTools` で本当に使えなくし、文でも伝える（`prompts/autonomous/permission_rules.md`）。📍 の「からだ おやすみ」は 3 人まとめて（`/api/switches/rest`） |
 | （アクティブタイム） | 始まり ≦ いま < 終わり。終わりの時刻そのものは入らない（`autonomous-action.sh` の `check_entry`）。3 人の cron は 0・5・10 分とずれているので、終わりは cron の分より後ろ（:20 など）に。設定ページが「1 日に動く予定」を数え、終わりが cron の分と重なっていれば注意を出す |
-| `settings.html` | 設定（`/settings`）。家（トップバーの色・送信のしかた・道具の列 = `/api/ui`）と、ぷちごと（アクティブタイム・自律行動・体の道具の許可・体のアドレス = `/api/<id>/settings` `/api/<id>/config/m5_hosts` `/api/<id>/cron`）。家の設定を変えたら親ページに `petit-ui-changed` を送る |
+| `settings.html` | 設定（`/settings`）。家（トップバーの色・送信のしかた・道具の列 = `/api/ui`）と、ぷちごと（アクティブタイム・自律行動・からだの使い方・からだ おやすみ・体のアドレス = `/api/<id>/settings` `/api/<id>/switches` `/api/<id>/switches/rest` `/api/<id>/config/m5_hosts` `/api/<id>/cron`）。家の設定を変えたら親ページに `petit-ui-changed` を送る |
 | `petitlog.html` / `diary.html` | ぷちログ（1 日のタイムライン）と日記の一覧。データの組み立ては `dashboard/petit_log.py`（読むだけ） |
 | 右上の 📍 | いま どこ。わたしのいま（自室・お外・会社 など）を決めると `PETIT_DATA_DIR/state/whereabouts.json` に、ログインの人ごとの一言と、決めた時刻(since)・いつまでか(until。1・3・8 時間か「消すまで」)が入る。過ぎたら無いものとして扱う。ぷちの体の居場所（家 / お外）は、体験デーモンが `characters/<id>/state/experience_state.json` に書く体の Wi-Fi（何番目か）から決める。どの番号がどこかは `PETIT_DATA_DIR/config/places.json`（無ければ 1・2 = 家、3 = お外）。計算と保存は `scripts/whereabouts.py`。会話の system prompt と自律行動の冒頭に「ありさんのいま: 会社(9:02 から)」「あなたの体のいま: 家(家の Wi-Fi)」と伝わる |
 | `anniversaries.html` | 記念日（`/anniversaries`）。家の設定 `PETIT_DATA_DIR/config/anniversaries.json` に、名前・最初の日・くり返し（毎年・毎月・その日だけ）・ひとことを足す。計算と保存は `scripts/anniversaries.py`。当日は、ぷちログのその日のいちばん上に出る。ぷちたちには、前の日の自律行動で 1 回だけ「あしたは○○の日」と伝わる（`anniversaries.py notice`。前の日に動かなかった子には当日に）。ぷちも `anniversaries.py add` で足せる |
