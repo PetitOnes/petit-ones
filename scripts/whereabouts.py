@@ -121,10 +121,30 @@ def set_status(user: str, text: str, base: Path | None = None, now: datetime | N
     return d
 
 
-def choices(d: dict) -> list[str]:
-    """ボタンに並べる候補: はじめの候補 + 使った言葉(重複なし)"""
-    out = list(PRESETS)
-    out += [r for r in d.get("recent", []) if r not in out]
+PRESET_MAX = 3       # 自分で決める候補の数
+PRESET_MAX_LEN = 5   # 候補 1 つの長さ(「リビング」が入る長さ)
+
+
+def clean_presets(raw: object) -> list[str]:
+    """自分で決めた候補を、使える形にする: 前後の空白を取り、PRESET_MAX_LEN 字まで、重なりを除いて PRESET_MAX 個まで"""
+    out: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        word = " ".join(str(item or "").split())[:PRESET_MAX_LEN]
+        if word and word not in out:
+            out.append(word)
+    return out[:PRESET_MAX]
+
+
+def choices(d: dict, presets: list[str] | None = None) -> list[str]:
+    """ボタンに並べる候補: はじめの候補 + 使った言葉(重複なし)。
+
+    presets: その人が自分で決めた候補(無ければ PRESETS)。自分で決めたときは、外した「はじめの候補」を
+    使った言葉の側からも出さない(外したのに、前に使ったからといって残らないように)
+    """
+    mine = clean_presets(presets) or list(PRESETS)
+    dropped = [w for w in PRESETS if w not in mine]
+    out = list(mine)
+    out += [r for r in d.get("recent", []) if r not in out and r not in dropped]
     return out
 
 
