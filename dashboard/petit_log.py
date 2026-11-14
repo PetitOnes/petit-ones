@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date as Date
@@ -49,26 +50,54 @@ BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", 
 WOKE_ITSELF = "自分で起きた"
 RESTARTED = "体が入れ直された"
 RESTART_SELF_REASONS = {"panic", "wdt", "brownout"}   # 体の不具合・固まった・電圧。人が入れ直したのではない
-# ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順
+# ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順。
+# その回に使った道具から決まった言い方で組む(2026-11-14 ありさん: 「様子を見た」だけでなく、何をしたかが分かるように)
 ALONE_DID = [
     ("wake", "起きて", "起きた"),
+    ("mail_check", "手紙が来ていないか見て", "手紙が来ていないか見た"),
     ("mail_read", "手紙を読んで", "手紙を読んだ"),
-    ("look", "まわりを見て", "まわりを見た"),
+    ("sense", "まわりを感じて", "まわりを感じた"),          # 体のセンサー(明るさ・傾き・電池など)
+    ("look", "まわりを見て", "まわりを見た"),              # カメラ
+    ("desire", "気持ちを確かめて", "気持ちを確かめた"),      # 欲求
+    ("recall", "思い出して", "思い出した"),                # 記憶をさがす・たどる
+    ("reread", "自分のファイルを読み返して", "自分のファイルを読み返した"),
+    ("note_read", "ノートを読み返して", "ノートを読み返した"),
+    ("textbook", "教科書を読んで", "教科書を読んだ"),
+    ("album", "アルバムを見て", "アルバムを見た"),
+    ("voice_listen", "ボイスメモを聞いて", "ボイスメモを聞いた"),
     ("web", "調べものをして", "調べものをした"),
     ("speak", "話して", "話した"),
+    ("sound", "音を鳴らして", "音を鳴らした"),
+    ("photo", "写真を残して", "写真を残した"),
+    ("voice_memo", "ボイスメモを残して", "ボイスメモを残した"),
     ("memory", "記憶に残して", "記憶に残した"),
     ("note", "ノートを書いて", "ノートを書いた"),
+    ("edit_own", "自分のファイルを直して", "自分のファイルを直した"),
     ("mail", "手紙を書いて", "手紙を書いた"),
     ("sleep", "眠って", "眠った"),
 ]
 ALONE_NOTHING = ("様子を見て", "様子を見た")   # どれにも当たらない回、眠っただけの回の頭
+# これだけの回(確かめた・思い出した・記憶に残した)は、日記の材料にしない(記憶は別に渡る)
+ALONE_QUIET_KEYS = {"mail_check", "sense", "desire", "recall", "reread", "note_read", "memory"}
+_RECALL_TOOLS = ("recall", "recall_divergent", "recall_with_associations", "recall_by_camera_position", "search_memories",
+                 "list_recent_memories", "get_working_memory", "refresh_working_memory", "search_episodes",
+                 "get_episode_memories", "get_memory_chain", "get_causal_chain")
 _MCP_DID = {
     ("m5", "wake"): "wake", ("m5", "sleep"): "sleep", ("m5", "speak"): "speak",
     ("m5", "take_snapshot"): "look", ("m5", "look"): "look",
+    ("m5", "get_sensor_data"): "sense", ("m5-module", "get_env"): "sense", ("m5-module", "get_gps"): "sense",
+    ("m5", "play_sound"): "sound", ("m5", "play_icon"): "sound",
+    ("m5", "save_to_album"): "photo", ("m5", "view_album_photo"): "album", ("m5", "list_album"): "album",
+    ("m5", "save_tts_memo"): "voice_memo", ("m5", "listen_voice_memo"): "voice_listen",
     ("memory", "remember"): "memory", ("memory", "create_episode"): "memory",
     ("memory", "save_visual_memory"): "memory", ("memory", "save_audio_memory"): "memory",
+    **{("memory", t): "recall" for t in _RECALL_TOOLS},
+    ("desire", "get_desires"): "desire",
     ("notes", "write_note"): "note", ("notes", "append_note"): "note",
+    ("notes", "read_note"): "note_read", ("notes", "list_notes"): "note_read",
+    ("textbook", "textbook_read"): "textbook", ("textbook", "textbook_search"): "textbook", ("textbook", "textbook_index"): "textbook",
 }
+_READ_COMMANDS = re.compile(r"(?:^|[\s;&|(])(?:cat|head|tail|grep|rg|less|sed -n)\s")   # Bash で読むときの頭
 SNS_MAIL_TOOL = "mcp__petit-sns__mail_send"   # ぷちSNS(家の外のぷちとの手紙)。家のメールボックスには残らない
 SNS_MAIL_VIA = "ぷちSNS"
 # ぷちSNS でしたこと(道具の名前 → ぷちログの言い方)。中身(投稿・返事の文)は写さない。見ただけ・反応しただけは出さない
@@ -159,6 +188,13 @@ def _called_wake(log: Path, ts: datetime, char_id: str) -> bool:
     return False
 
 
+def _own_file(path: str, char_id: str) -> str | None:
+    """その子の家の中のファイルか。"notes" = ノート、"own" = それ以外の自分のファイル(SOUL・ルーチン・TODO など)、None = よそ"""
+    if f"/characters/{char_id}/" not in path:
+        return None
+    return "notes" if "/notes/" in path else "own"
+
+
 def _did(name: str, args: dict, char_id: str) -> str | None:
     """道具の呼び出し 1 回 → ALONE_DID の印。一言にしないものは None"""
     if name.startswith("mcp__"):
@@ -178,19 +214,26 @@ def _did(name: str, args: dict, char_id: str) -> str | None:
             return "mail"
         if "mark_mail_read.py" in cmd:
             return "mail_read"
+        if "list_unread_mail.py" in cmd:
+            return "mail_check"
         if "reader.py" in cmd:
             return "web"
-    if name in ("Write", "Edit") and "/notes/" in str(args.get("file_path", "")):
-        return "note"
+        if _READ_COMMANDS.search(cmd):   # cat・grep などで自分のファイルを読んだ
+            return {"notes": "note_read", "own": "reread"}.get(_own_file(cmd, char_id) or "")
+        return None
+    if name in ("Write", "Edit"):
+        return {"notes": "note", "own": "edit_own"}.get(_own_file(str(args.get("file_path", "")), char_id) or "")
+    if name in ("Read", "Grep", "Glob"):
+        return {"notes": "note_read", "own": "reread"}.get(_own_file(str(args.get("file_path") or args.get("path") or ""), char_id) or "")
     return None
 
 
-def _alone_words(log: Path, char_id: str) -> str:
-    """ひとりの時間 1 回に添える一言。その回に使った道具から、決まった言い方で組む(その子の言葉は写さない)"""
+def _alone_did(log: Path, char_id: str) -> set[str]:
+    """ひとりの時間 1 回で使った道具の印(ALONE_DID の印の集まり)"""
     try:
         lines = log.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return ""
+        return set()
     did: set[str] = set()
     for line in lines:
         if '"tool_use"' not in line:
@@ -207,6 +250,11 @@ def _alone_words(log: Path, char_id: str) -> str:
                 key = _did(str(c.get("name", "")), args if isinstance(args, dict) else {}, char_id)
                 if key:
                     did.add(key)
+    return did
+
+
+def _alone_words(did: set[str]) -> str:
+    """ひとりの時間 1 回に添える一言。その回に使った道具から、決まった言い方で組む(その子の言葉は写さない)"""
     words = [(te, ta) for key, te, ta in ALONE_DID if key in did]
     if not words or did == {"sleep"}:
         words.insert(0, ALONE_NOTHING)
@@ -622,7 +670,9 @@ class _Index:
             elif "_end" in it:   # ひとりの時間、続いた体の出来事
                 row["end"] = it["_end"].strftime("%H:%M")
                 if it["kind"] == "alone":
-                    row["text"] = _alone_words(it["_file"], self.src.char_id)
+                    did = _alone_did(it["_file"], self.src.char_id)
+                    row["text"] = _alone_words(did)
+                    row["quiet"] = did <= ALONE_QUIET_KEYS   # 確かめた・思い出した・記憶に残した だけの回
             if it["kind"] not in ("alone", "anniv") and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
             out.append(row)
@@ -645,7 +695,6 @@ class _Index:
 
 
 DIARY_LINES_MAX = 60      # 日記の材料にする出来事の行数の上限
-_ALONE_QUIET = {ALONE_NOTHING[1], ALONE_DID[5][2]}   # 「様子を見た」「記憶に残した」だけの回は、日記の材料にしない(記憶は別に渡る)
 
 
 def day_lines(src: Sources, day: Date) -> list[str]:
@@ -668,7 +717,7 @@ def day_lines(src: Sources, day: Date) -> list[str]:
         elif kind == "body":
             out.append(f"{when} {r['text']}" + (f"(× {r['count']})" if r.get("count", 1) > 1 else ""))
         elif kind == "alone":
-            if r.get("text") and r["text"] not in _ALONE_QUIET:
+            if r.get("text") and not r.get("quiet"):   # 様子を見た・確かめた・記憶に残した だけの回は入れない(記憶は別に渡る)
                 out.append(f"{when} ひとりの時間: {r['text']}")
         elif kind == "mail":
             out.append(f"{when} {r['to']}へ手紙を書いた")
