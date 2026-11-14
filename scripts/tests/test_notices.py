@@ -60,3 +60,19 @@ def test_sky_and_phone_respect_kinds(tmp_path):
     assert pp.change_line(tmp_path, "puchiru", mark=True, now=t) == "ありさんのスマホ: あり部屋 → 寝室 に動いた"
     assert json.loads((tmp_path / "characters" / "puchiko" / "state" / "phone_told.json").read_text())["arisan"] == "寝室"
     assert isinstance(date.today(), date)
+
+
+def test_set_kind_touches_only_notices(tmp_path):
+    p = tmp_path / "characters" / "puchiko" / "config" / "settings.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({"max_turns": 7, "notices": {"sky": False}}), encoding="utf-8")
+    now = notices.set_kind("puchiko", "pressure", False, tmp_path)
+    assert now["pressure"] is False and now["sky"] is False and now["temperature"] is True
+    d = json.loads(p.read_text(encoding="utf-8"))
+    assert d["max_turns"] == 7 and d["notices"] == {"sky": False, "pressure": False}
+    notices.set_kind("puchiko", "sky", True, tmp_path)
+    assert notices.wants("puchiko", "sky", tmp_path) is True
+    try:
+        notices.set_kind("puchiko", "moon", True, tmp_path); raise AssertionError("知らない種類が通った")
+    except ValueError:
+        pass
