@@ -3199,38 +3199,20 @@ def notes_page():
     return HTMLResponse(NOTES_HTML)
 
 
-# ---- 回覧板(チーム「ぷち」からぷちたちへの報告。PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>*.md) ----
+# ---- 回覧板(ぷちたちへの知らせ。PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>_<hhmm>_<話題>.md) ----
 KAIRANBAN_DIR = Path(os.environ.get("PETIT_KAIRANBAN_DIR", str(DATA_DIR / "kairanban")))
 
 
-def _kairanban_title(text: str, fallback: str) -> str:
-    """最初の見出し(# / ##)。無ければファイル名の _ を空白に"""
-    for line in text.splitlines():
-        if line.startswith("#"):
-            return line.lstrip("#").strip()
-    return fallback.replace("_", " ")
+def _kairanban():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import kairanban
+    return kairanban
 
 
 @app.get("/api/kairanban")
 def api_kairanban():
-    """回覧板の一覧(新しい順)。README と drafts/ は出さない"""
-    if not KAIRANBAN_DIR.is_dir():
-        return []
-    items = []
-    for f in sorted(KAIRANBAN_DIR.glob("*.md"), reverse=True):
-        if f.name.lower() == "readme.md":
-            continue
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        items.append({
-            "filename": f.name,
-            "date": f.name[:10],
-            "title": _kairanban_title(text, f.stem),
-            "content": text,
-        })
-    return items
+    """回覧板の一覧(新しい順)。README と drafts/ は出さない。届いた日時と、ぷちごとの既読も(scripts/kairanban.py)"""
+    return _kairanban().list_issues(DATA_DIR, [c["id"] for c in list_characters()])
 
 
 @app.get("/kairanban", response_class=HTMLResponse)
