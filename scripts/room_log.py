@@ -7,9 +7,9 @@
     state/room/latest.json      いちばん新しい 1 回(+ 人感が最後に動いた時刻 last_move)
 
 記録する機器は、種類で自動(Hub 2・Meter・Motion Sensor・Color Bulb・Plug・Contact Sensor)。
-家の config/room.json があれば、その id だけ / 名前の言い換え:
+家の config/room.json で、機体ごとのオン/オフ(設定ページの「SwitchBot 連携」)と名前の言い換え:
 
-    {"only": ["…id…"], "names": {"…id…": "あり部屋"}}
+    {"off": ["…id…"], "names": {"…id…": "あり部屋"}}
 
 使うところ:
 - cron(10 分ごと): `room_log.py record`
@@ -101,25 +101,59 @@ def pick(status: dict) -> dict:
     return out
 
 
-def read_all(base: Path) -> dict | None:
-    """いまの読み。鍵が無い・つながらないときは None"""
-    token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
-    if not token or not secret:
-        return None
+def load_cfg(base: Path) -> dict:
     try:
         cfg = json.loads((base / "config" / "room.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         cfg = {}
-    only = set(cfg.get("only") or [])
-    names = cfg.get("names") or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    off = [x for x in (cfg.get("off") or []) if isinstance(x, str)]
+    names = {k: str(v) for k, v in (cfg.get("names") or {}).items()} if isinstance(cfg.get("names"), dict) else {}
+    return {"off": off, "names": names}
+
+
+def set_off(base: Path, off: list[str]) -> dict:
+    """記録しない機体の id を決める(設定ページの「SwitchBot 連携」)。名前の言い換えは残す"""
+    cfg = load_cfg(base)
+    cfg["off"] = sorted({x for x in off if isinstance(x, str) and x})
+    p = base / "config" / "room.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(p)
+    return cfg
+
+
+def devices(base: Path) -> list[dict] | None:
+    """記録できる機体の一覧 [{id, name, type, on}](SwitchBot に 1 回聞く)。鍵が無い・つながらないときは None"""
+    token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
+    if not token or not secret:
+        return None
     try:
-        devices = _get("/devices", token, secret).get("body", {}).get("deviceList", [])
+        found = _get("/devices", token, secret).get("body", {}).get("deviceList", [])
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+        return None
+    cfg = load_cfg(base)
+    return [{"id": d["deviceId"], "name": cfg["names"].get(d["deviceId"]) or d.get("deviceName") or d["deviceId"], "type": d.get("deviceType", ""),
+             "on": d["deviceId"] not in cfg["off"]} for d in found if d.get("deviceId") and d.get("deviceType") in TYPES]
+
+
+def read_all(base: Path) -> dict | None:
+    """いまの読み(オンの機体だけ)。鍵が無い・つながらないときは None"""
+    token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
+    if not token or not secret:
+        return None
+    cfg = load_cfg(base)
+    off, names = set(cfg["off"]), cfg["names"]
+    try:
+        devices_ = _get("/devices", token, secret).get("body", {}).get("deviceList", [])
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
     out = {}
-    for d in devices:
+    for d in devices_:
         did, typ = d.get("deviceId"), d.get("deviceType")
-        if not did or typ not in TYPES or (only and did not in only):
+        if not did or typ not in TYPES or did in off:
             continue
         try:
             st = _get(f"/devices/{did}/status", token, secret).get("body", {})
@@ -221,7 +255,8 @@ def line(base: Path | None = None, now: datetime | None = None) -> str:
             air.append(f"{name} {dev['temperature']}℃" + (f"・{dev['humidity']}%" if "humidity" in dev else "") + (f"(明るさ {dev['light']})" if "light" in dev else ""))
         if "move" in dev:
             last = (snap.get("last_move") or {}).get(did)
-            move.append(f"{name}の動き: {'あり' if dev['move'] else 'なし'}" + (f"(最後は {_hm(last)})" if last and not dev["move"] else ""))
+            tail = "" if dev["move"] else (f"(最後は {_hm(last)})" if last else "(記録を始めてから、まだ動きなし)")
+            move.append(f"{name}の動き: {'あり' if dev['move'] else 'なし'}" + tail)
         if "power" in dev:
             power.append(f"{name} {'オン' if dev['power'] == 'on' else 'オフ'}")
     parts = []

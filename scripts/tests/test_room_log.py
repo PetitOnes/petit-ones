@@ -45,3 +45,18 @@ def test_no_key(tmp_path, monkeypatch):
     monkeypatch.delenv("SWITCHBOT_TOKEN", raising=False)
     monkeypatch.delenv("SWITCHBOT_SECRET", raising=False)
     assert rl.read_all(tmp_path) is None and rl.record(tmp_path) is None and rl.line(tmp_path) == ""
+
+
+def test_cfg_off_and_names(tmp_path):
+    assert rl.load_cfg(tmp_path) == {"off": [], "names": {}}
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "room.json").write_text(json.dumps({"names": {"a": "あり部屋"}}), encoding="utf-8")
+    assert rl.set_off(tmp_path, ["b", "a", "b"]) == {"off": ["a", "b"], "names": {"a": "あり部屋"}}
+    assert rl.load_cfg(tmp_path)["off"] == ["a", "b"] and rl.load_cfg(tmp_path)["names"] == {"a": "あり部屋"}   # 言い換えは残る
+
+
+def test_line_without_last_move(tmp_path):
+    rows = [{"ts": "2026-11-14T18:20:00", "devices": {"m1": {"name": "ありさん机", "type": "Motion Sensor", "move": False}}}]
+    rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
+    (rd / "latest.json").write_text(json.dumps(rows[-1], ensure_ascii=False), encoding="utf-8")
+    assert rl.line(tmp_path, T) == "家の空気: ありさん机の動き: なし(記録を始めてから、まだ動きなし)(18:20 の読み)"
