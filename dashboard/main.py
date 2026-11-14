@@ -7893,7 +7893,7 @@ HTML = """<!DOCTYPE html>
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
-      costs:     {icon: "💰", name: "おかね",     attr: 'href="/costs"'},
+      costs:     {icon: "💰", name: "おかね",     pane: "costs"},
     };
     const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // それ以外(設定・回覧板…)は「ほか」
     // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す
@@ -8070,7 +8070,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -12726,7 +12726,8 @@ _BUDGET_RESET_DAY = int(os.getenv("BUDGET_RESET_DAY", "26"))
 
 @app.get("/costs", response_class=HTMLResponse)
 def costs_page():
-    return HTMLResponse(COSTS_HTML)
+    # ほかのページと同じ部品(dashboard/ui/)で。トップページの中にも開ける(2026-11-14)
+    return HTMLResponse((UI_DIR / "costs.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/costs")
@@ -12864,149 +12865,6 @@ async def api_costs():
         "month_str": cycle_start_str[:7] + "〜" + cycle_end_str[5:],
         "today_str": today_str,
     }
-
-
-COSTS_HTML = """<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="/ui/tokens.css">
-<title>コスト管理</title>
-<style>
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: var(--ui-font-maru); background: #0f0f13; color: #e8e0f0; min-height: 100vh; padding: 16px; }
-h1 { font-size: 1.2rem; font-weight: 600; margin-bottom: 16px; opacity: 0.8; }
-h2 { font-size: 0.85rem; font-weight: 600; opacity: 0.5; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
-.card { background: #1a1a24; border-radius: 10px; padding: 14px; }
-.card .label { font-size: 0.72rem; opacity: 0.5; margin-bottom: 4px; }
-.card .value { font-size: 1.5rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.card .sub { font-size: 0.72rem; opacity: 0.45; margin-top: 2px; }
-.budget-card { background: #1a1a24; border-radius: 10px; padding: 14px; margin-bottom: 16px; }
-.budget-bar-bg { background: #2a2a38; border-radius: 6px; height: 10px; margin: 8px 0; overflow: hidden; }
-.budget-bar { height: 100%; border-radius: 6px; transition: width 0.4s; }
-.budget-row { display: flex; justify-content: space-between; font-size: 0.75rem; opacity: 0.6; }
-.section { background: #1a1a24; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
-.row { display: flex; justify-content: space-between; align-items: center; padding: 5px 0; border-bottom: 1px solid #ffffff08; }
-.row:last-child { border-bottom: none; }
-.row .name { font-size: 0.85rem; opacity: 0.8; }
-.row .cost { font-size: 0.85rem; font-variant-numeric: tabular-nums; font-weight: 600; }
-.bar-row { margin-top: 3px; }
-.mini-bar-bg { background: #2a2a38; border-radius: 3px; height: 4px; }
-.mini-bar { height: 4px; border-radius: 3px; }
-.daily-grid { display: grid; gap: 4px; max-height: 320px; overflow-y: auto; padding-right: 4px; }
-.daily-grid::-webkit-scrollbar { width: 4px; }
-.daily-grid::-webkit-scrollbar-thumb { background: #444; border-radius: 2px; }
-.day-row { display: flex; align-items: center; gap: 8px; font-size: 0.75rem; }
-.day-label { width: 72px; opacity: 0.5; flex-shrink: 0; }
-.day-bar-bg { flex: 1; background: #2a2a38; border-radius: 3px; height: 8px; overflow: hidden; }
-.day-bar { height: 8px; border-radius: 3px; background: #8b7cf8; }
-.day-cost { width: 48px; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.8; flex-shrink: 0; }
-.back { display: inline-block; margin-bottom: 14px; opacity: 0.5; font-size: 0.85rem; text-decoration: none; color: inherit; }
-.back:hover { opacity: 1; }
-.src-chip { display: inline-block; font-size: 0.68rem; padding: 1px 6px; border-radius: 10px; background: #2a2a38; margin-right: 4px; opacity: 0.7; }
-</style>
-</head>
-<body>
-<a class="back" href="/">← ダッシュボード</a>
-<h1>💰 コスト管理</h1>
-<div id="main">読み込み中…</div>
-<script>
-const SOURCE_COLORS = {
-  autonomous: '#8b7cf8',
-  chat: '#f87c8b',
-  sensor: '#7cf8c8',
-  camera: '#f8d87c',
-  mic: '#7cd4f8',
-  diary: '#c87cf8',
-};
-const SOURCE_LABELS = {
-  autonomous: '自律行動',
-  chat: 'チャット',
-  sensor: 'センサー',
-  camera: 'カメラ',
-  mic: 'マイク',
-  diary: '日記生成',
-};
-const CHAR_COLORS = {
-  puchiteya: '#fff262',
-  puchiko: '#cab8d9',
-  puchiru: '#00afcc',
-};
-
-function fmt(v) { return '$' + v.toFixed(3); }
-function fmtShort(v) { return '$' + v.toFixed(2); }
-
-async function load() {
-  const res = await fetch('/api/costs');
-  const d = await res.json();
-  const pct = Math.min(100, d.month_total / d.budget * 100);
-  const barColor = pct > 85 ? '#f87c8b' : pct > 60 ? '#f8d87c' : '#7cf8c8';
-  const dailyBudget = (d.budget / 30).toFixed(2);
-
-  // ソース別の合計（今月）
-  const srcTotal = Object.values(d.by_source).reduce((a,b)=>a+b, 0);
-
-  // 日別最大値
-  const dailyMax = Math.max(...Object.values(d.daily).map(v=>v.total), 0.01);
-
-  // 日別（サイクル全日付、古い順）
-  const days = Object.keys(d.daily).sort();
-
-  let html = '';
-  html += '<div class="grid">';
-  html += '<div class="card"><div class="label">今日</div><div class="value">' + fmtShort(d.today) + '</div><div class="sub">上限 $' + dailyBudget + '/日</div></div>';
-  html += '<div class="card"><div class="label">今月（' + d.cycle_start + '〜）</div><div class="value">' + fmtShort(d.month_total) + '</div><div class="sub">理想値 ' + fmtShort(d.ideal) + ' | 過去30日 ' + fmtShort(d.days30) + '</div></div>';
-  html += '<div class="card"><div class="label">残り予算</div><div class="value" style="color:' + barColor + '">' + fmtShort(d.remaining) + '</div><div class="sub">月額 $' + d.budget + '（' + d.days_remaining + '日まで）</div></div>';
-  html += '</div>';
-
-  html += '<div class="budget-card"><h2>月間予算</h2>';
-  html += '<div class="budget-bar-bg"><div class="budget-bar" style="width:' + pct + '%;background:' + barColor + '"></div></div>';
-  html += '<div class="budget-row"><span>使用 ' + fmtShort(d.month_total) + ' (' + pct.toFixed(1) + '%)</span><span>残 ' + fmtShort(d.remaining) + '</span></div></div>';
-
-  html += '<div class="section"><h2>キャラクター別（今月）</h2>';
-  Object.entries(d.by_character).sort((a,b)=>b[1]-a[1]).forEach(([char, cost]) => {
-    const pctChar = d.month_total > 0 ? cost/d.month_total*100 : 0;
-    const color = CHAR_COLORS[char] || '#8b7cf8';
-    html += '<div class="row"><div><div class="name">' + char + '</div>';
-    html += '<div class="bar-row"><div class="mini-bar-bg"><div class="mini-bar" style="width:' + pctChar + '%;background:' + color + '"></div></div></div></div>';
-    html += '<div class="cost">' + fmtShort(cost) + '</div></div>';
-  });
-  html += '</div>';
-
-  html += '<div class="section"><h2>ソース別（今月）</h2>';
-  Object.entries(d.by_source).sort((a,b)=>b[1]-a[1]).forEach(([src, cost]) => {
-    const pctSrc = srcTotal > 0 ? cost/srcTotal*100 : 0;
-    const color = SOURCE_COLORS[src] || '#8b7cf8';
-    const label = SOURCE_LABELS[src] || src;
-    html += '<div class="row"><div><div class="name">' + label + '</div>';
-    html += '<div class="bar-row"><div class="mini-bar-bg"><div class="mini-bar" style="width:' + pctSrc + '%;background:' + color + '"></div></div></div></div>';
-    html += '<div class="cost">' + fmtShort(cost) + '</div></div>';
-  });
-  html += '</div>';
-
-  html += '<div class="section"><h2>日別（' + d.cycle_start + '〜）</h2><div class="daily-grid">';
-  days.forEach(day => {
-    const info = d.daily[day];
-    const w = info.total / dailyMax * 100;
-    const isToday = day === d.today_str;
-    html += '<div class="day-row">';
-    html += '<div class="day-label">' + day.slice(5) + (isToday ? ' 今日' : '') + '</div>';
-    html += '<div class="day-bar-bg"><div class="day-bar" style="width:' + w + '%"></div></div>';
-    html += '<div class="day-cost">' + fmtShort(info.total) + '</div>';
-    html += '</div>';
-  });
-  html += '</div></div>';
-
-  document.getElementById('main').innerHTML = html;
-}
-load();
-</script>
-</body>
-</html>"""
 
 
 if __name__ == "__main__":

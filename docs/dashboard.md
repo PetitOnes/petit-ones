@@ -218,6 +218,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `desires.html` | 欲求の様子（`/desires`）。その子の欲求ごとに、この数日の強さの線・上限にいた時間・いちばん強かった時間・満たした記憶の回数と、その欲求の決まり（満たすまでの時間・満たしたことになる言葉）を出す。データの組み立ては `dashboard/desire_history.py`（読むだけ） |
 | `sounds.html` | 音（`/sounds`）。家の音のライブラリ `PETIT_DATA_DIR/sounds/` に音を取り込む（WAV・MP3 などを、体が鳴らせるモノラル・16 kHz・16 bit の WAV に変換。20 秒まで）、ブラウザで聞く、ぷちの体（SD）へ送る、消す。ぷちそれぞれの体にある音の一覧も出て、押すとその子の体で 1 回鳴る。体は音を取り出す・消すができないので、元になる音は家に置く。置き方と変換は `scripts/sounds.py`（ffmpeg が要る） |
 | `kairanban.html` | 回覧板（`/kairanban`）。チーム「ぷち」からぷちたちへの報告（`PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>*.md`）を、新しい順に 1 号 1 枚のカードで。題を押すと開く。本文は markdown |
+| `costs.html` | おかね（`/costs`）。API 代。上に 今日・今月・残り、その下に 今月の予算（色と言葉で ゆとり / そろそろ / 上限に近い）、だれが・何に・どの日に の内訳。数字は `/api/costs` |
 | `styleguide.html` | 部品の見本（`/ui`） |
 
 Web フォント・markdown の変換・会話の画像化は、外の CDN（Google Fonts・jsDelivr）から部品を読む。届かないときは、端末のフォントと素の文字で出る。
