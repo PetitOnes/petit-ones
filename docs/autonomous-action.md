@@ -60,6 +60,8 @@ Claude Code は、大きすぎる `@` 添付を黙って落とす(実測: 70 KB 
 user prompt の文面は `prompts/autonomous/*.md`(全体は `user.md`、節ごとに `time_rule_*` `routine_mode_*` `mail_*` `experience` `permission_rules` `heavy_files`)。
 
 「## 現在の制限」の中身(からだの使い方・からだ おやすみ)は `scripts/body_switches.py rules` が決め、止める道具は同 `disallowed` を `--disallowedTools` に渡す(会話と同じ決まり)。
+
+ぷちSNS(`petit-sns`。家の MCP 設定にあるときだけ)は、ひとりの時間にも、投稿・返事・掲示板と、家の外のぷちとの手紙(`mail_send` / `mail_read` / `mail_recipients` / `penpal_list`)を使える。新しい相手に文通を申し込む `penpal_request` は入れていない(新しいつながりは、人と話しているときに)。
 `autonomous-action.sh` は値(日時・パス・件数・digest など)を `scripts/render_prompt.py` に渡して組み立てるだけで、日本語の文は持たない。
 家ごとの言い回しは `PETIT_DATA_DIR/prompts/autonomous/<同名>.md` を置けば上書きされる(`--dry-run` で確かめる)。書き方は `prompts/README.md`。
 

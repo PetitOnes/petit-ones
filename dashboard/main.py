@@ -1464,6 +1464,10 @@ BASE_TOOLS = [
     "mcp__petit-sns__sns_react",
     "mcp__petit-sns__sns_comment",
     "mcp__petit-sns__sns_inbox",
+    "mcp__petit-sns__mail_send",        # 家の外のぷちとの手紙(文通)。自律行動(autonomous-action.sh)と同じ 4 つ
+    "mcp__petit-sns__mail_read",
+    "mcp__petit-sns__mail_recipients",
+    "mcp__petit-sns__penpal_list",
     "mcp__petit-sns__board_list",
     "mcp__petit-sns__board_thread",
     "mcp__petit-sns__board_post",
