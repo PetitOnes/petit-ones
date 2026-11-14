@@ -120,15 +120,15 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 ## 家の設定（`config/ui.json`）
 
-家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの道具の列「⚙️ 設定」の「🏠 家」タブから変えられる。
+家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの道具の列「⚙️ 設定」（はじめは「ほか」の中。`/settings`、中身は `dashboard/ui/settings.html`）の「🏠 家」から変えられる。
 
-道具の列「⚙️ 設定」は、上のタブで 家 / 各ぷち を切り替える（1 人を選んでいればその子、「みんな」「だれか」なら家が最初に出る）。ぷちのタブは「○○の設定画面」。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
+道具の列「⚙️ 設定」は 1 ページ（`/settings`。アルバムと同じく会話の場所に出る）。上の粒で 家 / 各ぷち を切り替える（1 人を選んでいればその子、「みんな」「だれか」なら家が最初に出る）。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
 
 | 項目 | 中身 |
 |---|---|
 | `topbar_color` | トップバーの色（`#rrggbb`）。無ければ、選んでいるぷちの色 |
 | `house_title` | トップバーの題。無ければ「`<COMPANION_NAME>`ち」 |
-| `tools` | 道具の列の並び。`[{"id": "album", "show": true}, …]` の順。`show: false` は「ほか」の中 |
+| `tools` | 道具の列の並び。`[{"id": "album", "show": true, "off": false}, …]` の順。`show: true` は最初から列に、`show: false` は「ほか」を押したら、`off: true` は出さない |
 | `send_key` | 話しかける欄の送り方。`enter`（Enter で送信）か `ctrl_enter`（Ctrl+Enter で送信、Enter は改行） |
 
 ## 部品とページ（`dashboard/ui/`）
@@ -142,6 +142,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `pages.css` / `page.js` | `ui/` のページの枠組みと共通の下ごしらえ |
 | `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
 | `md.js` | markdown を HTML にしたあとの後始末 |
+| `settings.html` | 設定（`/settings`）。家（トップバーの色・送信のしかた・道具の列 = `/api/ui`）と、ぷちごと（アクティブタイム・自律行動・体の道具の許可・体のアドレス = `/api/<id>/settings` `/api/<id>/config/m5_hosts` `/api/<id>/cron`）。家の設定を変えたら親ページに `petit-ui-changed` を送る |
 | `petitlog.html` / `diary.html` | ぷちログ（1 日のタイムライン）と日記の一覧。データの組み立ては `dashboard/petit_log.py`（読むだけ） |
 | 右上の 📍 | いま どこ。わたしのいま（自室・お外・会社 など）を決めると `PETIT_DATA_DIR/state/whereabouts.json` に、ログインの人ごとの一言と、決めた時刻(since)・いつまでか(until。1・3・8 時間か「消すまで」)が入る。過ぎたら無いものとして扱う。ぷちの体の居場所（家 / お外）は、体験デーモンが `characters/<id>/state/experience_state.json` に書く体の Wi-Fi（何番目か）から決める。どの番号がどこかは `PETIT_DATA_DIR/config/places.json`（無ければ 1・2 = 家、3 = お外）。計算と保存は `scripts/whereabouts.py`。会話の system prompt と自律行動の冒頭に「ありさんのいま: 会社(9:02 から)」「あなたの体のいま: 家(家の Wi-Fi)」と伝わる |
 | `anniversaries.html` | 記念日（`/anniversaries`）。家の設定 `PETIT_DATA_DIR/config/anniversaries.json` に、名前・最初の日・くり返し（毎年・毎月・その日だけ）・ひとことを足す。計算と保存は `scripts/anniversaries.py`。当日は、ぷちログのその日のいちばん上に出る。ぷちたちには、前の日の自律行動で 1 回だけ「あしたは○○の日」と伝わる（`anniversaries.py notice`。前の日に動かなかった子には当日に）。ぷちも `anniversaries.py add` で足せる |
