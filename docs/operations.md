@@ -160,3 +160,12 @@ stat -c '%F %N' $PETIT_DATA_DIR/.claude/.credentials.json          # リンク�
 3. 本番で `git pull --ff-only`。`autonomous-action.sh` は次の cron から新しいものが動く(途中の回は止まらない)
 4. 部品を上げた場合は `vcs import src < petit.repos` と `uv sync`。ダッシュボードを上げた場合は再起動(`/restart-dashboard`)
 5. 次の自律行動のログ(`PETIT_DATA_DIR/.autonomous-logs/<id>/`)を一回分見る
+
+
+## 部屋の記録(SwitchBot)
+
+10 分ごとに `scripts/room_log.py record` を cron で回す(家の `.env` に `SWITCHBOT_TOKEN/SECRET` があるとき):
+
+```
+*/10 * * * * cd /home/cube-petit/work/petit-ones && PETIT_DATA_DIR=/home/cube-petit/petit_claude python3 scripts/room_log.py record >> /home/cube-petit/petit_claude/.autonomous-logs/room.log 2>&1
+```

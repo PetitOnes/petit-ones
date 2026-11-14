@@ -11,6 +11,9 @@
 {{#if sky_line}}
 {{sky_line}}
 {{/if}}
+{{#if room_line}}
+{{room_line}}
+{{/if}}
 
 @{{character_dir}}/SOUL.md
 {{reflection_index_line}}

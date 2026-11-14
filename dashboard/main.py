@@ -1833,6 +1833,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
         sky=_sky_text(),
+        room=_room_text(),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2336,6 +2337,22 @@ def _events():
     return events
 
 
+def _room():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import room_log
+    return room_log
+
+
+def _room_text() -> str:
+    """家の空気(SwitchBot の記録)の 1 行。30 分以内の読みが無ければ空"""
+    try:
+        return _room().line(DATA_DIR)
+    except Exception:
+        return ""
+
+
 def _sky():
     scripts_dir = str(PROJECT_DIR / "scripts")
     if scripts_dir not in sys.path:
@@ -2511,6 +2528,17 @@ def api_events_delete(item_id: str, request: Request = None):
     return {"ok": True}
 
 
+@app.get("/api/room/latest")
+def api_room_latest():
+    """部屋のいちばん新しい読み(ようす の「部屋」カード)。記録は cron の scripts/room_log.py record"""
+    return {"latest": _room().latest(DATA_DIR)}
+
+
+@app.get("/api/room/day")
+def api_room_day(date: str):
+    return _room().day_summary(DATA_DIR, date)
+
+
 @app.get("/api/calendar")
 def api_calendar(month: str):
     """月のカレンダー: 日ごとの 予定(📅)と 記念日(🎂)。前後の月の端(6 週ぶん)も返す。📅 よてい のページ用"""
@@ -2539,7 +2567,11 @@ def api_calendar(month: str):
             sky = sk.day_info(d, place)    # 月齢・満ち欠けの印・二十四節気・日の出入り(scripts/sky.py)。マスの端に小さく
         except Exception:
             sky = None
-        days[d.isoformat()] = {"anniv": a_rows, "events": e_rows, "holiday": holiday, "sky": sky}
+        try:
+            room = _room().day_summary(DATA_DIR, d.isoformat())   # その日の部屋(最低・最高)。記録が無い日は空
+        except Exception:
+            room = {"reads": 0, "devices": {}}
+        days[d.isoformat()] = {"anniv": a_rows, "events": e_rows, "holiday": holiday, "sky": sky, "room": room if room["reads"] else None}
     return {"month": f"{y:04d}-{m:02d}", "days": days, "weeks": len(_cal.monthcalendar(y, m))}
 
 
@@ -7811,6 +7843,10 @@ HTML = """<!DOCTYPE html>
             <h2>からだの設定</h2>
             <div id="groupBodySettings"></div>
           </section>
+          <section id="roomSection" style="display:none">
+            <h2>部屋</h2>
+            <div id="roomPanel"></div>
+          </section>
         </div>
       </div>
     </div>
@@ -8490,6 +8526,28 @@ HTML = """<!DOCTYPE html>
     function openYousu() {
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
+      updateRoom();
+    }
+    // 部屋(SwitchBot のハブ 2・温湿度計・人感・電気。10 分ごとに cron が記録)。記録が無ければ出さない
+    async function updateRoom() {
+      let latest = null;
+      try { latest = (await (await fetch("/api/room/latest")).json()).latest; } catch (e) {}
+      const sec = document.getElementById("roomSection");
+      if (!latest || !latest.devices) { sec.style.display = "none"; return; }
+      const safe = t => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      const hm = iso => { const t = new Date(iso); return isNaN(t) ? "" : `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}`; };
+      const rows = Object.entries(latest.devices).map(([id, d]) => {
+        const bits = [];
+        if ("temperature" in d) bits.push(`🌡 ${d.temperature}℃`);
+        if ("humidity" in d) bits.push(`💧 ${d.humidity}%`);
+        if ("light" in d) bits.push(`☀️ 明るさ ${d.light}`);
+        if ("move" in d) { const last = (latest.last_move || {})[id]; bits.push(d.move ? "🚶 動きあり" : `🚶 動きなし${last ? `(最後 ${hm(last)})` : ""}`); }
+        if ("power" in d) bits.push(d.power === "on" ? "💡 オン" : "💡 オフ");
+        if ("open" in d) bits.push(d.open === "open" ? "🚪 開" : "🚪 閉");
+        return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:0.85rem;"><span style="font-weight:700;color:#555">${safe(d.name)}</span><span style="color:#777;text-align:right">${bits.join(" ")}</span></div>`;
+      });
+      document.getElementById("roomPanel").innerHTML = rows.join("") + `<div style="font-size:0.72rem;color:#aaa;margin-top:4px">${hm(latest.ts)} の読み(10 分ごと)</div>`;
+      sec.style.display = "";
     }
     // からだの設定の 1 人分。スマホで押しやすいよう、つまみではなく大きめのボタンにする。
     // 項目が読めなかった体(古いファームの WHO など)は、その段を出さない
