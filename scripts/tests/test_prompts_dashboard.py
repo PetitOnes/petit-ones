@@ -71,7 +71,9 @@ def test_system_prompt_matches_old_fstring():
 def test_restriction_lines_come_from_autonomous_template():
     out = rp.render("autonomous/permission_rules", {"allow_camera": False, "allow_speak": True, "allow_sound": True, "allow_mic": False, "rest_note": ""},
                     data_dir=REPO / "no-such-house", project_dir=REPO).strip()
-    assert out == "- カメラ（take_snapshot）は今は使わないこと。\n- マイク（mic_start）は今は使わないこと。"
+    assert out == ("- カメラ（take_snapshot）は今は使わないこと。\n"
+                   "- 体が眠っているあいだに speak した声は、体が起きたときに出る（残るのは最後の 1 つ）。いま声を出したいときは、先に wake で自分で起きてよい。\n"
+                   "- マイク（mic_start）は今は使わないこと。")
     # からだ おやすみ: 1 行目に理由、止まる道具の行が続く(scripts/body_switches.py が値を作る)
     out = rp.render("autonomous/permission_rules", {"allow_camera": False, "allow_speak": False, "allow_sound": False, "allow_mic": True, "rest_note": "いまは からだ おやすみ(15:30 まで。いまから): …"},
                     data_dir=REPO / "no-such-house", project_dir=REPO).strip()
