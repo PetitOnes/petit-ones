@@ -236,19 +236,33 @@ def change_line(day: Date, place: dict | None) -> str:
     return "きょうの空: " + "。".join(parts) + sun
 
 
+def wants_sky(character_id: str | None, base=None) -> bool:
+    """その子が空の一言を受け取るか(scripts/notices.py)。子が無ければ受け取る"""
+    if not character_id:
+        return True
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import notices
+        return notices.wants(character_id, "sky", base)
+    except Exception:
+        return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("day", "line", "changes"):
         p = sub.add_parser(name)
         p.add_argument("--date", default=None)
+        if name == "changes":
+            p.add_argument("--character", default=None, help="この子が空の一言を受け取らない設定(notices.sky)なら、何も出さない")
     a = ap.parse_args()
     day = Date.fromisoformat(a.date) if a.date else datetime.now(JST).date()
     place = load_place()
     if a.cmd == "day":
         print(json.dumps(day_info(day, place), ensure_ascii=False, indent=2))
     elif a.cmd == "changes":
-        text = change_line(day, place)
+        text = change_line(day, place) if wants_sky(a.character) else ""
         if text:
             print(text)
     else:
