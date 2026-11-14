@@ -10269,7 +10269,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="detail-panel" id="detailPanel"></div>
   </div>
-  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。くわしい気持ちは、下に文字で。</div>
+  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは、下に文字で。</div>
   <div class="cards" id="cards"></div>
   <script>
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
@@ -10346,10 +10346,12 @@ KANKEI_HTML = """<!DOCTYPE html>
       const { nodes, edges } = data;
       _nodes = nodes; _edges = edges;
 
+      // 図に出すのは、家の中(ぷちと、家の人)だけ。ほかの相手への気持ちは、下のカードに文字で出す
+      const chartNodes = nodes.filter(n => n.kind !== "other");
       // circular layout
       const pos = {};
-      nodes.forEach((n, i) => {
-        const angle = (2 * Math.PI * i) / nodes.length - Math.PI / 2;
+      chartNodes.forEach((n, i) => {
+        const angle = (2 * Math.PI * i) / chartNodes.length - Math.PI / 2;
         pos[n.id] = { x: CX + RADIUS * Math.cos(angle), y: CY + RADIUS * Math.sin(angle) };
       });
 
@@ -10438,7 +10440,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       });
 
       // nodes
-      nodes.forEach(n => {
+      chartNodes.forEach(n => {
         const p = pos[n.id];
         const g = svgEl("g", { style: "cursor:pointer" });
         g.addEventListener("click", () => showDetail(n.id));
