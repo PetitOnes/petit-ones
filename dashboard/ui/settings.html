@@ -81,6 +81,12 @@
         <div id="tools"></div>
         <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="saveUi({tools: defaultTools()})">はじめの並びに戻す</button>
       </div>
+      <!-- ログインしているときだけ出す(ログインの要らない家では出さない) -->
+      <div class="m-card" id="logoutCard" style="display:none">
+        <span class="a-heading">ログイン</span>
+        <p class="a-hint" style="margin:0 0 8px"><b id="logoutWho"></b> でログインしています。</p>
+        <button class="a-btn a-btn--sub" onclick="doLogout()">ログアウトする</button>
+      </div>
     </section>
 
     <!-- ぷち 1 人 -->
@@ -315,6 +321,18 @@
       const want = q.get("char");
       await show(chars.some(c => c.id === want) ? want : "house");
     })();
-  </script>
+  
+    // ログアウト: ログインしているときだけ、🏠 家 のいちばん下に出す
+    async function doLogout() {
+      if (!confirm("ログアウトします")) return;
+      try { await fetch("/api/auth/logout", {method: "POST"}); } catch (e) {}
+      (window.top || window).location.href = "/";   // ログインのページは、どのページを開いても出る。埋めて開いていても、画面ごと移る
+    }
+    fetch("/api/auth/me").then(r => r.json()).then(me => {
+      if (!me.auth_enabled || !me.authenticated) return;
+      document.getElementById("logoutWho").textContent = me.username || "";
+      document.getElementById("logoutCard").style.display = "";
+    }).catch(() => {});
+</script>
 </body>
 </html>
