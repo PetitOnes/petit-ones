@@ -6490,6 +6490,9 @@ HTML = """<!DOCTYPE html>
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
     .day-tab.active { background: var(--char); color: var(--char-btn-text); border-color: var(--char); }
+    .settings-tabs { margin-bottom: 14px; }   /* 設定画面の上: 家 | ぷちてゃ | ぷちこ | ぷちる */
+    .settings-tabs .day-tab { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 4px; }
+    .settings-tabs .char-pick-dot { width: 9px; height: 9px; }
 
     /* ポップアップ */
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
@@ -6595,7 +6598,6 @@ HTML = """<!DOCTYPE html>
         <div class="char-menu me-now-menu" id="meNowMenu" style="display:none" onclick="event.stopPropagation()"></div><!-- 中を押しても閉じない(押した札が描き直しで消えると、外側の「外を押した」判定に当たるため) -->
       </div>
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬<span class="mail-badge" id="mailBadge"></span></button>
-      <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
     </div>
     <span id="logoutBtn" style="display:none"></span><!-- ログアウトの絵文字は出さない(2026-10-16)。設定の中から -->
   </div>
@@ -6757,6 +6759,7 @@ HTML = """<!DOCTYPE html>
       </div>
       <div class="popup-body">
         <!-- 2026-11-14 ありさん: 題を「○○の設定画面」に、cron で動き出す分と MAX_TURNS を見せる、項目に見出し、M5 接続先は「くわしい設定」へ -->
+        <div class="day-tabs settings-tabs" id="settingsTabsChar"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <span class="a-heading" id="activeTimeLabel">アクティブタイム（毎回動く時間帯）</span>
           <span id="dayTypeLabel" style="font-size:0.75rem;padding:2px 8px;border-radius:8px;font-weight:600;"></span>
@@ -6809,11 +6812,6 @@ HTML = """<!DOCTYPE html>
             <span class="setting-label">🎤 マイク</span>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
           </div>
-          <span class="a-heading" style="display:block;margin-top:18px">家</span>
-          <div class="setting-row">
-            <span class="setting-label">🏠 家の設定（色・道具の列）</span>
-            <button class="a-btn a-btn--sub a-btn--s" onclick="closePopup('settingsOverlay'); openHouseSettings()">開く</button>
-          </div>
         </div>
         <details style="margin-top:16px;">
           <summary class="a-heading" style="cursor:pointer">くわしい設定</summary>
@@ -6834,6 +6832,7 @@ HTML = """<!DOCTYPE html>
         <button class="popup-close" onclick="closePopup('houseSettingsOverlay')">✕</button>
       </div>
       <div class="popup-body">
+        <div class="day-tabs settings-tabs" id="settingsTabsHouse"></div>
         <span class="a-heading">トップバーの色</span>
         <div class="m-row">
           <span>🎨 色</span>
@@ -7142,6 +7141,7 @@ HTML = """<!DOCTYPE html>
     // 道具の一覧。並びと、列に出すか「ほか」に入れるかは家の設定(⚙️ → 道具の列)で変えられる
     const TOOLS = {
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
+      settings:  {icon: "⚙️", name: "設定",       attr: 'onclick="openSettingsHub()"'},   // 家 / 各ぷち のタブ(2026-11-14 ありさん。トップバーから移した)
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
@@ -7159,12 +7159,13 @@ HTML = """<!DOCTYPE html>
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
       costs:     {icon: "💰", name: "おかね",     attr: 'href="/costs"'},
     };
-    const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
+    const TOOLS_DEFAULT_SHOWN = ["yousu", "settings", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
+    const TOOLS_NEW_SHOWN = ["settings"];   // 家の設定に並びが保存されたあとに増えた道具でも、はじめから見える側に出すもの
     // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す
     function toolOrder() {
       const saved = Array.isArray(_uiSettings.tools) ? _uiSettings.tools.filter(t => t && TOOLS[t.id]) : [];
       const seen = new Set(saved.map(t => t.id));
-      const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? false : TOOLS_DEFAULT_SHOWN.includes(id)}));
+      const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? TOOLS_NEW_SHOWN.includes(id) : TOOLS_DEFAULT_SHOWN.includes(id)}));
       return saved.map(t => ({id: t.id, show: t.show !== false})).concat(rest);
     }
     function renderToolRow() {
@@ -7196,10 +7197,23 @@ HTML = """<!DOCTYPE html>
         if (res.ok) _uiSettings = await res.json();
       } catch {}
     }
+    // 道具の列の「⚙️ 設定」。いま 1 人を選んでいればその子、みんな・だれかなら家を最初に出す
+    function openSettingsHub() {
+      if (currentCharId === "select" || currentCharId === "group") openHouseSettings();
+      else openSettings(currentCharId);
+    }
+    // 設定画面の上のタブ: 家 | 各ぷち。押すと、いまの画面を閉じてそちらを開く
+    function renderSettingsTabs(elId, active) {
+      const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      const tabs = [`<button class="day-tab${active === "house" ? " active" : ""}" onclick="closePopup('settingsOverlay'); openHouseSettings()">🏠 家</button>`]
+        .concat(characters.filter(c => c.id).map(c => `<button class="day-tab${active === c.id ? " active" : ""}" onclick="closePopup('houseSettingsOverlay'); closePopup('settingsOverlay'); openSettings(${JSON.stringify(c.id).replace(/"/g, "&quot;")})"><span class="char-pick-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`));
+      document.getElementById(elId).innerHTML = tabs.join("");
+    }
     function openHouseSettings() {
       renderSendKey();
       renderToolSettings();
       applyTopbarColor();
+      renderSettingsTabs("settingsTabsHouse", "house");
       document.getElementById("houseSettingsOverlay").classList.add("open");
     }
     function renderToolSettings() {
@@ -8344,7 +8358,7 @@ HTML = """<!DOCTYPE html>
     window.addEventListener("load", () => {
       // #mailbox / #settings で開く(スマホのブックマーク用。2026-10-16)
       if (location.hash === "#mailbox") openMailbox();
-      else if (location.hash === "#settings") openSettings();
+      else if (location.hash === "#settings") openSettingsHub();
     });
     function openMailbox() {
       currentMailTab = "inbox";
@@ -8608,12 +8622,14 @@ HTML = """<!DOCTYPE html>
       }).join(" / ");
     }
 
-    async function openSettings() {
-      if (currentCharId === "select" || currentCharId === "group") return openHouseSettings();   // みんな・だれかのときは家の設定
+    let _settingsCharId = null;   // 設定画面に出している子(タブで切り替えられるので、見ている子とは別に持つ)
+    async function openSettings(charId) {
+      _settingsCharId = charId || _settingsCharId;
+      if (_settingsCharId === "select" || _settingsCharId === "group") return openHouseSettings();   // みんな・だれかのときは家の設定
       const [res, m5Res, cronRes] = await Promise.all([
-        fetch(`/api/${currentCharId}/settings`),
-        fetch(`/api/${currentCharId}/config/m5_hosts`),
-        fetch(`/api/${currentCharId}/cron`),
+        fetch(`/api/${_settingsCharId}/settings`),
+        fetch(`/api/${_settingsCharId}/config/m5_hosts`),
+        fetch(`/api/${_settingsCharId}/cron`),
       ]);
       const s = await res.json();
       const m5 = await m5Res.json();
@@ -8626,9 +8642,10 @@ HTML = """<!DOCTYPE html>
       currentDayTab = "weekday";
       document.getElementById("tabWeekday").classList.add("active");
       document.getElementById("tabWeekend").classList.remove("active");
-      const cur = characters.find(c=>c.id===currentCharId);
-      const charName = cur ? (cur.name||cur.id) : currentCharId;
+      const cur = characters.find(c=>c.id===_settingsCharId);
+      const charName = cur ? (cur.name||cur.id) : _settingsCharId;
       document.getElementById("settingsTitle").textContent = `${charName}の設定画面`;
+      renderSettingsTabs("settingsTabsChar", _settingsCharId);
       document.getElementById("activeTimeLabel").textContent = "アクティブタイム（毎回動く時間帯）";
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
       document.getElementById("maxTurns").value = s.max_turns ?? 20;
@@ -8655,8 +8672,8 @@ HTML = """<!DOCTYPE html>
         max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
       };
       await Promise.all([
-        fetch(`/api/${currentCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) }),
-        fetch(`/api/${currentCharId}/config/m5_hosts`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({m5_hosts: getM5Hosts()}) }),
+        fetch(`/api/${_settingsCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) }),
+        fetch(`/api/${_settingsCharId}/config/m5_hosts`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({m5_hosts: getM5Hosts()}) }),
       ]);
       closePopup("settingsOverlay");
     }
