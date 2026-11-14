@@ -18,6 +18,9 @@
     .v-new input[type=file] { display: none; }
     .v-msg { flex: 1 1 100%; margin: 0; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
     .v-msg.is-bad { color: var(--ui-danger); }
+    /* だれの動画メモを見るか(みんな / 人ごと)。人の粒には、その人の色の点 */
+    .v-people { flex-wrap: wrap; margin: 0 0 12px; }
+    .v-people .a-pill { display: inline-flex; align-items: center; gap: 6px; }
     .v-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
     .v-card { padding: 10px; }
     .v-card video { display: block; width: 100%; max-height: 360px; background: #000; border-radius: var(--ui-radius-s); }
@@ -39,13 +42,15 @@
         <p class="v-msg" id="msg"></p>
       </div>
     </div>
+    <div class="m-pills v-people" id="people"></div>
     <div class="v-grid" id="list"></div>
     <div class="p-empty" id="empty">読み込み中…</div>
   </div>
   <script>
     const { esc, dayLabel } = PetitPage;
     const list = document.getElementById("list"), empty = document.getElementById("empty"), msg = document.getElementById("msg");
-    let items = [], maxSeconds = 10;
+    let items = [], maxSeconds = 10, people = [], who = "";   // who: だれの分を見るか("" = みんな)
+    try { who = localStorage.getItem("videoMemoWho") || ""; } catch (e) {}
     const say = (text, bad) => { msg.textContent = text; msg.classList.toggle("is-bad", !!bad); };
     const when = ts => `${dayLabel(ts.slice(0, 10))} ${ts.slice(11, 16)}`;
     const src = (it, ext) => `/api/video_memo/file/${encodeURIComponent(it.user)}/${encodeURIComponent(it.id)}.${ext}`;
@@ -57,14 +62,27 @@
       ${it.title ? `<div class="v-title">${esc(it.title)}</div>` : ""}
     </div>`;
     function draw() {
-      list.innerHTML = items.map(card).join("");
-      empty.style.display = items.length ? "none" : "";
-      empty.textContent = "まだ動画メモはありません";
+      if (who && !people.some(p => p.id === who)) who = "";
+      const count = id => items.filter(it => !id || it.user === id).length;
+      const pill = (id, label, color) => `<button class="a-pill${who === id ? " is-on" : ""}" data-who="${esc(id)}">${color ? `<span class="v-dot" style="--c:${esc(color)}"></span>` : ""}${esc(label)} ${count(id)}</button>`;
+      document.getElementById("people").innerHTML = people.length > 1 ? pill("", "みんな", "") + people.map(p => pill(p.id, p.name, p.color)).join("") : "";
+      const shown = items.filter(it => !who || it.user === who);
+      list.innerHTML = shown.map(card).join("");
+      empty.style.display = shown.length ? "none" : "";
+      const name = (people.find(p => p.id === who) || {}).name;
+      empty.textContent = name ? `${name}の動画メモは、まだありません` : "まだ動画メモはありません";
     }
+    document.getElementById("people").addEventListener("click", e => {
+      const btn = e.target.closest("[data-who]");
+      if (!btn) return;
+      who = btn.dataset.who;
+      try { localStorage.setItem("videoMemoWho", who); } catch (err) {}
+      draw();
+    });
     async function load() {
       try {
         const d = await (await fetch("/api/video_memo")).json();
-        items = d.items || []; maxSeconds = d.max_seconds || 10;
+        items = d.items || []; maxSeconds = d.max_seconds || 10; people = d.people || [];
         say(`${maxSeconds} 秒まで。長く撮っても、はじめの ${maxSeconds} 秒だけが、小さくなって残る。家の人どうしで見られる。`);
         draw();
       } catch (e) { empty.textContent = "読み込めませんでした"; }

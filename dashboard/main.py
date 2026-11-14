@@ -3130,7 +3130,9 @@ def api_video_memo(request: Request):
     vm = _video_memo()
     me = _get_username(request) or OWNER_USER
     items = [{**r, "name": _user_label(r["user"]), "color": _person_color(r["user"]), "mine": r["user"] == me} for r in vm.list_all(DATA_DIR)]
-    return {"items": items, "max_seconds": vm.MAX_SECONDS, "me": me}
+    # 人ごとに見られるように、家の人の一覧も(自分を先に。まだ 1 本も撮っていない人も入る)
+    people = [{"id": u, "name": _user_label(u), "color": _person_color(u)} for u in sorted(_USER_DISPLAY, key=lambda u: u != me)]
+    return {"items": items, "max_seconds": vm.MAX_SECONDS, "me": me, "people": people}
 
 
 @app.post("/api/video_memo/upload")
