@@ -16,7 +16,7 @@ import sys
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import websockets
@@ -522,6 +522,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "petitlog": ("/petitlog",),
     "diary": ("/diary",),
     "anniv": ("/anniversaries", "/api/anniversaries"),
+    "calendar": ("/calendar", "/api/calendar", "/api/events", "/anniversaries", "/api/anniversaries"),   # 📅 よてい(記念日を吸収、2026-11-14)
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
     "album": ("/album", "/api/album"),
@@ -539,10 +540,10 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "help": ("/help",),
 }
 # 見せるのをおすすめするページ(毎日の暮らしで使うもの)。👪 ひと に「おすすめ」と出す
-RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "anniv", "album", "voice", "notes", "notebook", "help"]
+RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "calendar", "album", "voice", "notes", "notebook", "help"]
 ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
 # あとから分かれてできた道具 → 元の道具。持ち主が 👪 ひと で保存し直すまでは、元の道具と同じ(元を見せていない人には、見せない)
-TOOL_SPLIT_FROM = {"relations": "kankei"}
+TOOL_SPLIT_FROM = {"relations": "kankei", "calendar": "anniv"}
 # can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
 CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("hello", "{kids}に「ここにいるよ」を送る"),
@@ -552,7 +553,7 @@ CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("voice_delete", "自分のボイスメモを消す"),
     ("notes_delete", "自分のノートを消す"),
     ("notebook", "交換日記に書く"),
-    ("anniv", "記念日を足す・直す・消す(自分が足したもの)"),
+    ("anniv", "よてい: 予定・記念日を足す・直す・消す(自分が足したもの)"),
     ("sounds", "音を取り込む・消す・{kids}の体へ送る"),
     ("schedule", "設定: {kids}のアクティブタイムを変える"),
     ("autonomous", "設定: {kids}の自律行動を変える"),
@@ -569,7 +570,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("album_delete", "DELETE", r"/api/album/.+"),
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
-    ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?"),
+    ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
     ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
@@ -1830,6 +1831,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         relay_example_id=(other_ids[0] if other_ids else character_id),
         restriction_text=restriction_text,
         whereabouts=_whereabouts_text(character_id),
+        events=_events_text(character_id),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2320,6 +2322,22 @@ def _whereabouts_text(character_id: str) -> str:
         return ""
 
 
+def _events():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import events
+    return events
+
+
+def _events_text(character_id: str | None) -> str:
+    """7 日以内の予定(ぷちに渡す行)。読めなければ空"""
+    try:
+        return "\n".join(_events().lines(DATA_DIR, character_id))
+    except Exception:
+        return ""
+
+
 def _mail_receipts():
     """手紙が届いたことの知らせ(読まれた・スタンプ)。計算は scripts/mail_receipts.py(自律行動と同じもの)"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -2404,6 +2422,94 @@ def api_anniversaries_delete(item_id: str, request: Request = None):
     return _anniv_view(rest)
 
 
+class EventBody(BaseModel):
+    title: str
+    date: str
+    end: str | None = None
+    time: str = ""
+    place: str = ""
+    who: list[str] = []
+    note: str = ""
+
+
+def _event_not_mine(items: list[dict], item_id: str, request: Request | None) -> bool:
+    """見られる子が決まっている人は、自分が足した予定だけ直す・消す"""
+    if not _is_limited(request):
+        return False
+    me = _get_username(request) or "arisan"
+    return not any(it["id"] == item_id and it.get("by") == me for it in items)
+
+
+def _event_view(it: dict) -> dict:
+    return {**it, "by_name": _user_label(it["by"], fallback=_char_display_name(it["by"])) if it.get("by") else ""}
+
+
+@app.get("/api/events")
+def api_events():
+    return {"items": [_event_view(it) for it in _events().load(DATA_DIR)]}
+
+
+@app.post("/api/events")
+def api_events_add(body: EventBody, request: Request):
+    try:
+        it = _events().add({**body.model_dump(), "by": _get_username(request) or "arisan"}, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _event_view(it)
+
+
+@app.put("/api/events/{item_id}")
+def api_events_update(item_id: str, body: EventBody, request: Request = None):
+    ev = _events()
+    items = ev.load(DATA_DIR)
+    if not any(it["id"] == item_id for it in items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if _event_not_mine(items, item_id, request):
+        return JSONResponse({"error": "自分が足した予定だけ直せます"}, status_code=403)
+    try:
+        keep_by = next(it.get("by", "") for it in items if it["id"] == item_id)
+        item = ev.clean({**body.model_dump(), "id": item_id, "by": keep_by})
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    ev.save([item if it["id"] == item_id else it for it in items], DATA_DIR)
+    return _event_view(item)
+
+
+@app.delete("/api/events/{item_id}")
+def api_events_delete(item_id: str, request: Request = None):
+    ev = _events()
+    items = ev.load(DATA_DIR)
+    if _event_not_mine(items, item_id, request):
+        return JSONResponse({"error": "自分が足した予定だけ消せます"}, status_code=403)
+    rest = [it for it in items if it["id"] != item_id]
+    if len(rest) == len(items):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    ev.save(rest, DATA_DIR)
+    return {"ok": True}
+
+
+@app.get("/api/calendar")
+def api_calendar(month: str):
+    """月のカレンダー: 日ごとの 予定(📅)と 記念日(🎂)。前後の月の端(6 週ぶん)も返す。📅 よてい のページ用"""
+    import calendar as _cal
+    try:
+        y, m = (int(x) for x in month.split("-"))
+        first = datetime(y, m, 1).date()
+    except (ValueError, TypeError):
+        return JSONResponse({"error": "month は 2026-11 の形で"}, status_code=400)
+    an, ev = _anniv(), _events()
+    an_items, ev_items = an.load(DATA_DIR), ev.load(DATA_DIR)
+    start = first - timedelta(days=(first.weekday() + 1) % 7)   # 日曜はじまり
+    days = {}
+    for i in range(42):
+        d = start + timedelta(days=i)
+        a_rows = [{**next(it for it in an_items if it["id"] == x["id"]), "label": x["label"]} for x in an.on_day(an_items, d)]
+        e_rows = [_event_view(it) for it in ev.on_day(ev_items, d)]
+        if a_rows or e_rows:
+            days[d.isoformat()] = {"anniv": a_rows, "events": e_rows}
+    return {"month": f"{y:04d}-{m:02d}", "days": days, "weeks": len(_cal.monthcalendar(y, m))}
+
+
 # ---- いま どこ: 家の人の「いま」(自室・お外・会社 など。右上の 📍 で決める)と、ぷちの体の居場所(家 / お外。体の Wi-Fi から)。
 #      保存と文は scripts/whereabouts.py ----
 class WhereaboutsBody(BaseModel):
@@ -2458,7 +2564,8 @@ def _petit_log_sources(character_id: str):
         user_label=_user_label,
         name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
         owner_name=_owner_name(),
-        anniversaries=lambda day, _items=_anniv().load(DATA_DIR): _anniv().on_day(_items, day),
+        anniversaries=lambda day, _a=_anniv().load(DATA_DIR), _e=_events().load(DATA_DIR): (
+            [{"label": f"📅 {it['title']}", "note": it["place"]} for it in _events().on_day(_e, day)] + _anniv().on_day(_a, day)),
     )
 
 
@@ -2497,7 +2604,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html"}
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
@@ -2827,6 +2934,12 @@ def api_desire_history(character_id: str, days: int = 7):
 @app.get("/anniversaries", response_class=HTMLResponse)
 def anniversaries_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_page():
+    """📅 よてい(予定 + 記念日)。中身は dashboard/ui/calendar.html"""
+    return HTMLResponse((UI_DIR / _UI_PAGES["calendar"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/help", response_class=HTMLResponse)
@@ -8016,7 +8129,7 @@ HTML = """<!DOCTYPE html>
       help:      {icon: "📖", name: "使い方",     pane: "help"},       // 本文は dashboard/ui/help.md(2026-11-14)
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
-      anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
+      calendar:  {icon: "📅", name: "よてい",     pane: "calendar"},   // 予定 + 記念日(🎂 を吸収、2026-11-14)
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
@@ -8207,7 +8320,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

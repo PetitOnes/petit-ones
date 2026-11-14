@@ -29,6 +29,10 @@
 {{#if whereabouts}}
 {{whereabouts}}
 {{/if}}
+{{#if events}}
+近い予定:
+{{events}}
+{{/if}}
 今話しかけているのは{{owner_name}}です。{{owner_name}}と自然に会話してください。必要があればMCPツールを使ってください。
 印象に残った話題や気づきは `remember` で記憶に残してください。記憶を書くときは今日の日付（{{now}}）を意識して書いてください。
 

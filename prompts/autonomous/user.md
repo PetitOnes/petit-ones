@@ -4,6 +4,10 @@
 {{#if whereabouts}}
 {{whereabouts}}
 {{/if}}
+{{#if event_notice}}
+近い予定:
+{{event_notice}}
+{{/if}}
 
 @{{character_dir}}/SOUL.md
 {{reflection_index_line}}

@@ -107,6 +107,11 @@ def main(argv: list[str]) -> int:
     ids = argv or all_character_ids()
     variables = build_vars(ids)
     variables["whereabouts"] = _whereabouts_lines()
+    try:
+        import events
+        variables["events"] = "\n".join(events.lines(DATA_DIR, None))
+    except Exception:
+        variables["events"] = ""
     sys.stdout.write(render_prompt.render("chat/system", variables, data_dir=DATA_DIR, project_dir=PROJECT_DIR))
     return 0
 
