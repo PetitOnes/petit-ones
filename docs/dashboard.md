@@ -122,6 +122,8 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの ⚙️（「みんな」「だれか」のとき）から変えられる。
 
+ぷちを 1 人選んでいるときの ⚙️ は「○○の設定画面」。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
+
 | 項目 | 中身 |
 |---|---|
 | `topbar_color` | トップバーの色（`#rrggbb`）。無ければ、選んでいるぷちの色 |
