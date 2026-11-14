@@ -77,6 +77,17 @@ def _load_events(character: str, cursor: datetime) -> list[dict]:
     return events
 
 
+# 体が起動したわけ(ファームが返す名前)→ ぷちに渡す言い方。分からないときは何も添えない
+RESTART_WHY = {
+    "poweron": "（電源が入った）",
+    "ext": "（リセットされた）",
+    "sw": "（書き込みか、命令で）",
+    "panic": "（体の不具合で、ひとりでに）",
+    "wdt": "（体が固まって、ひとりでに）",
+    "brownout": "（電圧が下がって、ひとりでに）",
+}
+
+
 def _format_duration_sec(sec: float) -> str:
     sec = max(0, round(sec))
     if sec < 60:
@@ -168,6 +179,8 @@ def _format_events(events: list[dict]) -> list[str]:
             lines.append(f"{hhmm} 眠りについた")
         elif etype == "woken":
             lines.append(f"{hhmm} 眠っているところを起こされた")
+        elif etype == "restarted":
+            lines.append(f"{hhmm} 体が再起動した{RESTART_WHY.get(detail.get('reason'), '')}")
         elif etype == "battery_low":
             threshold = detail.get("threshold", "?")
             lines.append(f"電池が残り{threshold}%を切った")

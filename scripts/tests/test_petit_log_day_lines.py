@@ -75,3 +75,36 @@ def test_hello_shows_up_with_the_sender(tmp_path):
     assert len(hello) == 2
     assert hello[0].startswith("14:21 ありさんから「ここにいるよ」が届いた")
     assert hello[1].startswith("20:00 ありさんから「ここにいるよ」が届いた")
+
+
+def _body_events(src: pl.Sources, events: list[dict]) -> None:
+    (src.char_dir / "state" / "experience" / "20261113.jsonl").write_text(
+        "".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+
+
+def test_restart_told_by_the_body(tmp_path):
+    """起動からの秒数を返す体: 再起動は体の知らせで出す。起きていた体の再起動も出る。目覚めと二重にしない"""
+    src = _house(tmp_path)
+    _body_events(src, [
+        {"ts": "2026-11-13T10:00:00", "type": "restarted", "detail": {"uptime_s": 10, "reason": "sw"}},
+        {"ts": "2026-11-13T12:00:00", "type": "sleep", "detail": {}},
+        {"ts": "2026-11-13T13:00:00", "type": "restarted", "detail": {"uptime_s": 8, "reason": "panic"}},
+        {"ts": "2026-11-13T13:00:08", "type": "woken", "detail": {"source": "unknown", "uptime_s": 8}},
+    ])
+    body = [line for line in pl.day_lines(src, DAY) if "体が" in line or "起こされた" in line or "起きた" in line]
+    assert body == ["10:00 体が入れ直された", "13:00 体がひとりでに立ち上がり直した"]
+
+
+def test_gap_then_wake_is_not_called_restart_when_the_body_can_tell(tmp_path):
+    """つながらなかった直後の目覚めでも、再起動を自分で見分けられる体なら、推測で「入れ直された」と書かない"""
+    src = _house(tmp_path)
+    gap = {"ts": "2026-11-13T14:07:49", "type": "offline_gap", "detail": {"start": "2026-11-13T14:07:49", "end": "2026-11-13T14:08:07", "minutes": 0.3}}
+    _body_events(src, [{"ts": "2026-11-13T12:00:00", "type": "sleep", "detail": {}}, gap,
+                       {"ts": "2026-11-13T14:08:07", "type": "woken", "detail": {"source": "unknown", "uptime_s": 4000}}])
+    lines = pl.day_lines(src, DAY)
+    assert not any("入れ直された" in line for line in lines)
+    assert any(line.startswith("14:08 ") and "起" in line for line in lines)
+    # 返さない体では、今までどおり推測する
+    _body_events(src, [{"ts": "2026-11-13T12:00:00", "type": "sleep", "detail": {}}, gap,
+                       {"ts": "2026-11-13T14:08:07", "type": "woken", "detail": {"source": "unknown"}}])
+    assert "14:08 体が入れ直された" in pl.day_lines(src, DAY)
