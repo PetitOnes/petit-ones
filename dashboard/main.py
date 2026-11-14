@@ -2357,7 +2357,8 @@ def _whereabouts_view(d: dict, me: str) -> dict:
         if b:
             bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"])}
     mine = d["users"].get(me, {})
-    return {"users": users, "bodies": bodies, "choices": wa.choices(d), "me": me,
+    # 候補(自室・お外・会社)は、人ごとに決められる(⚙️ 設定 → 🏠 家 → 📍 わたしのいま)
+    return {"users": users, "bodies": bodies, "choices": wa.choices(d, _load_ui_settings(me).get("now_presets")), "me": me,
             "mine": mine.get("text", ""), "mine_since": mine.get("since", ""), "mine_until": mine.get("until", "")}
 
 
@@ -5315,6 +5316,7 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
         return {}
     base.pop("topbar_color", None)
     base.pop("topbar_saved", None)
+    base.pop("now_presets", None)   # 📍 の候補も、人ごと
     base.pop("hello_to", None)   # 📍 から送る相手も、人ごと
     base.pop("rest_to", None)
     base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
@@ -5328,6 +5330,9 @@ def api_ui_get(request: Request = None):
     # 題のはじめの値: 家の持ち主は「<COMPANION_NAME>ち」、ほかの人は「<その人の呼び名>ち」。人ごとに変えられる
     owner_title = f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち"
     cur.setdefault("house_title", owner_title if user == OWNER_USER else f"{_user_label(user, user)}ち")
+    wa = _whereabouts()
+    cur["now_presets_default"] = list(wa.PRESETS)
+    cur["now_presets_max"] = [wa.PRESET_MAX, wa.PRESET_MAX_LEN]
     return cur
 
 
@@ -5336,6 +5341,7 @@ class UiSettings(BaseModel):
     topbar_saved: str | None = None   # 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、この色に戻せる
     hello_to: list[str] | None = None   # 📍 の「ここにいるよ」が届く子。空・null なら、みんな(自分が送ってよい子ぜんぶ)
     rest_to: list[str] | None = None    # 📍 の「からだ おやすみ」が効く子。空・null なら、みんな
+    now_presets: list[str] | None = None   # 📍 わたしのいま の候補(3 つまで、5 字まで)。空・null なら、はじめの候補(自室・お外・会社)
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
@@ -5357,6 +5363,8 @@ def api_ui_set(req: UiSettings, request: Request = None):
         if key in req.model_fields_set:
             ids = [c for c in (getattr(req, key) or []) if isinstance(c, str) and re.fullmatch(r"[a-zA-Z0-9_]+", c)]
             cur[key] = ids or None
+    if "now_presets" in req.model_fields_set:
+        cur["now_presets"] = _whereabouts().clean_presets(req.now_presets) or None
     if req.house_title:
         cur["house_title"] = req.house_title.strip()[:30]
     if req.send_key in ("enter", "ctrl_enter"):

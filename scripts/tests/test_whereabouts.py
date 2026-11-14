@@ -89,3 +89,19 @@ def test_hours_until_and_expiry(tmp_path):
         wa.set_status("arisan", "会社", tmp_path, hours=0)
     with pytest.raises(ValueError):
         wa.set_status("arisan", "会社", tmp_path, hours=24 * 8)
+
+
+def test_own_presets_replace_the_first_ones(tmp_path):
+    """自分で決めた候補: はじめの候補の代わりに並ぶ。外した「はじめの候補」は、前に使っていても出さない"""
+    wa.set_status("someone", "会社", tmp_path)
+    wa.set_status("someone", "図書館", tmp_path)
+    d = wa.load(tmp_path)
+    assert wa.choices(d) == ["自室", "お外", "会社", "図書館"]
+    assert wa.choices(d, ["寝室", "リビング"]) == ["寝室", "リビング", "図書館"]
+    assert wa.choices(d, []) == ["自室", "お外", "会社", "図書館"]   # 空なら、はじめの候補
+
+
+def test_clean_presets():
+    assert wa.clean_presets([" 寝室 ", "寝室", "", "とても長い名前の部屋", "台所", "庭"]) == ["寝室", "とても長い", "台所"]
+    assert wa.clean_presets(None) == []
+    assert wa.clean_presets("自室") == []

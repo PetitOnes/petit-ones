@@ -119,8 +119,14 @@
         </div>
       </div>
       <div class="m-card" id="pinCard">
-        <span class="a-heading">📍 から送る相手</span>
-        <p class="a-hint" style="margin:0 0 8px">右上の 📍 の「👋 ここにいるよ」と「🌙 からだ おやすみ」を、だれに届けるか。押して選ぶ。</p>
+        <span class="a-heading">📍 わたしのいま</span>
+        <div class="s-row">
+          <span>🏷️ 候補</span>
+          <span class="s-pin"><span id="nowPresets" style="display:flex;gap:6px"></span>
+            <button class="a-btn a-btn--sub a-btn--s" onclick="savePresets()">決める</button></span>
+        </div>
+        <p class="a-hint" id="nowPresetsHint" style="margin:4px 0 10px"></p>
+        <p class="a-hint" style="margin:0 0 8px">📍 の「👋 ここにいるよ」と「🌙 からだ おやすみ」を、だれに届けるか。押して選ぶ。</p>
         <div class="s-row"><span>👋 ここにいるよ</span><span class="s-pin" id="pinHello"></span></div>
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
       </div>
@@ -267,8 +273,22 @@
     }
     function defaultTools() { return Object.keys(TOOL).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})); }
     // 📍 から送る相手: 子ごとの粒を押して選ぶ。みんな選んである = 「みんな」(あとから迎えた子にも届く)。1 人は残す
+    // 📍 の候補(自室・お外・会社): 自分の言葉に変えられる。空にして決めると、はじめの候補に戻る
+    function renderPresets() {
+      const [max, len] = ui.now_presets_max || [3, 5];
+      const cur = Array.isArray(ui.now_presets) && ui.now_presets.length ? ui.now_presets : (ui.now_presets_default || []);
+      document.getElementById("nowPresets").innerHTML = Array.from({length: max}, (_, i) =>
+        `<input class="a-input a-input--s" data-preset maxlength="${len}" value="${esc(cur[i] || "")}" style="width:${len + 1.5}em;text-align:center" onkeydown="if (event.key === 'Enter' && !event.isComposing) savePresets()">`).join("");
+      document.getElementById("nowPresetsHint").textContent = `${max} つまで、${len} 字まで。ぜんぶ空にして決めると「${(ui.now_presets_default || []).join("・")}」に戻る。使ったことのある言葉も、📍 に候補として並ぶ。`;
+    }
+    function savePresets() {
+      saveUi({now_presets: [...document.querySelectorAll("#nowPresets [data-preset]")].map(x => x.value.trim()).filter(Boolean)});
+    }
     function renderPin() {
-      document.getElementById("pinCard").style.display = chars.length ? "" : "none";
+      renderPresets();
+      document.getElementById("pinCard").style.display = "";
+      document.getElementById("pinHello").closest(".s-row").style.display = chars.length ? "" : "none";
+      document.getElementById("pinRest").closest(".s-row").style.display = chars.length ? "" : "none";
       for (const [key, id] of [["hello_to", "pinHello"], ["rest_to", "pinRest"]]) {
         const picked = Array.isArray(ui[key]) && ui[key].length ? ui[key] : chars.map(c => c.id);
         document.getElementById(id).innerHTML = chars.map(c => `<button class="a-pill${picked.includes(c.id) ? " is-on" : ""}" data-pin="${key}" data-char="${esc(c.id)}"><span class="s-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`).join("");
