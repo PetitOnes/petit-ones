@@ -131,6 +131,12 @@
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
       </div>
       <div class="m-card">
+        <span class="a-heading">家の中の場所</span>
+        <p class="a-hint" style="margin:0 0 4px">ぷちを置く場所(あり部屋:ソファ など)。ようす の「いる場所」で押せる。部屋に SwitchBot の機体を結ぶと、家の空気を「いる部屋」で選べる</p>
+        <div id="spotRows"></div>
+        <div style="display:flex;gap:6px;margin-top:8px"><button class="a-btn a-btn--ghost a-btn--s" onclick="addSpotRow()">＋ 場所を足す</button><span style="flex:1"></span><button class="a-btn a-btn--s" onclick="saveSpots()">保存</button></div>
+      </div>
+      <div class="m-card">
         <span class="a-heading">SwitchBot 連携</span>
         <p class="a-hint" style="margin:0 0 4px">部屋の記録(10 分ごと)に入れる機体。切った機体は記録せず、ようす・よてい・ぷちにも出ない。鍵は家の .env</p>
         <div id="roomDevices"><p class="a-hint" style="margin:0">読み込み中…</p></div>
@@ -337,7 +343,37 @@
     async function loadHouse() {
       try { ui = await (await fetch("/api/ui")).json(); } catch (e) { ui = {}; }
       renderHouse();
-      loadRoomDevices();
+      await loadRoomDevices();   // 場所の行に機体の粒を出すので、先に
+      loadSpots();
+    }
+    // 家の中の場所(config/spots.json)。部屋・場所と、その部屋の SwitchBot の機体
+    let spotsList = [];
+    function spotRowHtml(s) {
+      const devs = roomDevices.map(d => `<label class="a-pill${(s.devices || []).includes(d.id) ? " is-on" : ""}" style="font-size:0.75rem;min-height:28px"><input type="checkbox" data-dev="${esc(d.id)}" ${(s.devices || []).includes(d.id) ? "checked" : ""} style="display:none" onchange="this.parentElement.classList.toggle('is-on', this.checked)">${esc(d.name)}</label>`).join("");
+      return `<div class="s-spot" data-spot="${esc(s.id || "")}" style="padding:8px 0;border-bottom:1px solid var(--ui-line-soft)">
+        <div style="display:flex;gap:6px"><input class="a-input s-room" placeholder="部屋(あり部屋)" maxlength="20" value="${esc(s.room || "")}" style="flex:1;min-width:0"><input class="a-input s-place" placeholder="場所(ソファ)" maxlength="20" value="${esc(s.spot || "")}" style="flex:1;min-width:0"><button class="a-icon-btn" title="消す" onclick="this.closest('.s-spot').remove()">✕</button></div>
+        ${devs ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">${devs}</div>` : ""}</div>`;
+    }
+    async function loadSpots() {
+      try { spotsList = (await (await fetch("/api/spots")).json()).spots || []; } catch (e) { spotsList = []; }
+      document.getElementById("spotRows").innerHTML = spotsList.map(spotRowHtml).join("") || `<p class="a-hint" style="margin:0">まだありません</p>`;
+    }
+    function addSpotRow() {
+      const el = document.getElementById("spotRows");
+      if (el.querySelector("p")) el.innerHTML = "";
+      el.insertAdjacentHTML("beforeend", spotRowHtml({}));
+      el.lastElementChild.querySelector(".s-room").focus();
+    }
+    async function saveSpots() {
+      const rows = [...document.querySelectorAll("#spotRows .s-spot")].map(r => ({
+        id: r.dataset.spot || undefined, room: r.querySelector(".s-room").value, spot: r.querySelector(".s-place").value,
+        devices: [...r.querySelectorAll("[data-dev]")].filter(x => x.checked).map(x => x.dataset.dev)})).filter(s => s.room.trim());
+      try {
+        const res = await fetch("/api/spots", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({spots: rows})});
+        const j = await res.json().catch(() => ({}));
+        toast(res.ok ? "保存しました" : (j.error || "保存できなかった"));
+        if (res.ok) loadSpots();
+      } catch (e) { toast("保存できなかった"); }
     }
     // SwitchBot の機体ごとに、記録に入れる/入れない(config/room.json の off)
     let roomDevices = [];

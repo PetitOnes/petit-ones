@@ -74,7 +74,7 @@ def test_body_places_from_wifi_and_host(tmp_path):
     # 家の config/places.json で言い方を変えられる
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "places.json").write_text(json.dumps({"wifi": {"3": "おでかけ"}, "how": {"3": "スマホ"}}), encoding="utf-8")
-    assert wa.body("puchiko", tmp_path, NOW) == {"place": "おでかけ", "how": "スマホ", "since": "2026-11-14T12:40:00", "offline": False}
+    assert wa.body("puchiko", tmp_path, NOW) == {"place": "おでかけ", "how": "スマホ", "since": "2026-11-14T12:40:00", "offline": False, "spot": ""}
 
 
 def test_hours_until_and_expiry(tmp_path):
