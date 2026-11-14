@@ -2069,12 +2069,133 @@ def api_diary_day(character_id: str, date: str):
             "prev": prev_day, "next": next_day}
 
 
-_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html"}
+_UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
+             "sounds": "sounds.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
 def desires_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["desires"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+# ---- 音(家の音のライブラリ PETIT_DATA_DIR/sounds/ と、ぷちの体の SD の音)。置き方と変換は scripts/sounds.py ----
+# 体は「一覧を返す・鳴らす・受け取る」はできるが、音を取り出す・消すはできない。元になる音は家に置き、ここから体へ送る
+
+def _sounds():
+    import sounds
+    return sounds
+
+
+class SoundSendRequest(BaseModel):
+    name: str
+    char_ids: list[str]
+
+
+class SoundPlayRequest(BaseModel):
+    name: str
+    char_id: str
+
+
+async def _body_sounds(char: dict) -> dict:
+    """その子の体にある音の一覧。つながっていなければ online: false"""
+    import requests as req
+    out = {"id": char["id"], "name": char.get("name") or char["id"], "color": char.get("color") or "", "online": False, "sounds": []}
+    host = await resolve_m5_host(get_char_config(char["id"]))
+    if not host:
+        return out
+    try:
+        r = await asyncio.to_thread(lambda: req.get(f"http://{host}/se_list", timeout=5))
+        names = r.json()
+        out["online"] = True
+        out["sounds"] = sorted(str(n) for n in names if isinstance(n, str)) if isinstance(names, list) else []
+    except Exception:
+        pass
+    return out
+
+
+@app.get("/sounds", response_class=HTMLResponse)
+def sounds_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["sounds"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/sounds")
+async def api_sounds():
+    """家の音の一覧と、ぷちそれぞれの体にある音の一覧"""
+    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    bodies = await asyncio.gather(*[_body_sounds(c) for c in chars])
+    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "max_seconds": _sounds().MAX_SECONDS}
+
+
+@app.post("/api/sounds/upload")
+async def api_sounds_upload(file: UploadFile = File(...), name: str = Form("")):
+    """音を取り込む。体が鳴らせる形(モノラル・16 kHz・16 bit の WAV)にして家に置く"""
+    sd = _sounds()
+    raw = await file.read()
+    try:
+        item = await asyncio.to_thread(lambda: sd.save(DATA_DIR, name or file.filename or "", raw, Path(file.filename or "").suffix))
+    except sd.SoundError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "item": item}
+
+
+@app.get("/api/sounds/file/{name}")
+def api_sounds_file(name: str):
+    """家の音を聞く(ブラウザで鳴らす用)"""
+    path = _sounds().path_of(DATA_DIR, name)
+    if path is None:
+        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+    return Response(path.read_bytes(), media_type="audio/wav", headers={"Cache-Control": "no-cache"})
+
+
+@app.delete("/api/sounds/{name}")
+def api_sounds_delete(name: str):
+    """家の音を消す(体の SD に送った分は残る。体からは消せない)"""
+    if not _sounds().delete(DATA_DIR, name):
+        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+    return {"ok": True}
+
+
+@app.post("/api/sounds/send")
+async def api_sounds_send(req_body: SoundSendRequest):
+    """家の音を、選んだ子の体(SD)へ送る。同じ名前が体にあれば置き換わる"""
+    import requests as req
+    path = _sounds().path_of(DATA_DIR, req_body.name)
+    if path is None:
+        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+    data = path.read_bytes()
+    results = {}
+
+    async def _one(cid: str) -> None:
+        host = await resolve_m5_host(get_char_config(cid))
+        if not host:
+            results[cid] = "体につながっていません"
+            return
+        try:
+            r = await asyncio.to_thread(lambda: req.post(
+                f"http://{host}/upload_wav", files={"file": (path.name, data, "audio/wav")}, timeout=60))
+            results[cid] = "ok" if r.status_code == 200 else f"送れませんでした({r.status_code})"
+        except Exception:
+            results[cid] = "送れませんでした"
+
+    await asyncio.gather(*[_one(cid) for cid in req_body.char_ids if cid in GROUP_CHAR_IDS])
+    return {"ok": all(v == "ok" for v in results.values()) and bool(results), "results": results}
+
+
+@app.post("/api/sounds/play")
+async def api_sounds_play(req_body: SoundPlayRequest):
+    """その子の体で、音を 1 回鳴らす"""
+    import requests as req
+    # 体にだけある音(家のライブラリの名前の決まりに合わないもの)も鳴らせるよう、ここはゆるく見る
+    if req_body.char_id not in GROUP_CHAR_IDS or not re.fullmatch(r"[A-Za-z0-9_.-]{1,60}", req_body.name or ""):
+        return JSONResponse({"error": "鳴らせません"}, status_code=400)
+    host = await resolve_m5_host(get_char_config(req_body.char_id))
+    if not host:
+        return JSONResponse({"error": "体につながっていません"}, status_code=409)
+    try:
+        r = await asyncio.to_thread(lambda: req.get(f"http://{host}/se_play", params={"name": req_body.name}, timeout=15))
+    except Exception:
+        return JSONResponse({"error": "鳴らせませんでした"}, status_code=502)
+    return {"ok": r.status_code == 200}
 
 
 @app.get("/api/{character_id}/desire_history")
@@ -6904,6 +7025,7 @@ HTML = """<!DOCTYPE html>
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
+      sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
@@ -7105,7 +7227,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", library: "/library"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

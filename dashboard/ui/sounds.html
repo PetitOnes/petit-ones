@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>音</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔔 音</h1></div>
+
+    <!-- 取り込む: 家の音のライブラリに足す。体が鳴らせる形に変換される -->
+    <div class="m-card">
+      <span class="a-heading">音を取り込む</span>
+      <div class="o-sound-form">
+        <input class="a-input" id="fFile" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac">
+        <label><span class="a-label">名前(英小文字・数字・_ と -。体のファイル名になります)</span>
+          <input class="a-input" id="fName" maxlength="40" placeholder="たとえば shizuku" autocapitalize="off" spellcheck="false"></label>
+        <div class="o-sound-form-row">
+          <span class="o-sound-msg" id="fMsg"></span>
+          <button class="a-btn" id="addBtn" onclick="upload()">取り込む</button>
+        </div>
+      </div>
+      <p class="a-label" id="hint"></p>
+    </div>
+
+    <!-- 家の音: 聞く・体へ送る・消す -->
+    <div class="m-card">
+      <span class="a-heading">家の音</span>
+      <div id="library"></div>
+      <div class="p-empty" id="libEmpty" style="display:none">まだ音はありません。上から取り込めます</div>
+    </div>
+
+    <!-- みんなの体にある音: 体で鳴らす -->
+    <div class="m-card">
+      <span class="a-heading">みんなの体にある音</span>
+      <div id="bodies"><div class="p-empty">体に聞いています…</div></div>
+      <p class="a-label">音の名前を押すと、その子の体で 1 回鳴ります。体にだけある音は、家に元の音がありません(体からは取り出せません)。</p>
+    </div>
+  </div>
+
+  <script>
+    const { esc } = PetitPage;
+    let library = [], bodies = [], sendingFor = null;
+
+    const $ = id => document.getElementById(id);
+    function secs(s) { return s ? (s < 10 ? s.toFixed(1) : Math.round(s)) + " 秒" : ""; }
+    function dot(b) { return `<span class="a-dot" style="background:${esc(b.color || "#cab8d9")}" title="${esc(b.name)}"></span>`; }
+
+    async function call(method, url, body) {
+      const opt = { method };
+      if (body instanceof FormData) opt.body = body;
+      else if (body) { opt.headers = { "Content-Type": "application/json" }; opt.body = JSON.stringify(body); }
+      const r = await fetch(url, opt);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "うまくいきませんでした");
+      return j;
+    }
+
+    // 家の音の 1 行。持っている子の色の点、聞く、送る、消す
+    function libRow(it) {
+      const have = bodies.filter(b => b.online && b.sounds.includes(it.name));
+      const sending = sendingFor === it.name;
+      const targets = bodies.map(b => `<label class="o-sound-pick${b.online ? "" : " is-off"}">
+          <input type="checkbox" data-pick="${esc(b.id)}" ${b.online ? "checked" : "disabled"}>${dot(b)}${esc(b.name)}${b.online ? "" : "(つながっていない)"}</label>`).join("");
+      return `<div class="o-sound" data-name="${esc(it.name)}">
+        <div class="o-sound-main"><b>${esc(it.name)}</b>
+          <div class="o-sound-sub">${secs(it.seconds)}${have.length ? "・体にある: " + have.map(dot).join("") : "・まだどの体にもない"}</div></div>
+        <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(it.name)}">▶ 聞く</button>
+        <button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>
+        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>
+        ${sending ? `<div class="o-sound-send"><span class="a-label">だれの体に送る?</span>${targets}
+          <button class="a-btn a-btn--s" data-go="${esc(it.name)}">送る</button><span class="o-sound-msg" data-sendmsg></span></div>` : ""}
+      </div>`;
+    }
+
+    // 体ごとの音。押すと体で鳴る。家に無い音は印を付ける
+    function bodyBlock(b) {
+      const inLib = new Set(library.map(x => x.name));
+      const chips = b.sounds.map(n => `<button class="o-sound-chip${inLib.has(n) ? "" : " is-only"}" data-play="${esc(n)}" data-char="${esc(b.id)}"
+          title="${inLib.has(n) ? "体で鳴らす" : "体にだけある音。体で鳴らす"}">${esc(n.replace(/\.wav$/, ""))}</button>`).join("");
+      return `<div class="o-sound-body">
+        <div class="o-sound-body-head">${dot(b)}<b>${esc(b.name)}</b>
+          <span class="a-label">${b.online ? `${b.sounds.length} 個` : "体につながっていません"}</span>
+          <span class="o-sound-msg" data-bodymsg="${esc(b.id)}"></span></div>
+        <div class="o-sound-chips">${chips}</div>
+      </div>`;
+    }
+
+    function render() {
+      $("library").innerHTML = library.map(libRow).join("");
+      $("libEmpty").style.display = library.length ? "none" : "";
+      $("bodies").innerHTML = bodies.length ? bodies.map(bodyBlock).join("") : '<div class="p-empty">ぷちがいません</div>';
+    }
+
+    async function load() {
+      try {
+        const res = await call("GET", "/api/sounds");
+        library = res.library || [];
+        bodies = res.bodies || [];
+        $("hint").textContent = `WAV・MP3・M4A などを入れられます。体が鳴らせる形(モノラル・16 kHz)に変換します。${res.max_seconds || 20} 秒までです。`;
+        render();
+      } catch (e) {
+        $("bodies").innerHTML = '<div class="p-empty">読み込めませんでした</div>';
+      }
+    }
+
+    // ファイルを選んだら、名前の欄に元の名前から作った候補を入れる(空のときだけ)
+    $("fFile").addEventListener("change", () => {
+      const f = $("fFile").files[0];
+      if (!f || $("fName").value.trim()) return;
+      $("fName").value = f.name.replace(/\.[A-Za-z0-9]{1,5}$/, "").toLowerCase().replace(/[\s.]+/g, "_").replace(/[^a-z0-9_-]/g, "").slice(0, 40);
+    });
+
+    async function upload() {
+      const f = $("fFile").files[0], msg = $("fMsg");
+      msg.textContent = "";
+      if (!f) { msg.textContent = "ファイルを選んでください"; return; }
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("name", $("fName").value.trim());
+      $("addBtn").disabled = true;
+      try {
+        const res = await call("POST", "/api/sounds/upload", fd);
+        $("fFile").value = "";
+        $("fName").value = "";
+        msg.textContent = "";
+        sendingFor = res.item.name;   // 取り込んだら、そのまま送り先を選べるように開く
+        await load();
+      } catch (e) { msg.textContent = e.message; }
+      $("addBtn").disabled = false;
+    }
+
+    let audio = null;
+    $("library").addEventListener("click", async e => {
+      const listen = e.target.closest("[data-listen]"), send = e.target.closest("[data-send]"),
+            del = e.target.closest("[data-del]"), go = e.target.closest("[data-go]");
+      if (listen) {
+        if (audio) audio.pause();
+        audio = new Audio("/api/sounds/file/" + encodeURIComponent(listen.dataset.listen));
+        audio.play().catch(() => {});
+      } else if (send) {
+        sendingFor = sendingFor === send.dataset.send ? null : send.dataset.send;
+        render();
+      } else if (go) {
+        const row = go.closest(".o-sound"), msg = row.querySelector("[data-sendmsg]");
+        const ids = [...row.querySelectorAll("[data-pick]:checked")].map(x => x.dataset.pick);
+        if (!ids.length) { msg.textContent = "送る子を選んでください"; return; }
+        go.disabled = true;
+        msg.textContent = "送っています…";
+        try {
+          const res = await call("POST", "/api/sounds/send", { name: go.dataset.go, char_ids: ids });
+          const bad = Object.entries(res.results || {}).filter(([, v]) => v !== "ok");
+          if (bad.length) {
+            msg.textContent = bad.map(([id, v]) => `${(bodies.find(b => b.id === id) || {}).name || id}: ${v}`).join(" / ");
+            go.disabled = false;
+          } else { sendingFor = null; await load(); }
+        } catch (e2) { msg.textContent = e2.message; go.disabled = false; }
+      } else if (del) {
+        if (!confirm(`「${del.dataset.del}」を家から消します(体に送った分は残ります)`)) return;
+        try { await call("DELETE", "/api/sounds/" + encodeURIComponent(del.dataset.del)); if (sendingFor === del.dataset.del) sendingFor = null; await load(); }
+        catch (e2) { alert(e2.message); }
+      }
+    });
+
+    $("bodies").addEventListener("click", async e => {
+      const chip = e.target.closest("[data-play]");
+      if (!chip) return;
+      const msg = document.querySelector(`[data-bodymsg="${CSS.escape(chip.dataset.char)}"]`);
+      chip.disabled = true;
+      if (msg) msg.textContent = "";
+      try { await call("POST", "/api/sounds/play", { name: chip.dataset.play, char_id: chip.dataset.char }); }
+      catch (e2) { if (msg) msg.textContent = e2.message; }
+      chip.disabled = false;
+    });
+
+    load();
+  </script>
+</body>
+</html>

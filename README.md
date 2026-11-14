@@ -143,6 +143,7 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── house_alert.py        # ぷちが Claude を呼べなかった・エラーで終わったときに Slack と手紙箱へ知らせる(docs/operations.md)
 │   ├── presence_watch.py     # 家の人感センサーから「近づいた瞬間」を拾って、家の出来事に残す(docs/operations.md)
 │   ├── contact.py            # 人がその子に話しかけた・合図を送った、を中身なしで残す(docs/operations.md)
+│   ├── sounds.py             # 家の音のライブラリ(取り込み・変換・一覧)。ダッシュボードの「音」のページが使う
 │   ├── append_chat_log.py    #   /chat スキルのチャットログ保存
 │   ├── check_usage.py        #   トークン使用量(今日/今週/今月)
 │   ├── backup_petit.sh / restore_petit.sh
