@@ -530,6 +530,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "notebook": ("/notebook",),
     "kairanban": ("/kairanban",),
     "library": ("/library",),
+    "relations": ("/relations",),
     "kankei": ("/kankei",),
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
@@ -540,6 +541,8 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
 # 見せるのをおすすめするページ(毎日の暮らしで使うもの)。👪 ひと に「おすすめ」と出す
 RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "anniv", "album", "voice", "notes", "notebook", "help"]
 ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
+# あとから分かれてできた道具 → 元の道具。持ち主が 👪 ひと で保存し直すまでは、元の道具と同じ(元を見せていない人には、見せない)
+TOOL_SPLIT_FROM = {"relations": "kankei"}
 # can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
 CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("hello", "{kids}に「ここにいるよ」を送る"),
@@ -627,6 +630,9 @@ def _access_of(user: str) -> dict:
     hide = ids("hide_tools")
     can_raw = cur.get("can") if isinstance(cur.get("can"), dict) else {}
     children = ids("children")
+    if hide is not None:   # 保存したときにまだ無かった道具は、元の道具に合わせる
+        seen = ids("seen_tools") or []
+        hide = hide + [new for new, old in TOOL_SPLIT_FROM.items() if new not in seen and new not in hide and old in hide]
     return {"hide_tools": [t for t in (hide if hide is not None else ACCESS_DEFAULT["hide_tools"]) if t in HIDEABLE_TOOLS],
             "children": children if children is not None else _auth_children(user),
             **{k: ids(k) for k in VIEW_DEFAULT},
@@ -2854,7 +2860,14 @@ def terminal_page():
 
 @app.get("/kankei", response_class=HTMLResponse)
 def kankei_page():
-    return HTMLResponse(KANKEI_HTML)
+    """🔒 ひみつ: ぷちどうしの手紙(2026-11-14 に、関係の図を /relations へ分けた)"""
+    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "mail").replace("__TITLE__", "🔒 ひみつ"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/relations", response_class=HTMLResponse)
+def relations_page():
+    """🕸️ 関係: ぷちたちと人の、気持ちの図とカード"""
+    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "rel").replace("__TITLE__", "🕸️ 関係"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/notes", response_class=HTMLResponse)
@@ -7062,6 +7075,7 @@ def api_access_set(body: AccessBody, request: Request):
     known = {c["id"] for c in list_characters()}
     if body.hide_tools is not None:
         cur["hide_tools"] = [t for t in body.hide_tools if t in HIDEABLE_TOOLS]
+        cur["seen_tools"] = sorted(HIDEABLE_TOOLS)   # このとき画面に並んでいた道具(あとから増えた道具と見分ける)
     if body.children is not None:
         cur["children"] = [c for c in body.children if c in known]
     for key, value in (body.views or {}).items():
@@ -7954,6 +7968,7 @@ HTML = """<!DOCTYPE html>
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
       kairanban: {icon: "📋", name: "回覧板",     pane: "kairanban"},
       library:   {icon: "📚", name: "ライブラリ", pane: "library"},
+      relations: {icon: "🕸️", name: "関係",       pane: "relations"},   // 2026-11-14 に ひみつ から分けた
       kankei:    {icon: "🔒", name: "ひみつ",     pane: "kankei"},
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
@@ -8135,7 +8150,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -9892,7 +9907,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
-  <title>関係と秘密</title>
+  <title>__TITLE__</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* ほかのページ(記念日・音・回覧板)と同じ色づかい: クリームの地・白いカード・紫の見出し(2026-11-14) */
@@ -9902,9 +9917,9 @@ KANKEI_HTML = """<!DOCTYPE html>
     html.embed .top-bar { display: none; }
     .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
     .back-btn:hover { background: #f0eaf8; }
-    .jump { display: flex; gap: 6px; max-width: 720px; margin: 8px auto 0; padding: 0 16px; }
-    .jump a { padding: 6px 14px; font-size: 0.85rem; font-weight: 700; color: #9b8ec4; text-decoration: none; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 999px; }
-    .sec-title { max-width: 720px; margin: 16px auto 0; padding: 0 16px; font-size: 1rem; color: #9b8ec4; letter-spacing: 0.04em; }
+    .mode-rel .mail-section { display: none; }
+    .mode-mail .chart-container, .mode-mail .cards { display: none; }
+    .mode-mail .mail-thread { max-height: none; }
     .chart-container { display: flex; justify-content: center; padding: 20px; }
     svg { max-width: 700px; width: 100%; height: auto; }
     .tooltip {
@@ -9965,13 +9980,12 @@ KANKEI_HTML = """<!DOCTYPE html>
     }
   </style>
 </head>
-<body>
+<body class="mode-__MODE__">
+  <!-- 1 つの作りを 2 つのページで使う(2026-11-14 に分けた): mode-rel = 🕸️ 関係(図とカード)、mode-mail = 🔒 ひみつ(ぷちどうしの手紙) -->
   <div class="top-bar">
     <a href="/" class="back-btn">← もどる</a>
-    <h1>🔒 関係と秘密</h1>
+    <h1>__TITLE__</h1>
   </div>
-  <div class="jump"><a href="#secRel">関係</a><a href="#secMail">秘密(メール)</a></div>
-  <h2 class="sec-title" id="secRel">🕸️ 関係</h2>
   <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
   <div class="tooltip" id="tip"></div>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
@@ -9979,7 +9993,6 @@ KANKEI_HTML = """<!DOCTYPE html>
   </div>
   <div class="cards" id="cards"></div>
   <div class="mail-section">
-    <h2 id="secMail">✉️ 秘密(メール)</h2>
     <div id="mailThread" class="mail-thread"></div>
     <div id="mailMore" style="text-align:center;padding:10px;display:none">
       <button onclick="showMoreMails()" style="background:#fff;border:1.5px solid #E3D6C2;color:#9b8ec4;padding:8px 20px;border-radius:12px;cursor:pointer;font-size:0.85rem;font-weight:700">もっと見る ↓</button>
@@ -9989,6 +10002,7 @@ KANKEI_HTML = """<!DOCTYPE html>
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
     if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
+    const MODE = "__MODE__";   // "rel" = 関係のページ / "mail" = ひみつ(手紙)のページ
     const SVG_NS = "http://www.w3.org/2000/svg";
     const CX = 350, CY = 350, RADIUS = 220, NODE_R = 40;
 
@@ -10197,7 +10211,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       });
     }
 
-    load();
+    if (MODE === "rel") load();   // 関係のページだけ、図とカードを描く
 
     function parseMail(mail) {
       const parts = mail.filename.replace(".md", "").split("_");
@@ -10293,7 +10307,10 @@ KANKEI_HTML = """<!DOCTYPE html>
         thread.innerHTML = '<div class="mail-empty">読み込めませんでした</div>';
       }
     }
-    loadMails();
+    // ひみつ のページ: 手紙だけ読む。差出人の名前と色は、関係の入口の一覧から借りる(図は描かない)
+    if (MODE === "mail") {
+      fetch("/api/relations").then(r => r.json()).then(d => { _nodes = d.nodes || []; }).catch(() => {}).then(loadMails);
+    }
   </script>
 </body>
 </html>

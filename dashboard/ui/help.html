@@ -65,7 +65,7 @@
     // 行の頭の太字(「**アクティブタイム**: …」の アクティブタイム)で見分ける。本文(help.md)に印は付けていない
     let me = {};
     const TOOL_WORDS = {petitlog: "ぷちログ", diary: "日記", album: "アルバム", voice: "ボイスメモ", notes: "ノート", notebook: "交換日記", anniv: "記念日",
-      desires: "欲求", sounds: "音", kairanban: "回覧板", library: "ライブラリ", kankei: "ひみつ", monitor: "モニタ", terminal: "ターミナル", logs: "行動ログ", costs: "おかね", yousu: "ようす"};
+      desires: "欲求", sounds: "音", kairanban: "回覧板", library: "ライブラリ", relations: "関係", kankei: "ひみつ", monitor: "モニタ", terminal: "ターミナル", logs: "行動ログ", costs: "おかね", yousu: "ようす"};
     const CANNOT_LINES = [   // [できないこと, 行の頭の言葉, (あれば)その節だけ]
       ["rest", /からだ おやすみ/], ["body", /ようす → からだの設定|WHO|PSAVE|明るさ|音量/, "puchi-body"],
       ["schedule", /アクティブタイム|1 日に動く予定|今日のスケジュール/, "settings"], ["autonomous", /自律行動の頻度/, "settings"],
