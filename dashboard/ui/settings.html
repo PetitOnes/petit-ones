@@ -130,6 +130,11 @@
         <div class="s-row"><span>👋 ここにいるよ</span><span class="s-pin" id="pinHello"></span></div>
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
       </div>
+      <div class="m-card">
+        <span class="a-heading">SwitchBot 連携</span>
+        <p class="a-hint" style="margin:0 0 4px">部屋の記録(10 分ごと)に入れる機体。切った機体は記録せず、ようす・よてい・ぷちにも出ない。鍵は家の .env</p>
+        <div id="roomDevices"><p class="a-hint" style="margin:0">読み込み中…</p></div>
+      </div>
       <div class="m-card s-tools">
         <span class="a-heading">道具の列</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 6px">▲▼ で並びを変える。出し方は 3 つ: <b>最初</b>(列に出す)/ <b>ほか</b>(「ほか」を押したら出る)/ <b>なし</b>(出さない)。</p>
@@ -332,6 +337,25 @@
     async function loadHouse() {
       try { ui = await (await fetch("/api/ui")).json(); } catch (e) { ui = {}; }
       renderHouse();
+      loadRoomDevices();
+    }
+    // SwitchBot の機体ごとに、記録に入れる/入れない(config/room.json の off)
+    let roomDevices = [];
+    async function loadRoomDevices() {
+      const el = document.getElementById("roomDevices");
+      let r;
+      try { r = await (await fetch("/api/room/devices")).json(); } catch (e) { el.innerHTML = `<p class="a-hint" style="margin:0">読めなかった</p>`; return; }
+      if (!r.ok) { el.innerHTML = `<p class="a-hint" style="margin:0">${esc(r.why || "読めなかった")}</p>`; return; }
+      roomDevices = r.items || [];
+      if (!roomDevices.length) { el.innerHTML = `<p class="a-hint" style="margin:0">記録できる機体がありません</p>`; return; }
+      el.innerHTML = roomDevices.map(d => `<div class="s-row"><span>${esc(d.name)} <span class="s-sub" style="font-size:0.75rem">${esc(d.type)}</span></span><label class="a-toggle"><input type="checkbox" data-room="${esc(d.id)}" ${d.on ? "checked" : ""} onchange="saveRoomDevices()"><span></span></label></div>`).join("");
+    }
+    async function saveRoomDevices() {
+      const off = [...document.querySelectorAll("#roomDevices [data-room]")].filter(x => !x.checked).map(x => x.dataset.room);
+      try {
+        const r = await fetch("/api/room/devices", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({off})});
+        toast(r.ok ? "保存しました(次の記録から)" : "保存できなかった");
+      } catch (e) { toast("保存できなかった"); }
     }
     async function saveUi(patch) {
       try {

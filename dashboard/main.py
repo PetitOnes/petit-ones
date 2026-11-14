@@ -2541,6 +2541,32 @@ def api_room_latest():
     return {"latest": _room().latest(DATA_DIR)}
 
 
+_room_devices_cache: dict = {"at": 0.0, "items": None}
+
+
+@app.get("/api/room/devices")
+def api_room_devices():
+    """SwitchBot の記録できる機体と、記録するかどうか(設定ページの「SwitchBot 連携」)。一覧は 60 秒覚える"""
+    now = time.time()
+    if _room_devices_cache["items"] is None or now - _room_devices_cache["at"] > 60:
+        _room_devices_cache.update(at=now, items=_room().devices(DATA_DIR))
+    items = _room_devices_cache["items"]
+    if items is None:
+        return {"ok": False, "items": [], "why": "鍵が無いか、SwitchBot につながらない(.env の SWITCHBOT_TOKEN/SECRET)"}
+    off = set(_room().load_cfg(DATA_DIR)["off"])
+    return {"ok": True, "items": [{**it, "on": it["id"] not in off} for it in items]}
+
+
+class RoomDevicesBody(BaseModel):
+    off: list[str] = []   # 記録しない機体の id
+
+
+@app.post("/api/room/devices")
+def api_room_devices_set(body: RoomDevicesBody):
+    cfg = _room().set_off(DATA_DIR, body.off)
+    return {"ok": True, "off": cfg["off"]}
+
+
 @app.get("/api/room/day")
 def api_room_day(date: str):
     return _room().day_summary(DATA_DIR, date)
@@ -8548,7 +8574,7 @@ HTML = """<!DOCTYPE html>
         if ("temperature" in d) bits.push(`🌡 ${d.temperature}℃`);
         if ("humidity" in d) bits.push(`💧 ${d.humidity}%`);
         if ("light" in d) bits.push(`☀️ 明るさ ${d.light}`);
-        if ("move" in d) { const last = (latest.last_move || {})[id]; bits.push(d.move ? "🚶 動きあり" : `🚶 動きなし${last ? `(最後 ${hm(last)})` : ""}`); }
+        if ("move" in d) { const last = (latest.last_move || {})[id]; bits.push(d.move ? "🚶 動きあり" : `🚶 動きなし${last ? `(最後 ${hm(last)})` : "(まだ記録なし)"}`); }
         if ("power" in d) bits.push(d.power === "on" ? "💡 オン" : "💡 オフ");
         if ("open" in d) bits.push(d.open === "open" ? "🚪 開" : "🚪 閉");
         return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:0.85rem;"><span style="font-weight:700;color:#555">${safe(d.name)}</span><span style="color:#777;text-align:right">${bits.join(" ")}</span></div>`;
