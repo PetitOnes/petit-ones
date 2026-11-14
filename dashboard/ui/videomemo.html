@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>動画メモ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 動画メモ(人が撮る、10 秒までの小さい動画)。ほかのページと同じ部品で。1 本 = 1 枚のカード */
+    .v-new { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .v-new .a-input { flex: 1 1 10em; min-width: 0; }
+    .v-new input[type=file] { display: none; }
+    .v-msg { flex: 1 1 100%; margin: 0; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .v-msg.is-bad { color: var(--ui-danger); }
+    .v-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .v-card { padding: 10px; }
+    .v-card video { display: block; width: 100%; max-height: 360px; background: #000; border-radius: var(--ui-radius-s); }
+    .v-head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .v-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ui-line-soft)); }
+    .v-who { font-weight: 700; color: var(--ui-text); }
+    .v-when { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .v-title { margin: 6px 2px 0; font-size: 0.92rem; color: var(--ui-text); overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎬 動画メモ</h1></div>
+    <div class="m-card">
+      <div class="v-new">
+        <input class="a-input a-input--s" id="title" maxlength="30" placeholder="ひとこと(なくてもいい)">
+        <label class="a-btn a-btn--s" id="shootBtn">🎥 撮る<input type="file" id="shoot" accept="video/*" capture="environment"></label>
+        <label class="a-btn a-btn--sub a-btn--s" id="pickBtn">えらぶ<input type="file" id="pick" accept="video/*"></label>
+        <p class="v-msg" id="msg"></p>
+      </div>
+    </div>
+    <div class="v-grid" id="list"></div>
+    <div class="p-empty" id="empty">読み込み中…</div>
+  </div>
+  <script>
+    const { esc, dayLabel } = PetitPage;
+    const list = document.getElementById("list"), empty = document.getElementById("empty"), msg = document.getElementById("msg");
+    let items = [], maxSeconds = 10;
+    const say = (text, bad) => { msg.textContent = text; msg.classList.toggle("is-bad", !!bad); };
+    const when = ts => `${dayLabel(ts.slice(0, 10))} ${ts.slice(11, 16)}`;
+    const src = (it, ext) => `/api/video_memo/file/${encodeURIComponent(it.user)}/${encodeURIComponent(it.id)}.${ext}`;
+    // 動画は、押すまで読み込まない(一覧では 1 枚だけ)
+    const card = it => `<div class="m-card v-card" data-user="${esc(it.user)}" data-id="${esc(it.id)}">
+      <div class="v-head"><span class="v-dot" style="${it.color ? `--c:${esc(it.color)}` : ""}"></span><span class="v-who">${esc(it.name)}</span><span class="v-when">${esc(when(it.ts))}・${Math.round(it.seconds)} 秒</span>
+        ${it.mine ? `<button class="a-btn a-btn--ghost a-btn--s" data-del title="消す">🗑</button>` : ""}</div>
+      <video controls playsinline preload="none" poster="${src(it, "jpg")}" src="${src(it, "mp4")}"></video>
+      ${it.title ? `<div class="v-title">${esc(it.title)}</div>` : ""}
+    </div>`;
+    function draw() {
+      list.innerHTML = items.map(card).join("");
+      empty.style.display = items.length ? "none" : "";
+      empty.textContent = "まだ動画メモはありません";
+    }
+    async function load() {
+      try {
+        const d = await (await fetch("/api/video_memo")).json();
+        items = d.items || []; maxSeconds = d.max_seconds || 10;
+        say(`${maxSeconds} 秒まで。長く撮っても、はじめの ${maxSeconds} 秒だけが、小さくなって残る。家の人どうしで見られる。`);
+        draw();
+      } catch (e) { empty.textContent = "読み込めませんでした"; }
+    }
+    async function upload(input) {
+      const file = input.files && input.files[0];
+      input.value = "";
+      if (!file) return;
+      say("送っています…(小さくするので、少しかかります)");
+      for (const id of ["shootBtn", "pickBtn"]) document.getElementById(id).style.pointerEvents = "none";
+      try {
+        const fd = new FormData();
+        fd.append("file", file); fd.append("title", document.getElementById("title").value);
+        const res = await fetch("/api/video_memo/upload", {method: "POST", body: fd});
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || "残せませんでした");
+        items.unshift(d.item); draw();
+        document.getElementById("title").value = "";
+        say(`残しました(${Math.round(d.item.seconds)} 秒、${Math.max(1, Math.round(d.item.bytes / 1024))} KB)`);
+      } catch (e) { say(e.message || "残せませんでした", true); }
+      for (const id of ["shootBtn", "pickBtn"]) document.getElementById(id).style.pointerEvents = "";
+    }
+    document.getElementById("shoot").addEventListener("change", e => upload(e.target));
+    document.getElementById("pick").addEventListener("change", e => upload(e.target));
+    list.addEventListener("click", async e => {
+      if (!e.target.closest("[data-del]")) return;
+      const el = e.target.closest(".v-card");
+      if (!confirm("この動画メモを消します。もとには戻せません。消しますか?")) return;
+      try {
+        const res = await fetch(`/api/video_memo/${encodeURIComponent(el.dataset.user)}/${encodeURIComponent(el.dataset.id)}`, {method: "DELETE"});
+        if (!res.ok) throw new Error((await res.json()).error || "消せませんでした");
+        items = items.filter(it => !(it.user === el.dataset.user && it.id === el.dataset.id)); draw(); say("消しました");
+      } catch (err) { say(err.message || "消せませんでした", true); }
+    });
+    load();
+  </script>
+</body>
+</html>
