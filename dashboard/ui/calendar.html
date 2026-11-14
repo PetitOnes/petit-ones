@@ -17,9 +17,6 @@
     .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.02rem; color: var(--ui-heading); white-space: nowrap; }
     .c-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
     .c-bar .m-pills { flex: 0 0 auto; }
-    .c-show { flex-wrap: wrap; gap: 4px; }
-    .c-show .a-pill { opacity: 0.55; }
-    .c-show .a-pill.is-on { opacity: 1; }
     .c-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }   /* 列の幅は固定(長い祝日名で伸びない) */
     .c-wd { text-align: center; font-size: 0.72rem; color: var(--ui-text-sub); padding: 2px 0; }
     .c-wd.sun { color: #d9534f; } .c-wd.sat { color: #4a7abf; }
@@ -86,13 +83,6 @@
       <span style="flex:1"></span>
       <button class="a-btn a-btn--ghost a-btn--s" id="todayBtn" onclick="goToday()">きょう</button>
     </div>
-    <!-- 見せるもの(押して消す・出す。次に開いても覚えている。2026-11-14 ありさん) -->
-    <div class="c-bar c-show" id="showPills">
-      <button class="a-pill" data-show="events" onclick="toggleShow('events')">📅 予定</button>
-      <button class="a-pill" data-show="moon" onclick="toggleShow('moon')">🌙 月齢</button>
-      <button class="a-pill" data-show="temp" onclick="toggleShow('temp')">🌡 温度</button>
-      <button class="a-pill" data-show="other" onclick="toggleShow('other')">🎂🎌 ほか</button>
-    </div>
     <div class="c-head">
       <button class="a-btn a-btn--sub a-btn--s" onclick="move(-1)">‹</button>
       <h2 id="title"></h2>
@@ -133,9 +123,8 @@
     const recall = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem("cal." + k)); return v === null || v === undefined ? fallback : v; } catch (e) { return fallback; } };
     // 月 / 週 / 日 は、最後に押したものが次に開いたときも出る(2026-11-14 ありさん)。URL に書いてあればそちら
     let view = ["month", "week", "day"].includes(q.get("view")) ? q.get("view") : (["month", "week", "day"].includes(recall("view", "")) ? recall("view", "") : "month");
-    // 見せるもの: 予定 / 月齢(月・二十四節気・日の出入) / 温度(部屋の最低〜最高) / ほか(記念日・祝日)
-    const show = Object.assign({events: true, moon: true, temp: true, other: true}, recall("show", {}));
-    function toggleShow(k) { show[k] = !show[k]; remember("show", show); refresh(); }
+    // 見せるもの: 予定 / 月齢(月・二十四節気・日の出入) / 温度(部屋の最低〜最高) / ほか(記念日・祝日)。⚙️ 設定 → 家 → 📅 よてい(人ごと。/api/ui の calendar_show)
+    const show = {events: true, moon: true, temp: true, other: true};
     let sel = q.get("date") || today;   // 選んでいる日(月の見方では、その月を見る)
     const cache = {};                   // "YYYY-MM" → その月(6 週ぶん)の日ごとの中身
     let people = [], chars = [], me = {};
@@ -164,7 +153,6 @@
     }
     function render() {
       document.querySelectorAll("#viewPills [data-view]").forEach(b => b.classList.toggle("is-on", b.dataset.view === view));
-      document.querySelectorAll("#showPills [data-show]").forEach(b => b.classList.toggle("is-on", !!show[b.dataset.show]));
       document.getElementById("grid").style.display = view === "month" ? "" : "none";
       document.getElementById("week").style.display = view === "week" ? "" : "none";
       document.getElementById("fab").style.display = canEdit() ? "" : "none";
@@ -229,7 +217,7 @@
       const rm = show.temp ? inf.room : null;
       const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}`).join(" / ")}</div>` : "";
       const hidden = Object.values(show).some(v => !v);
-      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)何もありません" : "この日はまだ何もありません"}</p>`);
+      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)何もありません。見せるものは ⚙️ 設定 → 家 → 📅 よてい" : "この日はまだ何もありません"}</p>`);
     }
 
     // ---- 右下の ＋ ----
@@ -295,6 +283,7 @@
       try { me = await (await fetch("/api/me")).json(); } catch (e) {}
       try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) {}
       try { people = (await (await fetch("/api/people")).json()).people || []; } catch (e) {}
+      try { Object.assign(show, Object.fromEntries(Object.entries((await (await fetch("/api/ui")).json()).calendar_show || {}).filter(([k]) => k in show).map(([k, v]) => [k, v !== false]))); } catch (e) {}
       refresh();
     })();
   </script>

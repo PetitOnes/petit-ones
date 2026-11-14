@@ -131,6 +131,14 @@
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
       </div>
       <div class="m-card">
+        <span class="a-heading">📅 よてい</span>
+        <p class="a-hint" style="margin:0 0 4px">よてい の画面に出すもの。切ったものは月・週・日のどこにも出ない</p>
+        <div class="s-row"><span>📅 予定</span><label class="a-toggle"><input type="checkbox" data-calshow="events" onchange="saveCalShow()"><span></span></label></div>
+        <div class="s-row"><span>🌙 月齢(月の印・二十四節気・日の出入り)</span><label class="a-toggle"><input type="checkbox" data-calshow="moon" onchange="saveCalShow()"><span></span></label></div>
+        <div class="s-row"><span>🌡 温度(その日の部屋の最低〜最高)</span><label class="a-toggle"><input type="checkbox" data-calshow="temp" onchange="saveCalShow()"><span></span></label></div>
+        <div class="s-row"><span>🎂🎌 ほか(記念日・祝日)</span><label class="a-toggle"><input type="checkbox" data-calshow="other" onchange="saveCalShow()"><span></span></label></div>
+      </div>
+      <div class="m-card">
         <span class="a-heading">家の中の場所</span>
         <p class="a-hint" style="margin:0 0 4px">ぷちを置く場所(あり部屋:ソファ など)。ようす の「📍 場所」で選べる。部屋に SwitchBot の機体を結ぶと、家の空気を「いる部屋」で選べる</p>
         <div id="spotRows"></div>
@@ -293,6 +301,9 @@
         `<input class="a-input a-input--s" data-preset maxlength="${len}" value="${esc(cur[i] || "")}" style="width:${len + 1.5}em;text-align:center" onkeydown="if (event.key === 'Enter' && !event.isComposing) savePresets()">`).join("");
       document.getElementById("nowPresetsHint").textContent = `${max} つまで、${len} 字まで。ぜんぶ空にして決めると「${(ui.now_presets_default || []).join("・")}」に戻る。使ったことのある言葉も、📍 に候補として並ぶ。`;
     }
+    function saveCalShow() {
+      saveUi({calendar_show: Object.fromEntries([...document.querySelectorAll("[data-calshow]")].map(x => [x.dataset.calshow, x.checked]))});
+    }
     function savePresets() {
       saveUi({now_presets: [...document.querySelectorAll("#nowPresets [data-preset]")].map(x => x.value.trim()).filter(Boolean)});
     }
@@ -332,6 +343,7 @@
       document.getElementById("keepColorBtn").disabled = !c || c === ui.topbar_saved;
       const key = ui.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
       $("notebookDot").checked = ui.notebook_dot !== false;
+      document.querySelectorAll("[data-calshow]").forEach(x => { x.checked = (ui.calendar_show || {})[x.dataset.calshow] !== false; });
       document.querySelectorAll("#sendKey [data-v]").forEach(b => b.classList.toggle("is-on", b.dataset.v === key));
       const order = toolOrder();
       document.getElementById("tools").innerHTML = order.map((t, i) => `<div class="s-row">

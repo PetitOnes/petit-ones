@@ -5761,6 +5761,7 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
     base.pop("topbar_color", None)
     base.pop("topbar_saved", None)
     base.pop("now_presets", None)   # 📍 の候補も、人ごと
+    base.pop("calendar_show", None)   # 📅 よてい で見せるものも、人ごと
     base.pop("hello_to", None)   # 📍 から送る相手も、人ごと
     base.pop("rest_to", None)
     base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
@@ -5790,6 +5791,10 @@ class UiSettings(BaseModel):
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
     notebook_dot: bool | None = None  # 交換日記: 自分の番(3 人が一周)のときに 📖 へピンクの点を出すか(既定 true)
+    calendar_show: dict[str, bool] | None = None   # 📅 よてい で見せるもの {"events", "moon", "temp", "other"}(無いものは出す)
+
+
+CALENDAR_SHOW_KEYS = ("events", "moon", "temp", "other")   # 📅 よてい: 予定 / 月齢 / 温度 / ほか(記念日・祝日)
 
 
 @app.post("/api/ui")
@@ -5816,6 +5821,8 @@ def api_ui_set(req: UiSettings, request: Request = None):
         cur["send_key"] = req.send_key
     if req.notebook_dot is not None:
         cur["notebook_dot"] = bool(req.notebook_dot)
+    if req.calendar_show is not None:
+        cur["calendar_show"] = {k: bool(v) for k, v in req.calendar_show.items() if k in CALENDAR_SHOW_KEYS}
     if req.tools is not None:
         cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True)), "off": bool(t.get("off", False))}
                         for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
