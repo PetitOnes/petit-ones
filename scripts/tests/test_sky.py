@@ -45,3 +45,10 @@ def test_sun_times_tokyo():
 def test_line():
     assert sky.line(Date(2026, 11, 22), PLACE).endswith("きょうから二十四節気の 小雪")
     assert sky.line(Date(2026, 11, 14), None) == "きょうの空: 月齢 4.8(🌒)。二十四節気は 立冬(11/22 から 小雪)"
+
+
+def test_change_line():
+    assert sky.change_line(Date(2026, 11, 14), None) == ""                       # ふつうの日は何も渡さない
+    assert sky.change_line(Date(2026, 11, 24), None) == "きょうの空: きょうは満月(🌕 月齢 14.8)"
+    assert sky.change_line(Date(2026, 11, 22), None) == "きょうの空: きょうから二十四節気の 小雪"
+    assert sky.change_line(Date(2026, 11, 17), None) == ""                       # 上弦は渡さない(見に行けば分かる)

@@ -114,14 +114,9 @@ def main(argv: list[str]) -> int:
         variables["events"] = ""
     try:
         import sky
-        variables["sky"] = sky.line(datetime.now(sky.JST).date(), sky.load_place(DATA_DIR))
+        variables["sky_change"] = sky.change_line(datetime.now(sky.JST).date(), sky.load_place(DATA_DIR))
     except Exception:
-        variables["sky"] = ""
-    try:
-        import room_log
-        variables["room"] = room_log.line(DATA_DIR)
-    except Exception:
-        variables["room"] = ""
+        variables["sky_change"] = ""
     sys.stdout.write(render_prompt.render("chat/system", variables, data_dir=DATA_DIR, project_dir=PROJECT_DIR))
     return 0
 
