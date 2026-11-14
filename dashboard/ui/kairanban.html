@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>回覧板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <script src="/ui/md.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <style>
+    /* 回覧板(チーム「ぷち」からぷちたちへの報告)。ほかのページ(記念日・音・使い方)と同じ部品で。1 号 = 1 枚のカード、題を押すと開く */
+    .k-issue { padding: 0; overflow: hidden; }
+    .k-issue > summary { display: flex; align-items: baseline; gap: 8px; padding: 14px 16px; cursor: pointer; list-style: none; }
+    .k-issue > summary::-webkit-details-marker { display: none; }
+    .k-issue > summary::before { content: "▸"; flex: 0 0 auto; color: var(--ui-accent-text); }
+    .k-issue[open] > summary::before { content: "▾"; }
+    .k-title { flex: 1; min-width: 0; font-family: var(--ui-font-head); font-size: 1rem; font-weight: 700; color: var(--ui-text); overflow-wrap: anywhere; }
+    .k-date { flex: 0 0 auto; font-size: var(--ui-fs-s); color: var(--ui-text-sub); white-space: nowrap; }
+    .k-body { padding: 2px 16px 16px; border-top: var(--ui-line-w) solid var(--ui-line-soft); font-size: var(--ui-fs-l); line-height: 1.75; color: var(--ui-text); overflow-wrap: anywhere; }
+    .k-body h1 { margin: 14px 0 6px; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
+    .k-body > h1:first-child { display: none; }   /* 本文のはじめの見出しは、上の題と同じなので出さない */
+    .k-body h2 { margin: 16px 0 6px; font-family: var(--ui-font-head); font-size: 1rem; color: var(--ui-heading); }
+    .k-body h3 { margin: 14px 0 4px; font-size: 0.95rem; color: var(--ui-accent-text); }
+    .k-body p { margin: 6px 0; }
+    .k-body ul, .k-body ol { margin: 4px 0; padding-left: 1.3em; }
+    .k-body li { margin: 3px 0; }
+    .k-body code { font-size: 0.85em; padding: 1px 5px; border-radius: 6px; background: var(--ui-accent-soft); }
+    .k-body pre { padding: 10px 12px; overflow-x: auto; font-size: 0.82rem; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-s); }
+    .k-body pre code { padding: 0; background: none; }
+    .k-body table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.9em; }
+    .k-body th, .k-body td { padding: 4px 10px; border: var(--ui-line-w) solid var(--ui-line-soft); text-align: left; }
+    .k-body th { background: var(--ui-surface-soft); }
+    .k-body blockquote { margin: 8px 0; padding: 2px 12px; color: var(--ui-text-sub); border-left: 3px solid var(--ui-accent-line); }
+    .k-body a { color: var(--ui-accent-text); }
+    .k-body img { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📋 回覧板</h1></div>
+    <div id="list"></div>
+    <div class="p-empty" id="empty">読み込み中…</div>
+  </div>
+  <script>
+    const { esc, dayLabel } = PetitPage;
+    (async () => {
+      const list = document.getElementById("list"), empty = document.getElementById("empty");
+      let items = [];
+      try { items = await (await fetch("/api/kairanban")).json(); } catch (e) { empty.textContent = "読み込めませんでした"; return; }
+      if (!Array.isArray(items) || !items.length) { empty.textContent = "まだ回覧板はありません"; return; }
+      empty.style.display = "none";
+      // 本文は markdown。日本語の太字の後始末は、会話・ノートと同じ(md.js)
+      const md = t => { const html = window.marked ? marked.parse(t || "") : `<pre>${esc(t || "")}</pre>`; return window.fixCjkBold ? fixCjkBold(html) : html; };
+      const when = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "") ? dayLabel(d) : (d || "");
+      list.innerHTML = items.map((it, i) => `<details class="m-card k-issue"${i === 0 ? " open" : ""}>
+        <summary><span class="k-title">${esc(it.title)}</span><span class="k-date">${esc(when(it.date))}</span></summary>
+        <div class="k-body">${md(it.content)}</div>
+      </details>`).join("");
+    })();
+  </script>
+</body>
+</html>

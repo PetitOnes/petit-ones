@@ -212,6 +212,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `anniversaries.html` | 記念日（`/anniversaries`）。家の設定 `PETIT_DATA_DIR/config/anniversaries.json` に、名前・最初の日・くり返し（毎年・毎月・その日だけ）・ひとことを足す。計算と保存は `scripts/anniversaries.py`。当日は、ぷちログのその日のいちばん上に出る。ぷちたちには、前の日の自律行動で 1 回だけ「あしたは○○の日」と伝わる（`anniversaries.py notice`。前の日に動かなかった子には当日に）。ぷちも `anniversaries.py add` で足せる |
 | `desires.html` | 欲求の様子（`/desires`）。その子の欲求ごとに、この数日の強さの線・上限にいた時間・いちばん強かった時間・満たした記憶の回数と、その欲求の決まり（満たすまでの時間・満たしたことになる言葉）を出す。データの組み立ては `dashboard/desire_history.py`（読むだけ） |
 | `sounds.html` | 音（`/sounds`）。家の音のライブラリ `PETIT_DATA_DIR/sounds/` に音を取り込む（WAV・MP3 などを、体が鳴らせるモノラル・16 kHz・16 bit の WAV に変換。20 秒まで）、ブラウザで聞く、ぷちの体（SD）へ送る、消す。ぷちそれぞれの体にある音の一覧も出て、押すとその子の体で 1 回鳴る。体は音を取り出す・消すができないので、元になる音は家に置く。置き方と変換は `scripts/sounds.py`（ffmpeg が要る） |
+| `kairanban.html` | 回覧板（`/kairanban`）。チーム「ぷち」からぷちたちへの報告（`PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>*.md`）を、新しい順に 1 号 1 枚のカードで。題を押すと開く。本文は markdown |
 | `styleguide.html` | 部品の見本（`/ui`） |
 
 Web フォント・markdown の変換・会話の画像化は、外の CDN（Google Fonts・jsDelivr）から部品を読む。届かないときは、端末のフォントと素の文字で出る。
