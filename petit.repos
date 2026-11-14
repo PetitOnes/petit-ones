@@ -13,7 +13,7 @@ repositories:
   m5-petit-desire:
     type: git
     url: https://github.com/PetitOnes/m5-petit-desire.git
-    version: 6b70377955bfc96bc4a1c0c8ab3f7051fb158070
+    version: e456bb1c98731f3afcfae63ed879eb8974fa5352
   m5-petit-memory:
     type: git
     url: https://github.com/PetitOnes/m5-petit-memory.git
