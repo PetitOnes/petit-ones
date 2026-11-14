@@ -13,6 +13,7 @@ import secrets
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -703,6 +704,20 @@ def _save_stream_log(character_id: str, source: str, raw_json: str) -> None:
         pass
 
 
+def _house_alert_check(result_item: dict | None, source: str, character_id: str) -> None:
+    """Claude を呼べなかった(ログイン切れ・ネットワーク・エラー)ら世話人へ知らせる。直ったら 1 回知らせる。
+
+    scripts/house_alert.py と同じ覚え書きを使う。Slack への送信で画面を待たせないよう、別スレッドで動かす。
+    """
+    def _run() -> None:
+        try:
+            import house_alert
+            house_alert.check_result(DATA_DIR, result_item or None, f"ダッシュボード({source})", character_id)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
+
+
 def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
     try:
         data = json.loads(raw_json)
@@ -710,6 +725,7 @@ def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
             result_item = next((d for d in data if d.get("type") == "result"), {})
         else:
             result_item = data if isinstance(data, dict) else {}
+        _house_alert_check(result_item, source, character_id)
         usage = result_item.get("usage", {})
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -1518,6 +1534,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         return "\n".join(text_parts).strip(), session_id, result_ev
 
     def _append_token_log_from_stream(result_ev: dict) -> None:
+        _house_alert_check(result_ev, source, character_id)
         try:
             usage = result_ev.get("usage", {})
             entry = {
@@ -5471,6 +5488,8 @@ _DISPLAY_NAME_CACHE: dict[str, tuple[float, str]] = {}   # char_id -> (config �
 
 def _char_display_name(char_id: str) -> str:
     """キャラクターIDから表示名を取得する(config.json の mtime で cache。メール 9,000 通で毎回読んでいた)。"""
+    if char_id == "house":
+        return "家の知らせ"   # scripts/house_alert.py が書く手紙(Claude を呼べなかった、など)
     config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
     try:
         mtime = config_path.stat().st_mtime

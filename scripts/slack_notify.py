@@ -28,23 +28,15 @@ def load_env_value(key: str) -> str | None:
     return None
 
 
-def main() -> int:
-    args = sys.argv[1:]
-    channel = None
-    if args and args[0] == "--channel" and len(args) >= 2:
-        channel = args[1]
-        args = args[2:]
-    if not args:
-        print(f"Usage: {sys.argv[0]} [--channel CXXXX] <message>", file=sys.stderr)
-        return 1
-
+def send(text: str, channel: str | None = None) -> bool:
+    """Slack に 1 通送る。送れたら True。ほかのスクリプト(house_alert.py など)からも使う。"""
     token = load_env_value("SLACK_APPROVE_BOT_TOKEN")
     channel = channel or load_env_value("SLACK_APPROVE_CHANNEL")
     if not token or not channel:
         print("Error: SLACK_APPROVE_BOT_TOKEN / SLACK_APPROVE_CHANNEL が .env にない", file=sys.stderr)
-        return 1
+        return False
 
-    payload = json.dumps({"channel": channel, "text": " ".join(args)}).encode("utf-8")
+    payload = json.dumps({"channel": channel, "text": text}).encode("utf-8")
     req = urllib.request.Request(
         "https://slack.com/api/chat.postMessage",
         data=payload,
@@ -57,6 +49,21 @@ def main() -> int:
         result = json.loads(resp.read())
     if not result.get("ok"):
         print(f"Error: {result.get('error')}", file=sys.stderr)
+        return False
+    return True
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    channel = None
+    if args and args[0] == "--channel" and len(args) >= 2:
+        channel = args[1]
+        args = args[2:]
+    if not args:
+        print(f"Usage: {sys.argv[0]} [--channel CXXXX] <message>", file=sys.stderr)
+        return 1
+
+    if not send(" ".join(args), channel):
         return 1
     print("送信しました")
     return 0

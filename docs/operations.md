@@ -60,6 +60,31 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 
 「眠い」のような欲求は、子ごとの `config/desire_config.json` の欲求に `"rhythm": {"hours": 14, …}` を書くと、朝に 0 へ戻り、光に合わせて進む形で動く(書かなければ今までどおり)。項目は m5-petit-desire の README。状態は `characters/<id>/data/desire_rhythm.json` にできる。動きはダッシュボードの 🫧 欲求で見られる。
 
+## 家の知らせ(失敗を世話人へ)
+
+ぷちが Claude を呼べなかったとき・Claude がエラーで終わったときに、Slack と家の手紙箱(ダッシュボードの「メール」)へ知らせます(`scripts/house_alert.py`)。
+2026-11-14 の朝、ぷち用のログインが切れて 6 時間だれも Claude を呼べていなかったのに、ログを開くまで気づけなかったためです。
+
+- **見ているところ**: 自律行動(`autonomous-action.sh` が毎回の結果を渡す)と、ダッシュボードから呼ぶ Claude(会話・一言・日記など)
+- **知らせ方**: ログイン切れは最初の 1 回ですぐ。ほかの失敗(ネットワーク・エラー・結果なし)は、つづけて 2 回起きたら。続いているあいだは 3 時間ごとに 1 回。直ったら「直りました」を 1 回
+- **送り先(Slack)**: `.env` の `HOUSE_ALERT_SLACK_CHANNEL`(無ければ `SLACK_APPROVE_CHANNEL`)。トークンは `SLACK_APPROVE_BOT_TOKEN`
+- **送り先(手紙箱)**: `.env` に `HOUSE_ALERT_MAIL_TO=<世話人の ID>`(カンマ区切りで何人でも)を書くと、`mailbox/from_house_to_<ID>_<日時>.md` を 1 通書きます。ダッシュボードの「メール」に、差出人「家の知らせ」の未読として出ます。書かなければ手紙は出しません。ぷちの未読・既読の知らせには入りません
+- **覚え書き**: `PETIT_DATA_DIR/state/house_alerts.json`。`python3 scripts/house_alert.py status` で、いま続いている失敗が見えます
+- **調整**: `HOUSE_ALERT=0` で止める / `HOUSE_ALERT_REPEAT_HOURS`(既定 3)/ `HOUSE_ALERT_MIN_COUNT`(既定 2)
+- **ほかの仕事から使う**: `house_alert.py report --kind backup --source バックアップ --detail "<理由>"`、うまくいったら `house_alert.py ok --kind backup`
+- 知らせの文には、理由の頭 200 字だけを入れます。鍵らしい並びと IP は伏せます。会話の中身は入れません
+
+### 「ログインが切れています」と来たら
+
+```bash
+CLAUDE_CONFIG_DIR=$PETIT_DATA_DIR/.claude claude auth status     # loggedIn が false なら切れている
+stat -c '%F %N' $PETIT_DATA_DIR/.claude/.credentials.json          # リンクか、普通のファイルか
+```
+
+`.credentials.json` を開発側(`~/.claude/.credentials.json`)へのリンクにしている家では、リンクが普通のファイルに置き換わると、
+しばらくして更新できなくなります(2026-11-14 に起きた)。その場の直しは、リンクを張り直すこと。
+くり返さないためには、ぷち用の設定で別にログインします(リンクを外してから `CLAUDE_CONFIG_DIR=$PETIT_DATA_DIR/.claude claude /login`)。
+
 ## 家とコードを分けて、同期する
 
 ぷちが動いている PC には、このリポジトリの checkout が **2 つ** ある。

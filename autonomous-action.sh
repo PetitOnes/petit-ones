@@ -655,6 +655,10 @@ else
     # 記録の上で空白にしない(2026-11-13、ぷちたちの希望)。失敗しても自律行動は止めない
     PETIT_DATA_DIR="$DATA_DIR" python3 "$ALLOWED_DIR/scripts/quiet_time.py" record \
       --character "$CHARACTER_ID" --stream "$STREAM_FILE" >> "$LOG_FILE" 2>&1 || true
+    # 家の知らせ: Claude を呼べなかった回(ログイン切れ・ネットワーク・エラー)を世話人へ。直ったら 1 回知らせる。
+    # 2026-11-14 に 6 時間だれも気づけなかったため。HOUSE_ALERT=0 で止められる。失敗しても自律行動は止めない
+    PETIT_DATA_DIR="$DATA_DIR" python3 "$ALLOWED_DIR/scripts/house_alert.py" check-stream \
+      --source "自律行動" --character "$CHARACTER_ID" --stream "$STREAM_FILE" >> "$LOG_FILE" 2>&1 || true
     # session_id 抽出
     NEW_SESSION_ID=$(echo "$RESULT_JSON" | jq -r '.session_id // empty' 2>/dev/null)
     if [ -n "$NEW_SESSION_ID" ]; then
