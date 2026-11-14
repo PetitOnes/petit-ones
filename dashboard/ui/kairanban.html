@@ -16,20 +16,23 @@
   <style>
     /* 回覧板(チーム「ぷち」からぷちたちへの報告)。ほかのページ(記念日・音・使い方)と同じ部品で。1 号 = 1 枚のカード、題を押すと開く */
     .k-issue { padding: 0; overflow: hidden; }
-    .k-issue > summary { display: flex; align-items: baseline; gap: 8px; padding: 14px 16px; cursor: pointer; list-style: none; }
+    .k-issue > summary { display: flex; align-items: flex-start; gap: 8px; padding: 14px 16px; cursor: pointer; list-style: none; line-height: 1.5rem; }
     .k-issue > summary::-webkit-details-marker { display: none; }
     .k-issue > summary::before { content: "▸"; flex: 0 0 auto; color: var(--ui-accent-text); }
     .k-issue[open] > summary::before { content: "▾"; }
-    .k-title { flex: 1; min-width: 0; font-family: var(--ui-font-head); font-size: 1rem; font-weight: 700; color: var(--ui-text); overflow-wrap: anywhere; }
-    .k-date { flex: 0 0 auto; font-size: var(--ui-fs-s); color: var(--ui-text-sub); white-space: nowrap; }
+    .k-title { flex: 1; min-width: 0; font-family: var(--ui-font-head); font-size: 1rem; line-height: 1.5rem; font-weight: 700; color: var(--ui-text); overflow-wrap: anywhere; }
+    /* 点と日付は 1 つの箱に入れて、題の 1 行目と同じ高さのまんなかにそろえる */
+    .k-meta { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; height: 1.5rem; }
+    .k-date { font-size: var(--ui-fs-s); line-height: 1; color: var(--ui-text-sub); white-space: nowrap; }
     /* 既読の点: ぷち 1 人に 1 つ、その子の色。読んだ = 塗る、届いたがまだ = 輪だけ、届けていない = うすい点線の輪 */
-    .k-dots { flex: 0 0 auto; display: inline-flex; gap: 4px; align-self: center; }
+    .k-dots { display: inline-flex; align-items: center; gap: 4px; }
     .k-dot { width: 11px; height: 11px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c, var(--ui-line-soft)); background: transparent; }
     .k-dot.is-read { background: var(--c, var(--ui-text-sub)); }
     .k-dot.is-none { border: 1.5px dashed var(--ui-text-mute); opacity: 0.6; }
     .k-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 2px 10px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
     .k-legend span { display: inline-flex; align-items: center; gap: 4px; }
-    .k-who { padding: 8px 16px 0; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .k-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 0 16px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .k-who .k-msg { color: var(--ui-danger); }
     .k-body { margin-top: 8px; padding: 2px 16px 16px; border-top: var(--ui-line-w) solid var(--ui-line-soft); font-size: var(--ui-fs-l); line-height: 1.75; color: var(--ui-text); overflow-wrap: anywhere; }
     .k-body h1 { margin: 14px 0 6px; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
     .k-body > h1:first-child { display: none; }   /* 本文のはじめの見出しは、上の題と同じなので出さない */
@@ -73,14 +76,36 @@
       const WORD = {read: "読んだ", unread: "まだ", none: "届けていない"};
       const dot = r => { const c = who(r.id); return `<span class="k-dot is-${esc(r.state)}" style="${c.color ? `--c:${esc(c.color)}` : ""}" title="${esc(c.name)}: ${WORD[r.state] || ""}"></span>`; };
       const dots = it => (it.readers || []).length ? `<span class="k-dots">${it.readers.map(dot).join("")}</span>` : "";
-      const whoLine = it => !(it.readers || []).length ? "" : `<div class="k-who">${it.sent ? it.readers.map(r => `${esc(who(r.id).name)} ${WORD[r.state] || ""}`).join(" ・ ") : "まだ届けていない(ここで読めるだけ)"}</div>`;
+      // まだ届いていない子がいる号には「届ける」。押すと、その子たちのメールボックスに手紙として入る(取り消せないので、1 回たずねる)
+      let me = {};   // 届けられるのは家の世話人だけ(見られる子が決まっている人には、ボタンを出さない)
+      try { me = await (await fetch("/api/me")).json(); } catch (e) {}
+      const waiting = it => me.limited ? [] : (it.readers || []).filter(r => r.state === "none");
+      const whoLine = it => !(it.readers || []).length ? "" : `<div class="k-who"><span>${it.sent ? it.readers.map(r => `${esc(who(r.id).name)} ${WORD[r.state] || ""}`).join(" ・ ") : "まだ届けていない(ここで読めるだけ)"}</span>${
+        waiting(it).length ? `<button class="a-btn a-btn--s" data-send="${esc(it.filename)}">📮 届ける</button>` : ""}<span class="k-msg"></span></div>`;
       const sample = (state, word) => `<span><span class="k-dot is-${state}" style="--c:var(--ui-text-sub)"></span>${word}</span>`;
-      list.innerHTML = `<div class="k-legend">${sample("read", "読んだ")}${sample("unread", "届いた・まだ")}${sample("none", "届けていない")}</div>`
-        + items.map((it, i) => `<details class="m-card k-issue"${i === 0 ? " open" : ""}>
-        <summary><span class="k-title">${esc(it.title)}</span>${dots(it)}<span class="k-date">${esc(when(it))}</span></summary>
+      const draw = (items, openName) => { list.innerHTML = `<div class="k-legend">${sample("read", "読んだ")}${sample("unread", "届いた・まだ")}${sample("none", "届けていない")}</div>`
+        + items.map(it => `<details class="m-card k-issue" data-name="${esc(it.filename)}"${it.filename === openName ? " open" : ""}>
+        <summary><span class="k-title">${esc(it.title)}</span><span class="k-meta">${dots(it)}<span class="k-date">${esc(when(it))}</span></span></summary>
         ${whoLine(it)}
         <div class="k-body">${md(it.content)}</div>
-      </details>`).join("");
+      </details>`).join(""); };
+      draw(items, "");   // はじめは、ぜんぶ閉じている
+      list.addEventListener("click", async e => {
+        const btn = e.target.closest("[data-send]");
+        if (!btn) return;
+        const it = items.find(x => x.filename === btn.dataset.send);
+        if (!it) return;
+        const names = waiting(it).map(r => who(r.id).name).join("・");
+        if (!confirm(`「${it.title}」を、${names} に届けます。届けたら取り消せません。届けますか?`)) return;
+        btn.disabled = true;
+        const msg = btn.parentElement.querySelector(".k-msg");
+        try {
+          const res = await fetch("/api/kairanban/send", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({filename: it.filename})});
+          const d = await res.json();
+          if (!res.ok) throw new Error(d.error || "届けられませんでした");
+          items = d.items; draw(items, it.filename);
+        } catch (err) { msg.textContent = err.message || "届けられませんでした"; btn.disabled = false; }
+      });
     })();
   </script>
 </body>

@@ -41,3 +41,25 @@ def test_list_issues_delivery_and_read(tmp_path):
     assert (old["date"], old["time"], old["sent"]) == ("2026-11-01", "", False) and old["title"] == "2026-11-01"
     assert all(r["state"] == "none" for r in old["readers"])
     assert kb.list_issues(tmp_path / "nowhere", ["teya"]) == []
+
+
+def test_send_only_to_those_not_yet(tmp_path):
+    from datetime import datetime
+
+    import pytest
+
+    k = tmp_path / "kairanban"
+    k.mkdir()
+    (k / "2026-11-14_2100_basho_kamo.md").write_text(BODY, encoding="utf-8")
+    box = tmp_path / "mailbox"
+    box.mkdir()
+    (box / "from_arisan_to_teya_20261114_2105.md").write_text(BODY, encoding="utf-8")
+    now = datetime(2026, 11, 14, 21, 30)
+    assert kb.send(tmp_path, "2026-11-14_2100_basho_kamo.md", "arisan", ["teya", "ko", "ru"], now) == ["ko", "ru"]
+    assert (box / "from_arisan_to_ko_20261114_2130.md").read_text(encoding="utf-8") == BODY
+    assert kb.send(tmp_path, "2026-11-14_2100_basho_kamo.md", "arisan", ["teya", "ko", "ru"], now) == []   # 2 回押しても増えない
+    assert [r["state"] for r in kb.list_issues(tmp_path, ["teya", "ko", "ru"])[0]["readers"]] == ["unread"] * 3
+    for bad, who, when in (("nope.md", "arisan", now), ("../x.md", "arisan", now), ("2026-11-14_2100_basho_kamo.md", "a b", now),
+                           ("2026-11-14_2100_basho_kamo.md", "arisan", datetime(2026, 12, 1, 9, 0))):
+        with pytest.raises(ValueError):
+            kb.send(tmp_path, bad, who, ["teya"], when)
