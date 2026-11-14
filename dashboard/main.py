@@ -1832,6 +1832,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         restriction_text=restriction_text,
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
+        sky=_sky_text(),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2335,6 +2336,23 @@ def _events():
     return events
 
 
+def _sky():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import sky
+    return sky
+
+
+def _sky_text() -> str:
+    """きょうの空(月齢・日の出入り・二十四節気)の 1 行。読めなければ空"""
+    try:
+        sk = _sky()
+        return sk.line(datetime.now(sk.JST).date(), sk.load_place(DATA_DIR))
+    except Exception:
+        return ""
+
+
 def _events_text(character_id: str | None) -> str:
     """7 日以内の予定(ぷちに渡す行)。読めなければ空"""
     try:
@@ -2508,6 +2526,8 @@ def api_calendar(month: str):
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
     import jp_holidays
+    sk = _sky()
+    place = sk.load_place(DATA_DIR)
     start = first - timedelta(days=(first.weekday() + 1) % 7)   # 日曜はじまり
     days = {}
     for i in range(42):
@@ -2515,8 +2535,11 @@ def api_calendar(month: str):
         a_rows = [{**next(it for it in an_items if it["id"] == x["id"]), "label": x["label"]} for x in an.on_day(an_items, d)]
         e_rows = [_event_view(it) for it in ev.on_day(ev_items, d)]
         holiday = jp_holidays.name_of(d)   # 日本の祝日(scripts/jp_holidays.py)。カレンダーに 🎌 で出す
-        if a_rows or e_rows or holiday:
-            days[d.isoformat()] = {"anniv": a_rows, "events": e_rows, "holiday": holiday}
+        try:
+            sky = sk.day_info(d, place)    # 月齢・満ち欠けの印・二十四節気・日の出入り(scripts/sky.py)。マスの端に小さく
+        except Exception:
+            sky = None
+        days[d.isoformat()] = {"anniv": a_rows, "events": e_rows, "holiday": holiday, "sky": sky}
     return {"month": f"{y:04d}-{m:02d}", "days": days, "weeks": len(_cal.monthcalendar(y, m))}
 
 
