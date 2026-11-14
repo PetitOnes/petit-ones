@@ -142,6 +142,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `pages.css` / `page.js` | `ui/` のページの枠組みと共通の下ごしらえ |
 | `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
 | `md.js` | markdown を HTML にしたあとの後始末 |
+| （アクティブタイム） | 始まり ≦ いま < 終わり。終わりの時刻そのものは入らない（`autonomous-action.sh` の `check_entry`）。3 人の cron は 0・5・10 分とずれているので、終わりは cron の分より後ろ（:20 など）に。設定ページが「1 日に動く予定」を数え、終わりが cron の分と重なっていれば注意を出す |
 | `settings.html` | 設定（`/settings`）。家（トップバーの色・送信のしかた・道具の列 = `/api/ui`）と、ぷちごと（アクティブタイム・自律行動・体の道具の許可・体のアドレス = `/api/<id>/settings` `/api/<id>/config/m5_hosts` `/api/<id>/cron`）。家の設定を変えたら親ページに `petit-ui-changed` を送る |
 | `petitlog.html` / `diary.html` | ぷちログ（1 日のタイムライン）と日記の一覧。データの組み立ては `dashboard/petit_log.py`（読むだけ） |
 | 右上の 📍 | いま どこ。わたしのいま（自室・お外・会社 など）を決めると `PETIT_DATA_DIR/state/whereabouts.json` に、ログインの人ごとの一言と、決めた時刻(since)・いつまでか(until。1・3・8 時間か「消すまで」)が入る。過ぎたら無いものとして扱う。ぷちの体の居場所（家 / お外）は、体験デーモンが `characters/<id>/state/experience_state.json` に書く体の Wi-Fi（何番目か）から決める。どの番号がどこかは `PETIT_DATA_DIR/config/places.json`（無ければ 1・2 = 家、3 = お外）。計算と保存は `scripts/whereabouts.py`。会話の system prompt と自律行動の冒頭に「ありさんのいま: 会社(9:02 から)」「あなたの体のいま: 家(家の Wi-Fi)」と伝わる |

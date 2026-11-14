@@ -45,6 +45,7 @@
     details.m-card[open] > summary::after { content: "とじる ▴"; }
     .s-count { margin: 6px 0 0; padding: 10px 12px; border-radius: var(--ui-radius-s); background: var(--ui-accent-soft); font-size: 0.9rem; color: var(--ui-text); }
     .s-count b { font-size: 1.1rem; }
+    .s-warn { background: #fff4e0; color: #7a4b00; }
     .s-num { width: 72px !important; text-align: right; }
   </style>
 </head>
@@ -95,6 +96,8 @@
         </div>
         <div class="s-hours" id="hours"></div>
         <button class="a-btn a-btn--ghost a-btn--s" onclick="schedule[dayTab].push([8,0,12,0]); renderHours()">＋ 追加</button>
+        <p class="a-hint" style="margin:10px 0 0">終わりの時刻そのものは入らない(「8:10 まで」なら 8:09 までが時間帯)。この子の cron が毎時 10・40 分なら、8:10 の回は入らないので、終わりは 8:20 のように cron の分より後ろにしておく。</p>
+        <div class="s-count s-warn" id="edgeWarn" style="display:none"></div>
       </div>
       <div class="m-card">
         <span class="a-heading">自律行動（ひとりの時間）</span>
@@ -254,10 +257,13 @@
       if (!cronEntries.length || mins === null) { el.textContent = cronEntries.length ? "回数は数えられない形の cron" : "cron に登録が無いので、自律行動は動かない"; return; }
       const skip = parseInt(document.getElementById("autonomousSkip").value) || 0;
       const wd = runsPerDay(schedule.weekday, mins, skip), we = runsPerDay(schedule.weekend, mins, skip);
-      const today = (new Date().getDay() % 6 === 0) ? "休日" : "平日";
-      const ov = document.getElementById("dayTypeOverride").value;
-      const todayKind = ov === "weekday" ? "平日" : ov === "weekend" ? "休日" : today;
-      el.innerHTML = `1 日に動く予定: 平日 <b>${wd}</b> 回・休日 <b>${we}</b> 回 <span class="a-hint">(きょうは${esc(todayKind)}扱い → ${todayKind === "平日" ? wd : we} 回。cron の時刻のうちアクティブタイムに入る回 ÷ 頻度)</span>`;
+      el.innerHTML = `1 日に動く予定: 平日 <b>${wd}</b> 回・休日 <b>${we}</b> 回`;
+      // 終わりの時刻が cron の分とちょうど重なっている時間帯(その回は入らない)
+      const hm = (h, m) => `${h}:${String(m).padStart(2, "0")}`;
+      const edges = schedule[dayTab].filter(r => r[2] < 24 && mins.includes(r[3] % 60)).map(r => `${hm(r[0], r[1])}〜${hm(r[2], r[3])}`);
+      const w = document.getElementById("edgeWarn");
+      w.style.display = edges.length ? "" : "none";
+      w.textContent = edges.length ? `注意: ${edges.join("、")} の終わりは、この子の cron の分(${mins.map(m => `${m} 分`).join("・")})とちょうど同じなので、その回は入らない。終わりを 10 分あとにすると入る。` : "";
     }
     function hostRow(v) { return `<div class="s-host"><input type="text" class="a-input host" value="${esc(v)}" placeholder="IP か ホスト名"><button class="a-icon-btn" title="消す" onclick="this.parentElement.remove()">✕</button></div>`; }
     function addHost(v) { document.getElementById("hosts").insertAdjacentHTML("beforeend", hostRow(v)); const ins = document.querySelectorAll("#hosts .host"); ins[ins.length - 1].focus(); }
