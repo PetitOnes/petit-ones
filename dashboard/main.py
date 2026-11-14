@@ -6828,10 +6828,8 @@ HTML = """<!DOCTYPE html>
             <div id="groupCharStatus"></div>
           </section>
           <section>
-            <h2>ここにいるよ</h2>
-            <button id="helloBtn" onclick="sendHello()" style="padding:10px 18px;font-size:1rem;font-weight:700;border:none;border-radius:999px;background:var(--char-color,#cab8d9);color:var(--char-ink,#444);cursor:pointer;">👋 ここにいるよ</button>
-            <div id="helloMsg" style="margin-top:8px;font-size:0.8rem;color:#666;line-height:1.7;"></div>
-            <p style="font-size:0.75rem;color:#999;margin:6px 0 0;">押すと、みんなに「ここにいるよ」が届きます。起きている子は、体でそれぞれ小さく応えます。眠っている子は起こさず、届いたことだけ残します。</p>
+            <h2>からだの設定</h2>
+            <div id="groupBodySettings"></div>
           </section>
         </div>
       </div>
@@ -7459,46 +7457,54 @@ HTML = """<!DOCTYPE html>
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
     }
-    // 体の設定の 1 段。項目が読めなかった体(古いファームの CAM TO など)は、その欄を出さない
-    function bodySettingsHtml(id, b, safe) {
-      const cell = "display:inline-flex;align-items:center;gap:5px;white-space:nowrap;";
-      const slider = (key, icon, title, v) => v == null ? "" : `<label style="${cell}" title="${title}">${icon}
-          <input type="range" min="0" max="100" step="5" value="${v}" data-body="${id}" data-key="${key}" style="width:86px;">
-          <span data-val="${id}-${key}" style="display:inline-block;min-width:2.2em;text-align:right;">${v}</span></label>`;
-      const psave = b.power_save == null ? "" : `<label style="${cell}" title="お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません">PSAVE
-          <input type="checkbox" data-body="${id}" data-key="power_save" ${b.power_save ? "checked" : ""}></label>`;
-      const who = !b.cam_to || !(b.cam_users || []).length ? "" : `<label style="${cell}" title="体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く">WHO
-          <select data-body="${id}" data-key="cam_to" style="font-size:0.75rem;padding:2px 4px;">${b.cam_users.map(u =>
-            `<option value="${safe(u.id)}" ${u.id === b.cam_to ? "selected" : ""}>${safe(u.name)}</option>`).join("")}</select></label>`;
-      return `<div style="flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding-left:20px;font-size:0.75rem;color:#888;font-variant-numeric:tabular-nums;">
-        ${slider("brightness", "🔆", "画面の明るさ", b.brightness)}${slider("volume", "🔊", "音量", b.volume)}${psave}${who}
-        <span data-bodymsg="${id}" style="color:#f44336;"></span></div>`;
+    // からだの設定の 1 人分。スマホで押しやすいよう、つまみではなく大きめのボタンにする。
+    // 項目が読めなかった体(古いファームの WHO など)は、その段を出さない
+    const BODY_CHOICES = {
+      brightness: [[5, "5%"], [50, "50%"], [75, "75%"], [100, "100%"]],
+      volume: [[0, "MUTE"], [25, "25%"], [50, "50%"], [75, "75%"], [100, "100%"]],
+    };
+    const _bodyChars = {};
+    function bodySettingsHtml(c, b) {
+      _bodyChars[c.id] = c;
+      const safe = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+      const color = c.color || "#cab8d9";
+      const btn = (key, value, label, on) => `<button data-body="${c.id}" data-key="${key}" data-value="${safe(value)}"
+          style="flex:1 1 0;min-width:3.4em;min-height:42px;padding:0 6px;font:inherit;font-size:0.85rem;font-weight:700;border-radius:10px;cursor:pointer;
+                 border:1.5px solid ${on ? color : "#e4e4e4"};background:${on ? color : "#fff"};color:${on ? "#444" : "#777"};">${safe(label)}</button>`;
+      const row = (icon, title, now, buttons) => `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;" title="${title}">
+          <span style="flex:0 0 4.6em;font-size:0.8rem;color:#777;white-space:nowrap;">${icon}${now ? `<br><span style="font-size:0.7rem;color:#aaa;">${now}</span>` : ""}</span>
+          <div style="flex:1;display:flex;gap:6px;">${buttons}</div></div>`;
+      const pick = (key, v) => v == null ? "" : row(key === "brightness" ? "🔆 明るさ" : "🔊 音量", key === "brightness" ? "画面の明るさ" : "音量",
+        BODY_CHOICES[key].some(([n]) => n === v) ? "" : `いま ${v}%`, BODY_CHOICES[key].map(([n, label]) => btn(key, n, label, n === v)).join(""));
+      const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
+        btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
+      const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
+        b.cam_users.map(u => btn("cam_to", u.id, u.name, u.id === b.cam_to)).join(""));
+      return `<div style="padding:10px 0 12px;border-bottom:1px solid #f0f0f0;">
+        <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
+          <span style="font-weight:700;color:${readableText(color)};">${safe(c.name || c.id)}</span>
+          <span data-bodymsg="${c.id}" style="font-size:0.75rem;color:#f44336;"></span></div>
+        ${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
     }
-    // 動かしたら体に伝える。うまくいかなかったら、体のいまの値に戻して知らせる
-    document.addEventListener("change", async e => {
-      const el = e.target.closest("[data-body][data-key]");
+    // 押したら体に伝えて、体のいまの値でその子の分を描き直す。うまくいかなかったら知らせる
+    document.addEventListener("click", async e => {
+      const el = e.target.closest("button[data-body][data-key]");
       if (!el) return;
-      const id = el.dataset.body, key = el.dataset.key;
-      const value = el.type === "checkbox" ? el.checked : el.type === "range" ? Number(el.value) : el.value;
+      const id = el.dataset.body, key = el.dataset.key, raw = el.dataset.value;
+      const value = key === "power_save" ? raw === "true" : key === "cam_to" ? raw : Number(raw);
+      const card = document.querySelector(`[data-bodycard="${id}"]`);
       const msg = document.querySelector(`[data-bodymsg="${id}"]`);
       if (msg) msg.textContent = "";
-      el.disabled = true;
+      card.querySelectorAll("button").forEach(x => { x.disabled = true; });
       try {
         const r = await fetch(`/api/${id}/body`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[key]: value})});
         const b = await r.json();
         if (!r.ok || (b.failed || []).length) throw new Error(b.error || "変えられませんでした");
-        for (const k of ["brightness", "volume"]) {
-          const input = document.querySelector(`[data-body="${id}"][data-key="${k}"]`), label = document.querySelector(`[data-val="${id}-${k}"]`);
-          if (input && b[k] != null) { input.value = b[k]; if (label) label.textContent = b[k]; }
-        }
-      } catch (err) { if (msg) msg.textContent = err.message; }
-      el.disabled = false;
-    });
-    document.addEventListener("input", e => {
-      const el = e.target.closest('[data-body][data-key][type="range"]');
-      if (!el) return;
-      const label = document.querySelector(`[data-val="${el.dataset.body}-${el.dataset.key}"]`);
-      if (label) label.textContent = el.value;
+        card.innerHTML = bodySettingsHtml(_bodyChars[id], b);
+      } catch (err) {
+        card.querySelectorAll("button").forEach(x => { x.disabled = false; });
+        if (msg) msg.textContent = err.message;
+      }
     });
     async function sendHello(btnId = "helloBtn", msgId = "helloMsg") {
       const btn = document.getElementById(btnId), msg = document.getElementById(msgId);
@@ -7518,6 +7524,7 @@ HTML = """<!DOCTYPE html>
       let allChars;
       try { allChars = await (await fetch("/api/characters/all")).json(); } catch { allChars = characters; }
       if (!allChars.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
+      const bodyCards = {};
       const rows = await Promise.all(allChars.map(async c => {
         try {
           // 体につながっているか と、電池(体の /sensors にある battery % と voltage mV)を同時に聞く
@@ -7548,21 +7555,22 @@ HTML = """<!DOCTYPE html>
           const addr = safe(m5_ip || m5_host || "");
           const ts = m5_tailscale_ip && m5_tailscale_ip !== addr ? ` <span style="opacity:0.7" title="Tailscale のアドレス">/ ${safe(m5_tailscale_ip)}</span>` : "";
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
-          // 4 段目: 体の設定(明るさ・音量・お出かけ・CAM TO)。動かすと、その場で体に伝える
-          const settings = m5_online && body.online ? bodySettingsHtml(c.id, body, safe) : "";
+          // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
+          bodyCards[c.id] = m5_online && body.online ? bodySettingsHtml(c, body) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             <span style="font-weight:700;flex:1;white-space:nowrap;color:${readableText(color)};">${c.name||c.id}</span>
             <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};white-space:nowrap;">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
             ${m5_online ? `<div style="flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding-left:20px;font-size:0.75rem;color:#888;font-variant-numeric:tabular-nums;"><span style="flex:0 0 6.5em;">${awake}</span><span style="flex:0 0 9em;">${batt}</span>${ip}</div>` : ""}
-            ${settings}
           </div>`;
         } catch {
           return `<div style="padding:8px 0;">${c.name||c.id} — 確認失敗</div>`;
         }
       }));
       panel.innerHTML = rows.join("");
+      const cards = allChars.map(c => bodyCards[c.id] ? `<div data-bodycard="${c.id}">${bodyCards[c.id]}</div>` : "").join("");
+      document.getElementById("groupBodySettings").innerHTML = cards || '<div class="empty">つながっている体がありません</div>';
     }
 
     async function update() {
