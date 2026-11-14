@@ -10319,9 +10319,9 @@ NOTES_HTML = """<!DOCTYPE html>
     .char-tab-btn.active { background: #0f3460; color: white; }
 
     /* ツールバー（検索・ソート） */
-    .toolbar { display: flex; gap: 5px; }
+    .toolbar { display: flex; gap: 5px; min-width: 0; }
     .search-input {
-      flex: 1; background: #16213e; border: 1px solid #0f3460; color: #e0e0e0;
+      flex: 1; width: 0; min-width: 0; background: #16213e; border: 1px solid #0f3460; color: #e0e0e0;   /* 検索欄が伸びて、並び順の選択が横の本文の下に隠れていた(2026-11-14) */
       border-radius: 7px; padding: 5px 10px; font-size: 0.82rem; outline: none;
     }
     .search-input::placeholder { color: #555; }
