@@ -267,7 +267,7 @@ def _my_room(base: Path | None, character_id: str | None) -> tuple[str, set[str]
     try:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import spots
-        b = spots.body_spot(base, character_id)
+        b = spots.effective(base, character_id)
         return (b["room"], set(spots.room_devices(base, b["room"]))) if b else ("", set())
     except Exception:
         return "", set()

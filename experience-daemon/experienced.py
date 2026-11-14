@@ -143,6 +143,66 @@ def _write_state(character: str, state: str, since: datetime, net: dict | None =
         logging.warning("state ファイル書き込み失敗: %s", e)
 
 
+WIFI_NEAR_KEEP = 5            # 残しておく回数
+WIFI_NEAR_MIN_INTERVAL_SEC = 20.0
+
+
+def _wifi_near_config(character: str) -> dict:
+    """家の config/spot_guess.json の、この子の分(ch・every_s)。無ければ {}(体に何も聞かない)"""
+    try:
+        raw = (DATA_DIR / "config" / "spot_guess.json").read_text(encoding="utf-8")
+        cfg = json.loads(raw)[character]
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+    return cfg if isinstance(cfg, dict) else {}
+
+
+def _wifi_sample(near: dict | None, now: datetime) -> dict | None:
+    """体の /wifi_near の答えを、残す形に。
+
+    now = いまつながっている相手の強さ、marks = 聞こえた名前ごとのいちばん強い値
+    """
+    if not isinstance(near, dict) or not isinstance(near.get("now"), dict):
+        return None
+    marks: dict[str, int] = {}
+    for e in near.get("list") or []:
+        if isinstance(e, dict) and e.get("s") and isinstance(e.get("r"), int):
+            marks[e["s"]] = max(e["r"], marks.get(e["s"], -999))
+    r = near["now"].get("r")
+    stamp = now.isoformat(timespec="seconds")
+    return {"ts": stamp, "now": r if isinstance(r, int) else None, "marks": marks}
+
+
+def _write_wifi_near(character: str, samples: list[dict]) -> None:
+    path = _character_dir(character) / "state" / "wifi_near.json"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"samples": samples}, ensure_ascii=False), encoding="utf-8")
+    except OSError as e:
+        logging.warning("wifi_near 書き込み失敗: %s", e)
+
+
+def _poll_wifi_near(
+    character: str, client: M5Client, samples: list[dict], now: datetime,
+) -> float:
+    """設定があれば、体にまわりの Wi-Fi の強さを聞いて残す。次に聞くまでの秒を返す"""
+    cfg = _wifi_near_config(character)
+    try:
+        every = max(WIFI_NEAR_MIN_INTERVAL_SEC, float(cfg.get("every_s", 60)))
+    except (TypeError, ValueError):
+        every = 60.0
+    if not cfg:
+        return every
+    ch = cfg.get("ch")
+    path = f"/wifi_near?ch={int(ch)}" if isinstance(ch, int) else "/wifi_near"
+    sample = _wifi_sample(client.get_json(path), now)
+    if sample is not None:
+        samples.append(sample)
+        del samples[:-WIFI_NEAR_KEEP]
+        _write_wifi_near(character, samples)
+    return every
+
+
 def run(character: str) -> None:
     hosts = _load_hosts(character)
     if not hosts:
@@ -157,6 +217,8 @@ def run(character: str) -> None:
     net: dict = {}
     net_since = state_since
     seen_written = 0.0
+    wifi_samples: list[dict] = []
+    wifi_next = time.monotonic() + 10.0
     _write_state(character, current_state, state_since, net, net_since, state_since)
 
     logging.info("experienced 起動: character=%s hosts=%s", character, hosts)
@@ -205,6 +267,12 @@ def run(character: str) -> None:
             _append_events(character, events, now)
         except OSError:
             logging.exception("JSONL 書き込み失敗。次サイクルへ継続する。")
+
+        # まわりの Wi-Fi の強さ(家の中のどこにいるかの見立て用。設定のある子だけ)。
+        # 体は探すあいだ 0.4 秒ほど止まる
+        if status is not None and time.monotonic() >= wifi_next:
+            wait = _poll_wifi_near(character, client, wifi_samples, now)
+            wifi_next = time.monotonic() + wait
 
         elapsed = time.monotonic() - loop_start
         time.sleep(max(0.0, POLL_INTERVAL_SEC - elapsed))
