@@ -237,14 +237,17 @@ def body(character_id: str, base: Path | None = None, now: datetime | None = Non
 
 
 def body_line(name: str, b: dict, now: datetime, me: bool = False) -> str:
-    """「ぷちてゃの体のいま: 家(家の Wi-Fi、12:30 から)」。自分なら「あなたの体のいま: …」"""
+    """「ぷちてゃの体のいま: 家(家の Wi-Fi、12:30 から)」。自分なら「あなたの体のいま: …」。
+
+    家の中の場所(あり部屋:ソファ)は、ここには載せない。ぷちたちの希望で、変わったときだけ渡す(spots.py changes)
+    """
     who = "あなたの体" if me else f"{name}の体"
     since = _since_words(b.get("since", ""), now)
     if b.get("offline"):
         return f"{who}: {UNSEEN}" + (f"({since})" if since else "")
     if not b.get("place"):
         return ""
-    detail = "、".join(x for x in (b.get("spot", ""), b.get("how", ""), since) if x)
+    detail = "、".join(x for x in (b.get("how", ""), since) if x)
     return f"{who}のいま: {b['place']}" + (f"({detail})" if detail else "")
 
 

@@ -1855,6 +1855,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         sky_change=_sky_change_text(),
         room_change=_room_change_text(character_id),
         phone_change=_phone_change_text(character_id),
+        spot_change=_spot_change_text(character_id),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2382,6 +2383,14 @@ def _room_change_text(character_id: str) -> str:
     """家の空気が大きく変わったときだけの 1 行(その子に前に伝えた値と比べる。伝えたら覚える)。無ければ空"""
     try:
         return _room().change_line(DATA_DIR, character_id, mark=True)
+    except Exception:
+        return ""
+
+
+def _spot_change_text(character_id: str) -> str:
+    """その子の体の場所(家の中のどこか)が、前に伝えてから変わったときだけの 1 行(伝えたら覚える)。無ければ空"""
+    try:
+        return _spots().change_line(DATA_DIR, character_id, mark=True)
     except Exception:
         return ""
 

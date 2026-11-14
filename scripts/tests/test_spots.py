@@ -65,3 +65,25 @@ def test_guess_and_effective(tmp_path):
     assert sp.guess(tmp_path, "t", now) == (True, None) and sp.effective(tmp_path, "t", now) is None
     sp.set_body_spot(tmp_path, "t", bed["id"], "a", now)
     assert sp.effective(tmp_path, "t", now)["label"] == "寝室:窓際"
+
+
+def test_change_line_only_when_place_changes(tmp_path):
+    now = datetime(2026, 11, 14, 22, 0)
+    sofa, desk = sp.save([{"room": "あり部屋", "spot": "ソファ"}, {"room": "あり部屋", "spot": "机"}], tmp_path)
+    told = tmp_path / "characters" / "t" / "state" / "spot_told.json"
+    sp.set_body_spot(tmp_path, "t", sofa["id"], "a", now)
+    assert sp.change_line(tmp_path, "t", now=now) == "" and not told.exists()     # mark なしでは覚えない
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == "" and told.exists()   # はじめての回は、覚えるだけ
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == ""                 # 変わっていなければ言わない
+    sp.set_body_spot(tmp_path, "t", desk["id"], "a", now)
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == "あなたの体の場所が変わった: あり部屋:ソファ → あり部屋:机"
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == ""                 # 伝えたら、もう言わない
+    sp.set_body_spot(tmp_path, "t", None)
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == "あなたの体の場所は、いまは分からない(前は あり部屋:机)"
+    # 電波からの見立てで決まったときは「かも」と、その意味を添える。同じ場所を人が選び直しても(かも が取れても)言わない
+    import json
+    (tmp_path / "config" / "spot_guess.json").write_text(json.dumps({"t": {"rules": [{"spot_id": sofa["id"], "min": {"now": -38}}]}}), encoding="utf-8")
+    _near(tmp_path, "t", [("2026-11-14T21:59:00", -35, -45), ("2026-11-14T21:59:30", -33, -46)])
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == "あなたの体の場所: あり部屋:ソファかも(「かも」は、体のまわりの電波からの見立て。外れることがある)"
+    sp.set_body_spot(tmp_path, "t", sofa["id"], "a", now)
+    assert sp.change_line(tmp_path, "t", mark=True, now=now) == ""

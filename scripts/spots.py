@@ -25,7 +25,8 @@ characters/<id>/state/wifi_near.json に残す)が、家の設定 config/spot_gu
 
 Usage:
     python3 spots.py list
-    python3 spots.py where --character <id>     # その子の体の場所(無ければ何も出さない)
+    python3 spots.py where --character <id>     # その子の体の場所(無ければ何も出さない。ぷちが見に行くとき)
+    python3 spots.py changes --character <id> [--mark]   # 前に伝えたときから場所が変わっていたら 1 行(ぷちに渡すのはこちら)
 """
 
 from __future__ import annotations
@@ -200,6 +201,41 @@ def effective(base: Path | None, character_id: str, now: datetime | None = None)
     return {**pressed, "guess": False} if pressed else None
 
 
+def words(e: dict | None) -> str:
+    """場所の言い方。電波からの見立てなら「かも」を付ける"""
+    return (e["label"] + ("かも" if e.get("guess") else "")) if e else ""
+
+
+def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
+    """その子の体の場所が、前に伝えたときから変わっていたら 1 行(ぷちたちの希望: 毎回でなく、変わったときだけ)。
+
+    比べるのは場所そのもの(「かも」が取れただけ・付いただけでは言わない)。はじめての回は、いまの場所を覚えるだけで何も言わない。
+    伝えたことは characters/<id>/state/spot_told.json(mark のときだけ書く)
+    """
+    e = effective(base, character_id, now)
+    cur = {"spot_id": e["id"] if e else None, "words": words(e)}
+    told_path = (base or data_dir()) / "characters" / character_id / "state" / "spot_told.json"
+    try:
+        told = json.loads(told_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        told = None
+    line = ""
+    if isinstance(told, dict) and told.get("spot_id") != cur["spot_id"]:
+        before = str(told.get("words") or "")
+        if cur["spot_id"] and before:
+            line = f"あなたの体の場所が変わった: {before} → {cur['words']}"
+        elif cur["spot_id"]:
+            line = f"あなたの体の場所: {cur['words']}"
+        else:
+            line = f"あなたの体の場所は、いまは分からない(前は {before})"
+        if e and e.get("guess"):
+            line += "(「かも」は、体のまわりの電波からの見立て。外れることがある)"
+    if mark and (not isinstance(told, dict) or told.get("spot_id") != cur["spot_id"]):
+        told_path.parent.mkdir(parents=True, exist_ok=True)
+        told_path.write_text(json.dumps(cur, ensure_ascii=False) + "\n", encoding="utf-8")
+    return line
+
+
 def room_devices(base: Path | None, room: str) -> list[str]:
     out: list[str] = []
     for s in load(base):
@@ -214,15 +250,22 @@ def main() -> int:
     sub.add_parser("list")
     p = sub.add_parser("where")
     p.add_argument("--character", required=True)
+    p = sub.add_parser("changes")
+    p.add_argument("--character", required=True)
+    p.add_argument("--mark", action="store_true")
     a = ap.parse_args()
     base = data_dir()
     if a.cmd == "list":
         for s in load(base):
             print(f"{label(s)}  [id {s['id']}]" + (f"  機体: {len(s['devices'])}" if s["devices"] else ""))
+    elif a.cmd == "changes":
+        text = change_line(base, a.character, mark=a.mark)
+        if text:
+            print(text)
     else:
         b = effective(base, a.character)
         if b:
-            print(b["label"] + ("かも" if b["guess"] else ""))
+            print(words(b))
     return 0
 
 
