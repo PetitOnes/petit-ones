@@ -56,3 +56,22 @@ def test_day_lines_are_oldest_first_and_without_memory(tmp_path):
 
 def test_day_lines_empty_day(tmp_path):
     assert pl.day_lines(_house(tmp_path), Date(2026, 11, 1)) == []
+
+
+def test_hello_shows_up_with_the_sender(tmp_path):
+    """「ここにいるよ」は、押した人の名前で出る。続けて押した分は 1 件にまとめる。話しかけた、は出さない"""
+    src = _house(tmp_path)
+    contact = src.char_dir / "state" / "contact"
+    contact.mkdir()
+    events = [
+        {"ts": "2026-11-13T14:21:00", "type": "hello", "with": "arisan", "via": "dashboard"},
+        {"ts": "2026-11-13T14:23:00", "type": "hello", "with": "arisan", "via": "dashboard"},
+        {"ts": "2026-11-13T14:30:00", "type": "talked", "with": "arisan", "via": "chat"},
+        {"ts": "2026-11-13T20:00:00", "type": "hello", "with": "arisan", "via": "dashboard"},
+    ]
+    (contact / "20261113.jsonl").write_text("".join(json.dumps(e) + "\n" for e in events) + "not json\n", encoding="utf-8")
+    lines = pl.day_lines(src, DAY)
+    hello = [line for line in lines if "ここにいるよ" in line]
+    assert len(hello) == 2
+    assert hello[0].startswith("14:21 ありさんから「ここにいるよ」が届いた")
+    assert hello[1].startswith("20:00 ありさんから「ここにいるよ」が届いた")
