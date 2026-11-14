@@ -8658,9 +8658,14 @@ HTML = """<!DOCTYPE html>
                  border:1.5px solid ${off ? "#ececec" : (c.color || "#cab8d9")};background:${off ? "#f4f4f4" : "#fff"};color:${off ? "#bdbdbd" : "#444"};cursor:${off ? "default" : "pointer"};">${label}</button>`;
       const sleep = b.sleeping == null ? "" : row("💤 ねむり", "体を眠らせる(画面を消す)・起こす。体を 3 回触っても起きる", b.sleeping ? "いま 眠っている" : "いま 起きている",
         act("false", "☀️ おこす", !b.sleeping) + act("true", "🌙 ねかす", b.sleeping));
-      // いる場所(家の中のどこか。人が決める。⚙️ 設定 → 家 → 家の中の場所。2026-11-14 ありさん)
-      const spotBtns = (b.spots || []).map(s => btn("spot", s.id, s.spot ? `${s.room}:${s.spot}` : s.room, s.id === b.spot)).join("") + btn("spot", "", "—", !b.spot);
-      const spot = !(b.spots || []).length ? "" : row("📍 いる場所", "家の中のどこに置かれているか(人が決める)。📍 の体の居場所と、家の空気の「いる部屋」に使う", "", `<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">${spotBtns}</div>`);
+      // 場所(家の中のどこか。人が決める。⚙️ 設定 → 家 → 家の中の場所。2026-11-14 ありさん)
+      // 文字が多くてごちゃごちゃするので、ボタンの列ではなく 1 つの選ぶ欄に(2026-11-14 ありさん)。いまの場所だけが見える
+      const opt = (value, label, on) => `<option value="${safe(value)}" ${on ? "selected" : ""}>${safe(label)}</option>`;
+      const spotSel = `<select data-body="${c.id}" data-key="spot"
+          style="flex:1 1 0;min-height:42px;padding:0 10px;font:inherit;font-size:0.85rem;font-weight:700;border-radius:10px;cursor:pointer;
+                 border:1.5px solid ${b.spot ? color : "#e4e4e4"};background:${b.spot ? color : "#fff"};color:${b.spot ? "#444" : "#777"};">
+          ${opt("", "—", !b.spot)}${(b.spots || []).map(s => opt(s.id, s.spot ? `${s.room} ${s.spot}` : s.room, s.id === b.spot)).join("")}</select>`;
+      const spot = !(b.spots || []).length ? "" : row("📍 場所", "家の中のどこに置かれているか(人が決める)。📍 の体の居場所と、家の空気の「いる部屋」に使う", "", spotSel);
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
@@ -8672,17 +8677,22 @@ HTML = """<!DOCTYPE html>
         ${sleep}${spot}${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
     }
     // 押したら体に伝えて、体のいまの値でその子の分を描き直す。うまくいかなかったら知らせる
-    document.addEventListener("click", async e => {
+    document.addEventListener("click", e => {
       const el = e.target.closest("button[data-body][data-key]");
-      if (!el) return;
-      const id = el.dataset.body, key = el.dataset.key, raw = el.dataset.value;
+      if (el) applyBodySetting(el.dataset.body, el.dataset.key, el.dataset.value);
+    });
+    document.addEventListener("change", e => {   // 場所 は選ぶ欄
+      const el = e.target.closest("select[data-body][data-key]");
+      if (el) applyBodySetting(el.dataset.body, el.dataset.key, el.value);
+    });
+    async function applyBodySetting(id, key, raw) {
       const value = key === "power_save" || key === "sleeping" ? raw === "true" : key === "cam_to" || key === "spot" ? raw : Number(raw);
       const card = document.querySelector(`[data-bodycard="${id}"]`);
       const msg = document.querySelector(`[data-bodymsg="${id}"]`);
       if (msg) msg.textContent = "";
-      card.querySelectorAll("button").forEach(x => { x.disabled = true; });
+      card.querySelectorAll("button,select").forEach(x => { x.disabled = true; });
       try {
-        if (key === "spot") {   // いる場所 は家の記録(体には何も送らない)
+        if (key === "spot") {   // 場所 は家の記録(体には何も送らない)
           const r = await fetch(`/api/${id}/spot`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({spot_id: value || null})});
           if (!r.ok) throw new Error("決められませんでした");
           card.innerHTML = bodySettingsHtml(_bodyChars[id], {..._bodyLast[id], spot: value || null});
@@ -8699,10 +8709,10 @@ HTML = """<!DOCTYPE html>
         if (!r.ok || (b.failed || []).length) throw new Error(b.error || "変えられませんでした");
         card.innerHTML = bodySettingsHtml(_bodyChars[id], {...b, sleeping: _bodyLast[id] && _bodyLast[id].sleeping});
       } catch (err) {
-        card.querySelectorAll("button").forEach(x => { x.disabled = x.dataset.off === "1"; });   // 灰色のボタン(いまできないほう)は、押せないまま
+        card.querySelectorAll("button,select").forEach(x => { x.disabled = x.dataset.off === "1"; });   // 灰色のボタン(いまできないほう)は、押せないまま
         if (msg) msg.textContent = err.message;
       }
-    });
+    }
     async function sendHello(btnId = "helloBtn", msgId = "helloMsg") {
       const btn = document.getElementById(btnId), msg = document.getElementById(msgId);
       btn.disabled = true;
