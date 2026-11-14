@@ -1966,6 +1966,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     if sf and sf.exists():
         sid = sf.read_text().strip()
         cmd = ["claude", "--model", model_name, "--resume", sid, "--append-system-prompt", system_prompt] + _common_flags
+        # 続きの会話は、前の回の「いま」を引きずる(2026-11-14: 13 時の会話の続きで、22 時に「いまは 13:28」と言った)。
+        # なので、続きのときはメッセージの頭に今の時刻を添える(prompts/dashboard/now_prefix.md)
+        effective_message = _prompt("now_prefix", now=now_str, message=effective_message)
     else:
         cmd = ["claude", "--model", model_name, "--append-system-prompt", system_prompt] + _common_flags
 

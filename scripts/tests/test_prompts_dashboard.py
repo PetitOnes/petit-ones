@@ -82,6 +82,7 @@ def test_restriction_lines_come_from_autonomous_template():
 
 def test_from_prefix_and_relay_hint():
     assert P("from_prefix", user_display_name="かぜおさん", message="やあ") == "[かぜおさんから] やあ"
+    assert P("now_prefix", now="2026-11-14 22:28 (JST)", message="やあ") == "[いま 2026-11-14 22:28 (JST)] やあ"   # 続きの会話の頭(前の回の「いま」を引きずらないように)
     t = "puchiru"
     assert P("relay_hint", target=t) == f"（必ず `speak` で声に出してから、`conversation_relay(to_character=\"{t}\", message=\"...\", turns_remaining=2)` を呼んで{t}に渡して）"
 
