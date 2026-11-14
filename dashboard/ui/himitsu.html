@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ひみつ</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <script src="/ui/md.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <style>
+    /* ひみつ(手紙を読むページ)。ぷちどうし / みんなのメール を切り替え、だれから・だれあて で絞る。1 通 = 差出人の色の 1 枚 */
+    .h-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .h-bar label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .h-bar select { min-height: var(--ui-ctl-h-s); max-width: 11em; padding: 0 8px; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text); background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-s); }
+    .h-count { margin: 0 2px 10px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .h-mail { margin-bottom: 10px; padding: 12px 14px; border: var(--ui-line-w) solid; border-radius: var(--ui-radius-card); }
+    .h-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 6px; }
+    .h-who { display: inline-flex; align-items: center; gap: 6px; font-size: 0.9rem; font-weight: 700; }
+    .h-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; border: 1px solid rgba(58, 50, 45, 0.18); }
+    .h-date { margin-left: auto; font-size: 0.75rem; color: var(--ui-text-sub); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .h-body { font-size: 0.92rem; line-height: 1.7; color: var(--ui-text); overflow-wrap: anywhere; }
+    .h-body h1, .h-body h2, .h-body h3 { margin: 8px 0 4px; font-family: var(--ui-font-head); font-size: 1rem; }
+    .h-body > :first-child { margin-top: 0; }
+    .h-body > :last-child { margin-bottom: 0; }
+    .h-body p { margin: 6px 0; }
+    .h-body ul, .h-body ol { margin: 4px 0; padding-left: 1.3em; }
+    .h-body blockquote { margin: 6px 0; padding: 0 10px; color: var(--ui-text-sub); border-left: 3px solid rgba(58, 50, 45, 0.18); }
+    .h-body code { font-size: 0.85em; padding: 1px 5px; border-radius: 6px; background: rgba(255, 255, 255, 0.7); }
+    .h-body pre { padding: 8px 10px; overflow-x: auto; font-size: 0.82rem; background: rgba(255, 255, 255, 0.7); border-radius: var(--ui-radius-s); }
+    .h-body pre code { padding: 0; background: none; }
+    .h-body hr { margin: 8px 0; border: none; border-top: 1px dashed rgba(58, 50, 45, 0.2); }
+    .h-body a { color: var(--ui-accent-text); }
+    .h-body table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.9em; }
+    .h-body th, .h-body td { padding: 3px 8px; border: 1px solid rgba(58, 50, 45, 0.18); }
+    .h-more { display: block; margin: 12px auto; }
+    .h-more[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔒 ひみつ</h1></div>
+    <div class="h-bar" id="scopes"></div>
+    <div class="h-bar">
+      <label>だれから <select id="from"></select></label>
+      <label>だれあて <select id="to"></select></label>
+    </div>
+    <div class="h-count" id="count"></div>
+    <div id="list"></div>
+    <button class="a-btn a-btn--sub h-more" id="more" hidden>もっと見る ↓</button>
+    <div class="p-empty" id="empty">読み込み中…</div>
+  </div>
+  <script>
+    const { esc } = PetitPage;
+    const PAGE = 30;
+    const SCOPES = [["petit", "ぷちどうし"], ["all", "みんなのメール"]];
+    const state = { scope: "petit", from: "", to: "", shown: 0, total: 0, people: {} };
+    const $ = id => document.getElementById(id);
+    // 差出人の色から: 背景(うすく)・枠・名前の文字(白い地でも読める濃さ)。色の無い人は、白いカード
+    const tint = (c, p) => c ? `color-mix(in srgb, ${c} ${p}%, #fff)` : "";
+    const ink = c => c ? `color-mix(in srgb, ${c} 50%, #3A322D)` : "var(--ui-text)";
+    const nameOf = id => (state.people[id] || {}).name || id || "(わからない)";
+    // 本文は markdown。手紙にはだれが何を書いてくるか分からないので、HTML のタグは文字として出し、リンクは http(s) と mailto だけ残す
+    function md(text) {
+      const src = String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      let html = window.marked ? marked.parse(src, { breaks: true }) : `<pre>${src}</pre>`;
+      if (window.fixCjkBold) html = fixCjkBold(html);
+      const box = document.createElement("template");
+      box.innerHTML = html;
+      box.content.querySelectorAll("a").forEach(a => {
+        if (!/^(https?:|mailto:)/i.test(a.getAttribute("href") || "")) a.removeAttribute("href");
+        else { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+      });
+      box.content.querySelectorAll("img").forEach(i => i.replaceWith(document.createTextNode(i.alt || "")));
+      return box.innerHTML;
+    }
+    function card(m) {
+      const c = (state.people[m.sender] || {}).color || "";
+      const date = m.date ? m.date.replace(/^(\d{4})-(\d{2})-(\d{2})/, "$1/$2/$3") : "";
+      return `<article class="h-mail" style="background:${tint(c, 16) || "var(--ui-surface)"};border-color:${tint(c, 48) || "var(--ui-line-soft)"}">
+        <div class="h-head"><span class="h-who" style="color:${ink(c)}"><span class="h-dot" style="background:${esc(c || "#d9cdbf")}"></span>${esc(nameOf(m.sender))} → ${esc(nameOf(m.recipient))}</span><span class="h-date">${esc(date)}</span></div>
+        <div class="h-body">${md(m.content)}</div>
+      </article>`;
+    }
+    function options(sel, rows, cur, any) {
+      sel.innerHTML = `<option value="">${any}</option>` + rows.map(r => `<option value="${esc(r.id)}"${r.id === cur ? " selected" : ""}>${esc(nameOf(r.id))}(${r.count.toLocaleString()})</option>`).join("");
+    }
+    async function load(reset) {
+      if (reset) { state.shown = 0; $("list").innerHTML = ""; $("empty").style.display = ""; $("empty").textContent = "読み込み中…"; $("more").hidden = true; }
+      const q = new URLSearchParams({ scope: state.scope, sender: state.from, to: state.to, offset: state.shown, limit: PAGE });
+      let d;
+      try {
+        const res = await fetch("/api/secret_mails?" + q);
+        if (!res.ok) throw new Error(res.status);
+        d = await res.json();
+      } catch (e) { $("empty").style.display = ""; $("empty").textContent = "読み込めませんでした"; return; }
+      state.people = d.people || {}; state.total = d.total; state.scope = d.scope;
+      $("scopes").innerHTML = SCOPES.filter(([id]) => id !== "all" || d.can_all).map(([id, label]) =>
+        `<button class="a-pill${id === state.scope ? " is-on" : ""}" aria-pressed="${id === state.scope}" data-scope="${id}">${label}</button>`).join("");
+      options($("from"), d.senders || [], state.from, "だれでも");
+      options($("to"), d.recipients || [], state.to, "だれでも");
+      $("list").insertAdjacentHTML("beforeend", (d.items || []).map(card).join(""));
+      state.shown += (d.items || []).length;
+      $("count").textContent = d.total ? `${d.total.toLocaleString()} 通(新しい順)` : "";
+      $("empty").style.display = d.total ? "none" : "";
+      $("empty").textContent = "この組み合わせの手紙は、ありません";
+      $("more").hidden = state.shown >= d.total;
+    }
+    $("scopes").addEventListener("click", e => {
+      const b = e.target.closest("[data-scope]");
+      if (!b || b.dataset.scope === state.scope) return;
+      state.scope = b.dataset.scope; state.from = ""; state.to = ""; load(true);   // 見る範囲を変えたら、絞り込みは外す
+    });
+    $("from").addEventListener("change", e => { state.from = e.target.value; load(true); });
+    $("to").addEventListener("change", e => { state.to = e.target.value; load(true); });
+    $("more").addEventListener("click", () => load(false));
+    load(true);
+  </script>
+</body>
+</html>

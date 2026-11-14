@@ -531,7 +531,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "kairanban": ("/kairanban",),
     "library": ("/library",),
     "relations": ("/relations",),
-    "kankei": ("/kankei",),
+    "kankei": ("/kankei", "/api/secret_mails", "/api/mailbox/all"),   # 手紙をぜんぶ返す入口も、いっしょに閉じる
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
     "logs": ("/stream-logs", "/api/stream-logs"),
@@ -2864,13 +2864,13 @@ def terminal_page():
 @app.get("/kankei", response_class=HTMLResponse)
 def kankei_page():
     """🔒 ひみつ: ぷちどうしの手紙(2026-11-14 に、関係の図を /relations へ分けた)"""
-    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "mail").replace("__TITLE__", "🔒 ひみつ"), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse((UI_DIR / "himitsu.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/relations", response_class=HTMLResponse)
 def relations_page():
     """🤝 関係: ぷちたちと人の、気持ちの図とカード"""
-    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "rel").replace("__TITLE__", "🤝 関係"), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(KANKEI_HTML, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/notes", response_class=HTMLResponse)
@@ -6742,6 +6742,60 @@ def api_mailbox_unread_count(request: Request):
     return {"unread": unread}
 
 
+_MAIL_NAME_RE = re.compile(r"^from_(.+?)_to_(.+?)_(\d{8})_(\d{4})")
+
+
+def _secret_mail_index() -> list[tuple[str, str, str, str]]:
+    """手紙の一覧を、ファイル名だけから作る(本文は読まない): (並べる鍵 yyyymmddhhmm, 差出人, 宛先, ファイル名)。新しい順"""
+    out = []
+    try:
+        names = [f.name for f in (DATA_DIR / "mailbox").iterdir() if f.name.endswith(".md")]
+    except OSError:
+        return []
+    for name in names:
+        m = _MAIL_NAME_RE.match(name)
+        if m:   # むかしの形(to_宛先_…。差出人がファイル名に無い)は、ここには出さない
+            out.append((m.group(3) + m.group(4), m.group(1), m.group(2), name))
+    out.sort(key=lambda r: (r[0], r[3]), reverse=True)
+    return out
+
+
+@app.get("/api/secret_mails")
+def api_secret_mails(request: Request, scope: str = "petit", sender: str = "", to: str = "", offset: int = 0, limit: int = 30):
+    """🔒 ひみつ のページ用: 手紙を新しい順に、少しずつ返す。
+
+    scope: petit = ぷちどうしの手紙だけ / all = みんなのメール(人あて・人からも)。all は、見られる子が決まっている人には出さない
+    sender / to: だれから・だれあて で絞る(空なら絞らない)。選べる人の一覧(通数つき)も返す
+    """
+    from collections import Counter
+
+    can_all = not _is_limited(request)
+    if scope != "all" or not can_all:
+        scope = "petit"
+    petits = {c["id"] for c in list_characters()}
+    rows = [r for r in _secret_mail_index() if scope == "all" or (r[1] in petits and r[2] in petits)]
+    count_from, count_to = Counter(r[1] for r in rows), Counter(r[2] for r in rows)
+    hit = [r for r in rows if (not sender or r[1] == sender) and (not to or r[2] == to)]
+    offset, limit = max(0, offset), max(1, min(100, limit))
+    items = []
+    for key, frm, rcpt, name in hit[offset:offset + limit]:
+        items.append({"filename": name, "sender": frm, "recipient": rcpt,
+                      "date": f"{key[:4]}-{key[4:6]}-{key[6:8]} {key[8:10]}:{key[10:12]}",
+                      "content": _read_mail_cached(DATA_DIR / "mailbox" / name)})
+
+    def person(pid: str) -> dict:
+        if pid in petits:
+            return {"name": _char_display_name(pid), "color": get_char_config(pid).get("color", ""), "kind": "petit"}
+        if pid in _USER_DISPLAY:
+            return {"name": _USER_DISPLAY[pid]["name"], "color": _person_color(pid), "kind": "human"}
+        return {"name": _char_display_name(pid), "color": "", "kind": "other"}
+
+    return {"scope": scope, "can_all": can_all, "total": len(hit), "offset": offset, "items": items,
+            "people": {pid: person(pid) for pid in set(count_from) | set(count_to)},
+            "senders": [{"id": k, "count": v} for k, v in count_from.most_common()],
+            "recipients": [{"id": k, "count": v} for k, v in count_to.most_common()]}
+
+
 @app.get("/api/mailbox/all")
 def api_mailbox_all(filter: str = "all"):
     """全メール一覧（メールボックスにあるすべて）"""
@@ -9910,7 +9964,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
-  <title>__TITLE__</title>
+  <title>🤝 関係</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* ほかのページ(記念日・音・回覧板)と同じ色づかい: クリームの地・白いカード・紫の見出し(2026-11-14) */
@@ -9920,10 +9974,6 @@ KANKEI_HTML = """<!DOCTYPE html>
     html.embed .top-bar { display: none; }
     .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
     .back-btn:hover { background: #f0eaf8; }
-    .mode-rel .mail-section { display: none; }
-    .mode-mail .chart-container, .mode-mail .cards { display: none; }
-    .mode-mail .mail-thread { max-height: none; }
-    .chart-container { display: flex; justify-content: center; padding: 8px 8px 12px; }
     #chart { max-width: 640px; width: 100%; height: auto; }
     .tooltip {
       position: fixed; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 10px;
@@ -9935,24 +9985,8 @@ KANKEI_HTML = """<!DOCTYPE html>
     .tooltip .gauge-bar { background: #f0eaf8; border-radius: 4px; height: 8px; overflow: hidden; }
     .tooltip .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
     .tooltip .gauge-label { font-size: 0.75rem; color: #6E625A; margin-top: 2px; }
-    .mail-section { max-width: 640px; margin: 0 auto; padding: 20px 20px 30px; }
-    .mail-section h2 { font-size: 1rem; color: #9b8ec4; letter-spacing: 0.04em; margin-bottom: 12px; }
-    .mail-thread { display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; padding-right: 4px; }
-    .mail-thread::-webkit-scrollbar { width: 6px; }
-    .mail-thread::-webkit-scrollbar-thumb { background: #d9cdbf; border-radius: 3px; }
-    .mail-thread::-webkit-scrollbar-track { background: transparent; }
-    .mail-bubble {
-      max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 0.85rem;
-      line-height: 1.5; white-space: pre-wrap; position: relative;
-    }
-    .mail-bubble.left { align-self: flex-start; background: #fff; border: 1.5px solid #eee1cf; }
-    .mail-bubble.right { align-self: flex-end; background: #f6f1fb; border: 1.5px solid #e0d8f0; }
-    .mail-meta { font-size: 0.7rem; color: #9a8d82; margin-top: 4px; }
-    .mail-sender { font-size: 0.75rem; font-weight: 600; margin-bottom: 4px; }
-    .mail-empty { color: #9a8d82; font-size: 0.85rem; text-align: center; padding: 20px; }
     .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; max-width: 980px; margin: 0 auto; padding: 0 16px 30px; align-items: start; }
     .chart-hint { max-width: 720px; margin: -8px auto 12px; padding: 0 16px; text-align: center; font-size: 0.8rem; color: #9a8d82; }
-    .mode-mail .chart-hint { display: none; }
     svg.face { flex: 0 0 auto; display: block; }
     .person-dot { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-weight: 700; }
     .card-sub { margin: 12px 0 2px; padding-top: 10px; border-top: 1.5px dashed #eee1cf; font-size: 0.78rem; font-weight: 700; color: #9b8ec4; letter-spacing: 0.04em; }
@@ -9997,11 +10031,11 @@ KANKEI_HTML = """<!DOCTYPE html>
     }
   </style>
 </head>
-<body class="mode-__MODE__">
-  <!-- 1 つの作りを 2 つのページで使う(2026-11-14 に分けた): mode-rel = 🤝 関係(図とカード)、mode-mail = 🔒 ひみつ(ぷちどうしの手紙) -->
+<body>
+  <!-- 🤝 関係(図とカード)。手紙は、🔒 ひみつ(dashboard/ui/himitsu.html)へ分けた(2026-11-14) -->
   <div class="top-bar">
     <a href="/" class="back-btn">← もどる</a>
-    <h1>__TITLE__</h1>
+    <h1>🤝 関係</h1>
   </div>
   <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
   <div class="tooltip" id="tip"></div>
@@ -10010,17 +10044,10 @@ KANKEI_HTML = """<!DOCTYPE html>
   </div>
   <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。くわしい気持ちは、下に文字で。</div>
   <div class="cards" id="cards"></div>
-  <div class="mail-section">
-    <div id="mailThread" class="mail-thread"></div>
-    <div id="mailMore" style="text-align:center;padding:10px;display:none">
-      <button onclick="showMoreMails()" style="background:#fff;border:1.5px solid #E3D6C2;color:#9b8ec4;padding:8px 20px;border-radius:12px;cursor:pointer;font-size:0.85rem;font-weight:700">もっと見る ↓</button>
-    </div>
-  </div>
   <script>
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
     if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
-    const MODE = "__MODE__";   // "rel" = 関係のページ / "mail" = ひみつ(手紙)のページ
     const SVG_NS = "http://www.w3.org/2000/svg";
     const CX = 350, CY = 340, RADIUS = 225, NODE_R = 72;   // NODE_R: 顔のまわりに空ける半径
     const FACE_W = 116, FACE_H = 87;   // 図の中の顔(体の画面と同じ 4:3)
@@ -10233,106 +10260,8 @@ KANKEI_HTML = """<!DOCTYPE html>
       }).join("");
     }
 
-    if (MODE === "rel") load();   // 関係のページだけ、図とカードを描く
+    load();
 
-    function parseMail(mail) {
-      const parts = mail.filename.replace(".md", "").split("_");
-      const fromIdx = parts.indexOf("from");
-      const toIdx = parts.indexOf("to");
-      let sender = "", recipient = "";
-      if (fromIdx >= 0 && toIdx > fromIdx) {
-        sender = parts.slice(fromIdx + 1, toIdx).join("_");
-        const afterTo = parts.slice(toIdx + 1);
-        const dateIdx = afterTo.findIndex(p => /^\\d{8}$/.test(p));
-        recipient = dateIdx > 0 ? afterTo.slice(0, dateIdx).join("_") : afterTo[0];
-      }
-      const dateMatch = mail.filename.match(/(\\d{8})_(\\d{4})/);
-      let dateStr = "", sortKey = "";
-      if (dateMatch) {
-        const d = dateMatch[1], t = dateMatch[2];
-        sortKey = d + t;
-        dateStr = d.slice(0,4) + "/" + d.slice(4,6) + "/" + d.slice(6,8) + " " + t.slice(0,2) + ":" + t.slice(2,4);
-      }
-      return { sender, recipient, dateStr, sortKey, content: mail.content };
-    }
-
-    const MAIL_PAGE_SIZE = 20;
-    let _allParsedMails = [];
-    let _mailShown = 0;
-
-    function renderMailBubble(mail) {
-      const nameMap = {};
-      if (_nodes) _nodes.forEach(n => { nameMap[n.id] = n.name; });
-
-      let body = mail.content.trim();
-      const lines = body.split("\\n");
-      if (lines[0].startsWith("#")) lines.shift();
-      while (lines.length && !lines[0].trim()) lines.shift();
-      while (lines.length && !lines[lines.length-1].trim()) lines.pop();
-      const lastLine = lines[lines.length-1]?.trim();
-      if (lastLine && (lastLine === mail.sender || lastLine === (nameMap[mail.sender] || ""))) lines.pop();
-      body = lines.join("\\n").trim();
-
-      const isLeft = mail.sender === "puchiko";
-      const senderName = nameMap[mail.sender] || mail.sender;
-      const recipientName = nameMap[mail.recipient] || mail.recipient;
-      const senderColor = _nodes?.find(n => n.id === mail.sender)?.color || "#cab8d9";
-
-      const bubble = document.createElement("div");
-      bubble.className = "mail-bubble " + (isLeft ? "left" : "right");
-      bubble.innerHTML =
-        '<div class="mail-sender" style="color:' + ink(senderColor) + '">' + senderName + ' → ' + recipientName + '</div>' +
-        body.replace(/</g, "&lt;").replace(/\\n/g, "<br>") +
-        '<div class="mail-meta">' + mail.dateStr + '</div>';
-      return bubble;
-    }
-
-    function showMoreMails() {
-      const thread = document.getElementById("mailThread");
-      const end = Math.min(_mailShown + MAIL_PAGE_SIZE, _allParsedMails.length);
-      for (let i = _mailShown; i < end; i++) {
-        thread.appendChild(renderMailBubble(_allParsedMails[i]));
-      }
-      _mailShown = end;
-      document.getElementById("mailMore").style.display =
-        _mailShown < _allParsedMails.length ? "" : "none";
-    }
-
-    async function loadMails() {
-      const thread = document.getElementById("mailThread");
-      try {
-        const res = await fetch("/api/mailbox/all");
-        const mails = await res.json();
-
-        const charMails = mails.filter(m => m.filename.startsWith("from_"));
-        if (!charMails.length) {
-          thread.innerHTML = '<div class="mail-empty">まだおてがみはありません</div>';
-          return;
-        }
-
-        const parsed = charMails.map(m => parseMail(m));
-        // 自分宛を除外（キャラ同士のメールだけ表示）
-        const filtered = parsed.filter(m => !["arisan","kazahaya"].includes(m.recipient));
-        // 最新が上
-        filtered.sort((a, b) => (a.sortKey < b.sortKey ? 1 : a.sortKey > b.sortKey ? -1 : 0));
-
-        _allParsedMails = filtered;
-        _mailShown = 0;
-
-        if (!filtered.length) {
-          thread.innerHTML = '<div class="mail-empty">まだおてがみはありません</div>';
-          return;
-        }
-
-        showMoreMails();
-      } catch(e) {
-        thread.innerHTML = '<div class="mail-empty">読み込めませんでした</div>';
-      }
-    }
-    // ひみつ のページ: 手紙だけ読む。差出人の名前と色は、関係の入口の一覧から借りる(図は描かない)
-    if (MODE === "mail") {
-      fetch("/api/relations").then(r => r.json()).then(d => { _nodes = d.nodes || []; }).catch(() => {}).then(loadMails);
-    }
   </script>
 </body>
 </html>
