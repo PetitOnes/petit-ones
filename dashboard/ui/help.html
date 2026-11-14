@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>使い方</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <style>
+    /* 使い方(2026-11-14 ありさん)。本文は help.md。見出しから目次、上の欄で絞り込み。設定ページの「？」から節へ飛ぶ */
+    .h-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 4px; }
+    .h-body { font-size: var(--ui-fs-l); color: var(--ui-text); line-height: 1.75; }
+    .h-body h1 { display: none; }
+    .h-body section { padding: 14px 16px; margin-bottom: 12px; background: var(--ui-surface); border-radius: var(--ui-radius-card); box-shadow: var(--ui-shadow-card); }
+    .h-body section.off { display: none; }
+    .h-body h2 { margin: 0 0 6px; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); letter-spacing: 0.04em; }
+    .h-body h3 { margin: 14px 0 4px; font-size: 0.95rem; color: var(--ui-accent-text); }
+    .h-body ul { margin: 4px 0; padding-left: 1.2em; }
+    .h-body li { margin: 3px 0; }
+    .h-body li ul { margin: 2px 0; }
+    .h-body p { margin: 4px 0; }
+    .h-body code { font-size: 0.85em; padding: 1px 5px; border-radius: 6px; background: var(--ui-accent-soft); }
+    .h-body section:target, .h-body :target { scroll-margin-top: 70px; }
+    .h-body section.hit { outline: 2px solid var(--ui-accent-line); }
+    .h-empty { color: var(--ui-text-sub); text-align: center; padding: 24px 0; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📖 使い方</h1></div>
+    <div class="o-bar"><input class="a-input" id="q" placeholder="さがす（例: 声 / 設定 / 写真）" autocomplete="off" style="flex:1"></div>
+    <div class="h-toc" id="toc"></div>
+    <div class="h-body" id="helpBody"></div>
+    <div class="h-empty" id="empty" style="display:none">見つからなかった</div>
+  </div>
+  <script>
+    const { esc } = PetitPage;
+    const body = document.getElementById("helpBody");
+    let sections = [];
+    // 見出しの {#id} を id にする。h2 ごとに <section> で包む(絞り込みと「？」からの飛び先のため)
+    function build(md) {
+      const html = marked.parse(md.replace(/\s*\{#([a-z0-9-]+)\}/g, (m, id) => `<!--id:${id}-->`));
+      const box = document.createElement("div"); box.innerHTML = html;
+      for (const el of box.querySelectorAll("h2, h3, li")) {
+        const c = [...el.childNodes].find(n => n.nodeType === 8 && n.data.startsWith("id:"));
+        if (c) { el.id = c.data.slice(3); c.remove(); }
+      }
+      body.textContent = ""; sections = [];
+      let sec = null;
+      for (const node of [...box.childNodes]) {
+        if (node.nodeName === "H2") { sec = document.createElement("section"); if (node.id) { sec.id = node.id; node.removeAttribute("id"); } body.appendChild(sec); sections.push(sec); }
+        (sec || body).appendChild(node);
+      }
+      document.getElementById("toc").innerHTML = sections.map(s => `<a class="a-pill" href="#${esc(s.id)}">${esc(s.querySelector("h2").textContent)}</a>`).join("");
+      if (location.hash) jump();
+    }
+    function jump() {
+      const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+      if (!t) return;
+      sections.forEach(s => s.classList.remove("hit"));
+      (t.closest("section") || t).classList.add("hit");
+      t.scrollIntoView({block: "start"});
+    }
+    window.addEventListener("hashchange", jump);
+    document.getElementById("q").addEventListener("input", e => {
+      const q = e.target.value.trim().toLowerCase();
+      let n = 0;
+      for (const s of sections) {
+        const on = !q || s.textContent.toLowerCase().includes(q);
+        s.classList.toggle("off", !on); if (on) n++;
+        // 絞り込み中は、当たった行だけ残す(見出しと、当たりを含む li)
+        for (const li of s.querySelectorAll("li")) li.style.display = (!q || li.textContent.toLowerCase().includes(q)) ? "" : "none";
+      }
+      document.getElementById("empty").style.display = n ? "none" : "";
+    });
+    fetch("/help.md").then(r => r.text()).then(build).catch(() => { body.textContent = "読めなかった"; });
+  </script>
+</body>
+</html>

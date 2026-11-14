@@ -31,3 +31,13 @@ def test_tool_catalog_matches():
 def test_default_shown_matches():
     assert _main_tools()[1] == _page_tools()[1]
     assert "settings" not in _main_tools()[1]   # 設定は「ほか」の中(2026-11-14 ありさん)
+
+
+def test_help_anchors_exist():
+    """設定ページの「？」の飛び先が、使い方(help.md)の見出しにある"""
+    html = (REPO / "dashboard" / "ui" / "settings.html").read_text(encoding="utf-8")
+    md = (REPO / "dashboard" / "ui" / "help.md").read_text(encoding="utf-8")
+    ids = set(re.findall(r"\{#([a-z0-9-]+)\}", md))
+    wanted = set(re.findall(r'data-help="([a-z0-9-]+)"', html))
+    assert wanted and wanted <= ids, wanted - ids
+    assert len(ids) == len(re.findall(r"\{#([a-z0-9-]+)\}", md))   # 同じ id を 2 回使わない

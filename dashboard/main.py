@@ -2363,7 +2363,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html"}
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
@@ -2693,6 +2693,17 @@ def api_desire_history(character_id: str, days: int = 7):
 @app.get("/anniversaries", response_class=HTMLResponse)
 def anniversaries_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/help", response_class=HTMLResponse)
+def help_page():
+    """使い方(道具の列の「📖 使い方」)。本文は dashboard/ui/help.md"""
+    return HTMLResponse((UI_DIR / _UI_PAGES["help"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/help.md")
+def help_md():
+    return Response((UI_DIR / "help.md").read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/settings", response_class=HTMLResponse)
@@ -7635,6 +7646,7 @@ HTML = """<!DOCTYPE html>
     const TOOLS = {
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
       settings:  {icon: "⚙️", name: "設定",       pane: "settings"},   // 家 / 各ぷち(2026-11-14 ありさん。トップバーから移し、はじめは「ほか」の中)
+      help:      {icon: "📖", name: "使い方",     pane: "help"},       // 本文は dashboard/ui/help.md(2026-11-14)
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
@@ -7811,7 +7823,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library", settings: "/settings"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
