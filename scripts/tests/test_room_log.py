@@ -89,3 +89,18 @@ def test_line_with_my_room(tmp_path):
     sp.set_body_spot(tmp_path, "puchiru", items[0]["id"])
     assert rl.line(tmp_path, T, "puchiru") == "家の空気(いる部屋は 寝室): 寝室の温湿度計(いる部屋) 20.0℃・50%、あり部屋のハブ２ 23.9℃・43%(18:20 の読み)"
     assert rl.line(tmp_path, T, "puchiko").startswith("家の空気: あり部屋のハブ２ 23.9℃")   # 場所を決めていない子は、いつもの順
+
+
+def test_latest_uses_presence_when_newer(tmp_path):
+    """10 分ごとの読みが動きを見逃しても、1 分ごとの気配が覚えている最後の動きを使う"""
+    rows = [{"ts": "2026-11-14T20:30:00", "devices": {"m1": {"name": "机", "type": "Motion Sensor", "move": False}}}]
+    _write(tmp_path, rows)   # latest の last_move は 18:05
+    (tmp_path / "state" / "presence_state.json").write_text(json.dumps({"m1": {"place": "机", "last_move": "2026-11-14T20:39:01"}}), encoding="utf-8")
+    assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T20:39:01"
+    assert "最後は 20:39" in rl.line(tmp_path)
+    # 気配のほうが古ければ、部屋の記録のまま
+    (tmp_path / "state" / "presence_state.json").write_text(json.dumps({"m1": {"place": "机", "last_move": "2026-11-14T17:00:00"}}), encoding="utf-8")
+    assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T18:05:00"
+    # 気配の記録が無くても困らない
+    (tmp_path / "state" / "presence_state.json").unlink()
+    assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T18:05:00"
