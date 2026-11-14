@@ -6078,12 +6078,12 @@ HTML = """<!DOCTYPE html>
     .me-now { position: relative; }
     .topbar .me-now-btn { width: auto; min-width: 38px; padding: 0 10px; gap: 4px; border-radius: 999px; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.9rem; color: var(--topbar-fg, var(--char-mid)); }
     .me-now-text:empty { display: none; }
-    .me-now-menu { left: auto; right: 0; min-width: 220px; padding: 10px; gap: 8px; }
+    .me-now-menu { position: fixed; left: auto; right: 12px; width: min(320px, calc(100vw - 24px)); padding: 10px; gap: 8px; }   /* 右上の 📍 の下、画面からはみ出さない幅(top は開くときに JS が決める) */
     .me-now-menu .chips { display: flex; flex-wrap: wrap; gap: 6px; }
     .me-now-menu .chip { min-height: 36px; padding: 0 14px; border: 1.5px solid #e6dcd6; border-radius: 999px; background: #fff; color: #444; font: inherit; font-size: 0.95rem; font-weight: 700; cursor: pointer; }
     .me-now-menu .chip.active { background: var(--topbar-bg, var(--char)); border-color: transparent; color: var(--topbar-fg, #fff); }
     .me-now-menu .row { display: flex; gap: 6px; }
-    .me-now-menu input { flex: 1; min-width: 0; min-height: 36px; padding: 0 10px; border: 1.5px solid #e6dcd6; border-radius: 10px; font: inherit; font-size: 0.95rem; }
+    .me-now-menu input { flex: 1; width: 0; min-width: 0; min-height: 36px; padding: 0 10px; border: 1.5px solid #e6dcd6; border-radius: 10px; font: inherit; font-size: 0.95rem; }
     .me-now-menu .others { font-size: 0.8rem; color: #888; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -6998,7 +6998,10 @@ HTML = """<!DOCTYPE html>
       if (ev) ev.stopPropagation();
       const m = document.getElementById("meNowMenu");
       const open = m.style.display === "none";
-      if (open) renderMeNow();
+      if (open) {
+        renderMeNow();
+        m.style.top = Math.round(document.getElementById("meNowBtn").getBoundingClientRect().bottom + 8) + "px";   // 📍 のすぐ下
+      }
       m.style.display = open ? "" : "none";
       document.getElementById("meNowBtn").setAttribute("aria-expanded", open ? "true" : "false");
     }
