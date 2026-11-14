@@ -30,9 +30,10 @@ window.PetitPage = (() => {
   }
 
   // ぷちの一覧を <select> に入れて、選ばれている id を返す。変わったら onChange(id)
-  async function charSelect(sel, onChange) {
+  // url: 子の一覧の読み先。ぷちログは、見てよいと決めてもらった子も入る /api/petitlog/characters
+  async function charSelect(sel, onChange, url = "/api/characters") {
     let chars = [];
-    try { chars = await (await fetch("/api/characters")).json(); } catch (e) {}
+    try { chars = await (await fetch(url)).json(); } catch (e) {}
     chars = Array.isArray(chars) ? chars : [];
     const want = q.get("char");
     const cur = chars.some(c => c.id === want) ? want : (chars[0] && chars[0].id) || "";
