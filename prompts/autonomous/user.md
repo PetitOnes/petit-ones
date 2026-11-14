@@ -30,6 +30,10 @@
 
 {{mail_receipt_notice}}
 {{/if}}
+{{#if note_mark_notice}}
+
+{{note_mark_notice}}
+{{/if}}
 {{#if experience_notice}}
 
 {{experience_notice}}

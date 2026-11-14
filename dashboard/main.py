@@ -1836,6 +1836,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts = _mail_receipts().notice(DATA_DIR, character_id, mark=True)
         except Exception:
             receipts = []
+        try:
+            receipts += _note_marks().notice(DATA_DIR, character_id, mark=True)   # ノートが読まれた・★ が付いた(2026-11-14)
+        except Exception:
+            pass
         if receipts:
             effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
@@ -3451,17 +3455,13 @@ def _note_title(filename: str) -> str:
     return name
 
 
-# ---- ノートの ★(2026-11-14 ありさん)。家の state/note_stars.json に {子や人の id: [ファイル名, …]}。ぷちのノートの中身は触らない ----
-NOTE_STARS_FILE = DATA_DIR / "state" / "note_stars.json"
-NOTE_STARS_MAX = 500
-
-
-def _note_stars() -> dict[str, list[str]]:
-    try:
-        d = json.loads(NOTE_STARS_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return {k: [n for n in v if isinstance(n, str)] for k, v in d.items() if isinstance(v, list)} if isinstance(d, dict) else {}
+# ---- ノートの ★ と 既読(2026-11-14 ありさん)。置き場所と ぷちへの知らせは scripts/note_marks.py。ぷちのノートの中身は触らない ----
+def _note_marks():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import note_marks
+    return note_marks
 
 
 class NoteStarBody(BaseModel):
@@ -3470,23 +3470,36 @@ class NoteStarBody(BaseModel):
     on: bool
 
 
+class NoteReadBody(BaseModel):
+    char: str
+    name: str
+
+
 @app.get("/api/notes/stars")
 def api_note_stars():
-    return {"stars": _note_stars()}
+    return {"stars": _note_marks().load_stars(DATA_DIR)}
 
 
 @app.post("/api/notes/star")
-def api_note_star(body: NoteStarBody):
-    if "/" in body.name or "\\" in body.name or not body.name.endswith(".md") or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", body.char):
+def api_note_star(body: NoteStarBody, request: Request):
+    nm = _note_marks()
+    if not nm.valid_name(body.name) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", body.char):
         return JSONResponse({"error": "名前がおかしい"}, status_code=400)
-    stars = _note_stars()
-    names = [n for n in stars.get(body.char, []) if n != body.name]
-    if body.on:
-        names.append(body.name)
-    stars[body.char] = names[-NOTE_STARS_MAX:]
-    NOTE_STARS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    NOTE_STARS_FILE.write_text(json.dumps(stars, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"stars": stars}
+    return {"stars": nm.set_star(DATA_DIR, body.char, body.name, body.on, _get_username(request) or "arisan")}
+
+
+@app.get("/api/notes/reads")
+def api_note_reads(request: Request):
+    """見ている人の既読(子ごと → ファイル名 → 開いた時刻)"""
+    return {"reads": _note_marks().load_reads(DATA_DIR).get(_get_username(request) or "arisan", {})}
+
+
+@app.post("/api/notes/read")
+def api_note_read(body: NoteReadBody, request: Request):
+    nm = _note_marks()
+    if not nm.valid_name(body.name) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", body.char):
+        return JSONResponse({"error": "名前がおかしい"}, status_code=400)
+    return {"reads": nm.set_read(DATA_DIR, _get_username(request) or "arisan", body.char, body.name)}
 
 
 @app.get("/api/{character_id}/notes")
@@ -10334,6 +10347,7 @@ NOTES_HTML = """<!DOCTYPE html>
     .note-item .note-actions button:hover { opacity: 1; }
     .note-item .note-actions { display: flex; gap: 2px; }
     .note-item .note-actions button.star.on { opacity: 1; color: #f5b301; }   /* ★ を付けたノート */
+    .note-item .unread { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f58e7d; margin-right: 6px; flex-shrink: 0; }   /* まだ見ていない(開いてから更新された) */
 
     .create-btn { padding: 7px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.83rem; text-align: center; flex-shrink: 0; }
     .create-btn:hover { background: #1a4a7a; }
@@ -10394,8 +10408,8 @@ NOTES_HTML = """<!DOCTYPE html>
       <div class="toolbar">
         <input class="search-input" id="searchInput" placeholder="🔍 検索…" oninput="renderList()">
         <select class="sort-select" id="sortSelect" onchange="renderList()">
+          <option value="date" selected>更新順</option>
           <option value="name">名前順</option>
-          <option value="date">更新順</option>
           <option value="size">サイズ順</option>
         </select>
       </div>
@@ -10411,8 +10425,11 @@ NOTES_HTML = """<!DOCTYPE html>
     let chars = [];
     let currentChar = new URLSearchParams(location.search).get("char") || "";
     let allNotes = [];
-    let stars = {};   // ★(/api/notes/stars)。{id: [ファイル名]}
-    const isStar = n => (stars[currentChar] || []).includes(n.name);
+    let stars = {};   // ★(/api/notes/stars)。{id: {ファイル名: {by, at}}}
+    let reads = {};   // 自分の既読(/api/notes/reads)。{id: {ファイル名: 開いた時刻}}
+    const isStar = n => !!(stars[currentChar] || {})[n.name];
+    // まだ見ていない = 開いた記録が無い、か、開いたあとに更新された。自分のノート(書ける子)は数えない
+    const isUnread = n => !isEditable() && (!(reads[currentChar] || {})[n.name] || new Date((reads[currentChar] || {})[n.name]) < new Date(n.modified));
     let currentFolder = "";
     let currentNote = null, currentNoteTitle = null, currentNoteContent = null;
 
@@ -10485,13 +10502,13 @@ NOTES_HTML = """<!DOCTYPE html>
         const star = `<button class="star${isStar(n) ? " on" : ""}" title="★" onclick="event.stopPropagation();toggleStar('${nameEsc}')">${isStar(n) ? "★" : "☆"}</button>`;
         const del = `<div class="note-actions">${star}${editable && window._canDeleteNotes !== false ? `<button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button>` : ""}</div>`;
         return `<div class="note-item${currentNote===n.name?" active":""}" onclick="loadNote('${nameEsc}')">
-          <div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
+          ${isUnread(n) ? '<span class="unread" title="まだ見ていない"></span>' : ""}<div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
         </div>`;
       }).join("");
     }
 
     async function toggleStar(name) {
-      const on = !(stars[currentChar] || []).includes(name);
+      const on = !(stars[currentChar] || {})[name];
       try {
         const r = await fetch("/api/notes/star", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({char: currentChar, name, on})});
         if (r.ok) stars = (await r.json()).stars || {};
@@ -10503,6 +10520,7 @@ NOTES_HTML = """<!DOCTYPE html>
         const res = await fetch(`/api/${currentChar}/notes`);
         allNotes = await res.json();
         try { stars = (await (await fetch("/api/notes/stars")).json()).stars || {}; } catch (e) {}
+        try { reads = (await (await fetch("/api/notes/reads")).json()).reads || {}; } catch (e) {}
         currentFolder = "";
         renderFolderChips(allNotes);
         renderList();
@@ -10548,6 +10566,10 @@ NOTES_HTML = """<!DOCTYPE html>
         const data = await res.json();
         currentNoteTitle = data.title; currentNoteContent = data.content;
         showViewMode(data);
+        if (!isEditable()) {   // 開いたら既読(ぷちには、次の会話かひとりの時間でさらっと伝わる)
+          try { reads = (await (await fetch("/api/notes/read", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({char: currentChar, name})})).json()).reads || reads; } catch (e) {}
+          renderList();
+        }
       } catch(e) {
         document.getElementById("mainContent").innerHTML = '<div class="empty-state">読み込めませんでした</div>';
       }
