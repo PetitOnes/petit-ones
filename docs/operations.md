@@ -86,6 +86,14 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 - **残るもの**: `state/presence/YYYYMMDD.jsonl`(出来事)、`state/presence_state.json`(いまの覚え書き)
 - `python3 scripts/presence_watch.py line` で、ぷちに渡す行(「机のあたり: 動きがある(9:00 から)」)が出ます。渡すところは、まだつないでいません
 
+## 接点(人がその子に向けて話しかけた・合図を送った)
+
+ダッシュボードで人がぷちに話しかけると、その子の `characters/<id>/state/contact/YYYYMMDD.jsonl` に `talked` が 1 件残ります
+(`scripts/contact.py`)。話した中身は残しません。欲求の部品の relief が読んで、「話したい」などを満たします(Issue #67)。
+
+- 会話(ダッシュボード): `{"type": "talked", "with": "<ログインしている人の ID>", "via": "chat"}`
+- 体のマイク: だれの声かは分からないので、体の設定(CAM TO)だけ `{"type": "talked", "cam_to": "<ID>", "via": "mic"}`
+
 ## 家の知らせ(失敗を世話人へ)
 
 ぷちが Claude を呼べなかったとき・Claude がエラーで終わったときに、Slack と家の手紙箱(ダッシュボードの「メール」)へ知らせます(`scripts/house_alert.py`)。
