@@ -7075,8 +7075,6 @@ HTML = """<!DOCTYPE html>
     .shot-foot { align-self: center; margin-top: 6px; font-size: 0.68rem; color: #b3a79c; letter-spacing: 0.04em; }
     /* メールボックスの「＋」(メールを書く) */
     .mail-new-btn { width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%; background: var(--topbar-bg, var(--char)); color: var(--topbar-fg, var(--char-btn-text)); font-size: 1.3rem; font-weight: 700; line-height: 1; cursor: pointer; }
-    /* 「起こす」ボタンは出さない(2026-11-10 ありさん)。JS が表示を切り替えるので、ここで止める */
-    #wakeBtn { display: none !important; }
     /* ぷち 1 人の帯と、開いたときの中身 */
     .char-bar { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 6px max(16px, calc(50vw - 434px)); border: none; border-bottom: 1px solid var(--ui-cream-line); background: var(--ui-cream); color: #6E625A; font: inherit; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.9rem; text-align: left; cursor: pointer; }
     .char-bar .char-pick-dot { box-shadow: none; }
@@ -7296,8 +7294,6 @@ HTML = """<!DOCTYPE html>
   <div style="display:flex;justify-content:flex-end;align-items:center;">
     <div style="display:flex;align-items:center;gap:8px;">
       <div id="m5status"></div>
-      <button id="sleepBtn" onclick="m5Sleep()" style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">😴 スリープ</button>
-      <button id="wakeBtn"  onclick="m5Wake()"  style="display:none;font-size:0.75rem;padding:3px 10px;border-radius:12px;border:1px solid #ddd;background:#f5f5f5;cursor:pointer;">☀️ 起こす</button>
     </div>
   </div>
         <div id="twoColLayout">
@@ -7897,8 +7893,6 @@ HTML = """<!DOCTYPE html>
       if (!chatStates[id]) loadChatHistoryInto(id); else scrollChatToBottom();
       loadCharacters();
       const isGroupLike = id === "select" || id === "group";
-      document.getElementById("sleepBtn").style.display = "none";
-      document.getElementById("wakeBtn").style.display = "none";
       document.getElementById("m5status").innerHTML = "";
       document.getElementById("twoColLayout").style.display = isGroupLike ? "block" : "";
       // ぷち 1 人の帯: みんな・だれかでは出さない。選び直したら閉じる
@@ -8061,9 +8055,9 @@ HTML = """<!DOCTYPE html>
       brightness: [[5, "5%"], [50, "50%"], [75, "75%"], [100, "100%"]],
       volume: [[0, "MUTE"], [25, "25%"], [50, "50%"], [75, "75%"], [100, "100%"]],
     };
-    const _bodyChars = {};
+    const _bodyChars = {}, _bodyLast = {};
     function bodySettingsHtml(c, b) {
-      _bodyChars[c.id] = c;
+      _bodyChars[c.id] = c; _bodyLast[c.id] = b;
       const safe = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
       const color = c.color || "#cab8d9";
       const btn = (key, value, label, on) => `<button data-body="${c.id}" data-key="${key}" data-value="${safe(value)}"
@@ -8077,6 +8071,9 @@ HTML = """<!DOCTYPE html>
       const near = (n, v) => Math.abs(n - v) <= 1;
       const pick = (key, v) => v == null ? "" : row(key === "brightness" ? "🔆 明るさ" : "🔊 音量", key === "brightness" ? "画面の明るさ" : "音量",
         BODY_CHOICES[key].some(([n]) => near(n, v)) ? "" : `いま ${v}%`, BODY_CHOICES[key].map(([n, label]) => btn(key, n, label, near(n, v))).join(""));
+      // 起こす・眠らせる(2026-11-14 ありさん: それぞれのページでなく、ここに)。sleeping は ようす が /status から渡す
+      const sleep = b.sleeping == null ? "" : row("💤 ねむり", "体を眠らせる(画面を消す)・起こす。体を 3 回触っても起きる", "",
+        btn("sleeping", "false", "☀️ おこす", !b.sleeping) + btn("sleeping", "true", "🌙 ねかす", b.sleeping));
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
@@ -8085,23 +8082,29 @@ HTML = """<!DOCTYPE html>
         <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
           <span style="font-weight:700;color:${readableText(color)};">${safe(c.name || c.id)}</span>
           <span data-bodymsg="${c.id}" style="font-size:0.75rem;color:#f44336;"></span></div>
-        ${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
+        ${sleep}${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
     }
     // 押したら体に伝えて、体のいまの値でその子の分を描き直す。うまくいかなかったら知らせる
     document.addEventListener("click", async e => {
       const el = e.target.closest("button[data-body][data-key]");
       if (!el) return;
       const id = el.dataset.body, key = el.dataset.key, raw = el.dataset.value;
-      const value = key === "power_save" ? raw === "true" : key === "cam_to" ? raw : Number(raw);
+      const value = key === "power_save" || key === "sleeping" ? raw === "true" : key === "cam_to" ? raw : Number(raw);
       const card = document.querySelector(`[data-bodycard="${id}"]`);
       const msg = document.querySelector(`[data-bodymsg="${id}"]`);
       if (msg) msg.textContent = "";
       card.querySelectorAll("button").forEach(x => { x.disabled = true; });
       try {
+        if (key === "sleeping") {   // 眠らせる・起こす は体の /sleep /wake。ほかの値はそのまま
+          const r = await fetch(`/api/${id}/m5/${value ? "sleep" : "wake"}`, {method: "POST"});
+          if (!r.ok) throw new Error("変えられませんでした");
+          card.innerHTML = bodySettingsHtml(_bodyChars[id], {..._bodyLast[id], sleeping: value});
+          return;
+        }
         const r = await fetch(`/api/${id}/body`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[key]: value})});
         const b = await r.json();
         if (!r.ok || (b.failed || []).length) throw new Error(b.error || "変えられませんでした");
-        card.innerHTML = bodySettingsHtml(_bodyChars[id], b);
+        card.innerHTML = bodySettingsHtml(_bodyChars[id], {...b, sleeping: _bodyLast[id] && _bodyLast[id].sleeping});
       } catch (err) {
         card.querySelectorAll("button").forEach(x => { x.disabled = false; });
         if (msg) msg.textContent = err.message;
@@ -8158,7 +8161,7 @@ HTML = """<!DOCTYPE html>
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
           const mine = characters.some(x => x.id === c.id && !x.chat_only);   // 子でない子(話すだけの子も)は、設定を変えられない
-          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, body) : "";
+          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, {...body, sleeping: !!m5_sleeping}) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
@@ -8194,8 +8197,6 @@ HTML = """<!DOCTYPE html>
         if (m5El) m5El.innerHTML = m5_online
           ? ""
           : `<span style="color:#f44336;font-size:0.75rem">● M5 未接続（会話のみ）</span>`;
-        document.getElementById("sleepBtn").style.display = (m5_online && !m5_sleeping) ? "" : "none";
-        document.getElementById("wakeBtn").style.display  = (m5_online && m5_sleeping)  ? "" : "none";
 
         // desires.json の labels/colors を動的に取得
         if (desires.labels) DESIRE_LABELS = desires.labels;
@@ -8798,18 +8799,6 @@ HTML = """<!DOCTYPE html>
         }
         renderDiaryPage();
       } catch(e) {}
-    }
-
-    async function m5Sleep() {
-      document.getElementById("sleepBtn").style.display = "none";
-      document.getElementById("wakeBtn").style.display = "";
-      await fetch(`/api/${currentCharId}/m5/sleep`, {method:"POST"});
-    }
-
-    async function m5Wake() {
-      document.getElementById("wakeBtn").style.display = "none";
-      document.getElementById("sleepBtn").style.display = "";
-      await fetch(`/api/${currentCharId}/m5/wake`, {method:"POST"});
     }
 
     // リセットは 2 回押し(2026-10-16 ありさん: 押しただけでセッションが消えるのをやめる)
