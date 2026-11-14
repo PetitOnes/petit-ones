@@ -2139,6 +2139,89 @@ async def _body_sounds(char: dict) -> dict:
     return out
 
 
+# ---- 体の設定(明るさ・音量・お出かけ・CAM TO)を、ようす から見る・変える ----
+
+class BodySettings(BaseModel):
+    brightness: int | None = None    # 0〜100
+    volume: int | None = None        # 0〜100
+    power_save: bool | None = None   # お出かけ(省電力 + 消音)
+    cam_to: str | None = None        # 設定ページの「CAM TO」(世話人の ID)
+
+
+async def _body_settings(character_id: str, host: str) -> dict:
+    """体のいまの設定を読む。読めなかった項目は None(CAM TO は、返さない版の体では None)"""
+    import requests as req
+
+    def _text(path: str) -> str | None:
+        try:
+            r = req.get(f"http://{host}{path}", timeout=4)
+            return r.text.strip() if r.status_code == 200 else None
+        except Exception:
+            return None
+
+    bri, vol, ps, cam = await asyncio.gather(*[asyncio.to_thread(_text, p) for p in
+                                               ("/getbrightness", "/getvolume", "/getpowersave", "/cam_to")])
+
+    def _int(v: str | None) -> int | None:
+        try:
+            return int(float(v)) if v is not None else None
+        except ValueError:
+            return None
+
+    cam_to, users = None, []
+    try:
+        data = json.loads(cam) if cam else {}
+        cam_to = data.get("cam_to") or None
+        users = [{"id": u, "name": _user_label(u, u)} for u in data.get("users", []) if isinstance(u, str)]
+    except (json.JSONDecodeError, AttributeError):
+        pass
+    return {"online": True, "brightness": _int(bri), "volume": _int(vol),
+            "power_save": (ps == "true") if ps in ("true", "false") else None, "cam_to": cam_to, "cam_users": users}
+
+
+@app.get("/api/{character_id}/body")
+async def api_body_get(character_id: str):
+    if character_id not in GROUP_CHAR_IDS:
+        return JSONResponse({"error": "その子はいません"}, status_code=404)
+    host = await resolve_m5_host(get_char_config(character_id))
+    if not host:
+        return {"online": False}
+    return await _body_settings(character_id, host)
+
+
+@app.post("/api/{character_id}/body")
+async def api_body_set(character_id: str, body: BodySettings):
+    """体の設定を変える。変えたあとの、体のいまの値を返す"""
+    import requests as req
+    if character_id not in GROUP_CHAR_IDS:
+        return JSONResponse({"error": "その子はいません"}, status_code=404)
+    host = await resolve_m5_host(get_char_config(character_id))
+    if not host:
+        return JSONResponse({"error": "体につながっていません"}, status_code=409)
+    asks: list[tuple[str, dict]] = []
+    if body.brightness is not None:
+        asks.append(("/setbrightness", {"value": max(0, min(100, body.brightness))}))
+    if body.volume is not None:
+        asks.append(("/setvolume", {"value": max(0, min(100, body.volume))}))
+    if body.power_save is not None:
+        asks.append(("/powersave", {"value": "true" if body.power_save else "false"}))
+    if body.cam_to is not None and re.fullmatch(r"[a-zA-Z0-9_]{1,40}", body.cam_to):
+        asks.append(("/cam_to", {"target": body.cam_to}))
+    failed = []
+    for path, params in asks:
+        try:
+            r = await asyncio.to_thread(lambda p=path, a=params: req.get(f"http://{host}{p}", params=a, timeout=6))
+            if r.status_code != 200:
+                failed.append(path)
+        except Exception:
+            failed.append(path)
+    if body.cam_to is not None and "/cam_to" not in failed and any(p == "/cam_to" for p, _ in asks):
+        _mail_targets[character_id] = body.cam_to   # 体が知らせてくるのを待たずに、こちらの覚えも合わせる
+    state = await _body_settings(character_id, host)
+    state["failed"] = failed
+    return state
+
+
 # ---- 「ここにいるよ」: 世話人からぷちへの合図(Issue #67)。応え方の決まりは scripts/hello.py、家の設定は config/hello.json ----
 
 async def _hello_one(char: dict, username: str, config: dict, night: bool) -> dict:
@@ -7295,7 +7378,10 @@ HTML = """<!DOCTYPE html>
         `<div class="row"><input id="meNowInput" placeholder="ほかの言葉で…" maxlength="30"><button class="chip" onclick="setMeNow(document.getElementById('meNowInput').value)">決める</button></div>` +
         `<div class="chips small">${hours}</div>` +
         (_meNow.mine ? `<button class="chip" onclick="setMeNow('')">消す</button>` : "") +
-        (others ? `<div class="others">${others}</div>` : "");
+        (others ? `<div class="others">${others}</div>` : "") +
+        // 「ここにいるよ」: ぷちたちに合図を送る(🌱 ようす にあるものと同じ)
+        `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button></div>` +
+        `<div class="others" id="meNowHelloMsg"></div>`;
       const inp = document.getElementById("meNowInput");
       inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
     }
@@ -7493,8 +7579,49 @@ HTML = """<!DOCTYPE html>
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
     }
-    async function sendHello() {
-      const btn = document.getElementById("helloBtn"), msg = document.getElementById("helloMsg");
+    // 体の設定の 1 段。項目が読めなかった体(古いファームの CAM TO など)は、その欄を出さない
+    function bodySettingsHtml(id, b, safe) {
+      const cell = "display:inline-flex;align-items:center;gap:5px;white-space:nowrap;";
+      const slider = (key, icon, title, v) => v == null ? "" : `<label style="${cell}" title="${title}">${icon}
+          <input type="range" min="0" max="100" step="5" value="${v}" data-body="${id}" data-key="${key}" style="width:86px;">
+          <span data-val="${id}-${key}" style="display:inline-block;min-width:2.2em;text-align:right;">${v}</span></label>`;
+      const psave = b.power_save == null ? "" : `<label style="${cell}" title="お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません">PSAVE
+          <input type="checkbox" data-body="${id}" data-key="power_save" ${b.power_save ? "checked" : ""}></label>`;
+      const who = !b.cam_to || !(b.cam_users || []).length ? "" : `<label style="${cell}" title="体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く">WHO
+          <select data-body="${id}" data-key="cam_to" style="font-size:0.75rem;padding:2px 4px;">${b.cam_users.map(u =>
+            `<option value="${safe(u.id)}" ${u.id === b.cam_to ? "selected" : ""}>${safe(u.name)}</option>`).join("")}</select></label>`;
+      return `<div style="flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;padding-left:20px;font-size:0.75rem;color:#888;font-variant-numeric:tabular-nums;">
+        ${slider("brightness", "🔆", "画面の明るさ", b.brightness)}${slider("volume", "🔊", "音量", b.volume)}${psave}${who}
+        <span data-bodymsg="${id}" style="color:#f44336;"></span></div>`;
+    }
+    // 動かしたら体に伝える。うまくいかなかったら、体のいまの値に戻して知らせる
+    document.addEventListener("change", async e => {
+      const el = e.target.closest("[data-body][data-key]");
+      if (!el) return;
+      const id = el.dataset.body, key = el.dataset.key;
+      const value = el.type === "checkbox" ? el.checked : el.type === "range" ? Number(el.value) : el.value;
+      const msg = document.querySelector(`[data-bodymsg="${id}"]`);
+      if (msg) msg.textContent = "";
+      el.disabled = true;
+      try {
+        const r = await fetch(`/api/${id}/body`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[key]: value})});
+        const b = await r.json();
+        if (!r.ok || (b.failed || []).length) throw new Error(b.error || "変えられませんでした");
+        for (const k of ["brightness", "volume"]) {
+          const input = document.querySelector(`[data-body="${id}"][data-key="${k}"]`), label = document.querySelector(`[data-val="${id}-${k}"]`);
+          if (input && b[k] != null) { input.value = b[k]; if (label) label.textContent = b[k]; }
+        }
+      } catch (err) { if (msg) msg.textContent = err.message; }
+      el.disabled = false;
+    });
+    document.addEventListener("input", e => {
+      const el = e.target.closest('[data-body][data-key][type="range"]');
+      if (!el) return;
+      const label = document.querySelector(`[data-val="${el.dataset.body}-${el.dataset.key}"]`);
+      if (label) label.textContent = el.value;
+    });
+    async function sendHello(btnId = "helloBtn", msgId = "helloMsg") {
+      const btn = document.getElementById(btnId), msg = document.getElementById(msgId);
       btn.disabled = true;
       msg.textContent = "届けています…";
       const WORD = {answered: "体で応えた", recorded: "届いた", sleeping: "眠っているので、届いたことだけ残した", offline: "体につながっていないので、届いたことだけ残した"};
@@ -7514,9 +7641,10 @@ HTML = """<!DOCTYPE html>
       const rows = await Promise.all(allChars.map(async c => {
         try {
           // 体につながっているか と、電池(体の /sensors にある battery % と voltage mV)を同時に聞く
-          const [res, sens] = await Promise.all([
+          const [res, sens, body] = await Promise.all([
             fetch(`/api/${c.id}/status`),
             fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({})),
+            fetch(`/api/${c.id}/body`).then(r => r.json()).catch(() => ({})),
           ]);
           const { m5_online, m5_sleeping, m5_host, m5_ip, m5_tailscale_ip } = await res.json();
           const color = c.color || "#cab8d9";
@@ -7534,12 +7662,15 @@ HTML = """<!DOCTYPE html>
           const addr = safe(m5_ip || m5_host || "");
           const ts = m5_tailscale_ip && m5_tailscale_ip !== addr ? ` <span style="opacity:0.7" title="Tailscale のアドレス">/ ${safe(m5_tailscale_ip)}</span>` : "";
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
+          // 4 段目: 体の設定(明るさ・音量・お出かけ・CAM TO)。動かすと、その場で体に伝える
+          const settings = m5_online && body.online ? bodySettingsHtml(c.id, body, safe) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             <span style="font-weight:700;flex:1;white-space:nowrap;color:${readableText(color)};">${c.name||c.id}</span>
             <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};white-space:nowrap;">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
             ${m5_online ? `<div style="flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding-left:20px;font-size:0.75rem;color:#888;font-variant-numeric:tabular-nums;"><span style="flex:0 0 6.5em;">${awake}</span><span style="flex:0 0 9em;">${batt}</span>${ip}</div>` : ""}
+            ${settings}
           </div>`;
         } catch {
           return `<div style="padding:8px 0;">${c.name||c.id} — 確認失敗</div>`;

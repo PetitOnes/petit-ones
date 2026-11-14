@@ -428,9 +428,39 @@ class _Index:
             out.append(item)
         return out
 
+    def _hello(self, day: Date) -> list[dict]:
+        """人から届いた「ここにいるよ」(state/contact/YYYYMMDD.jsonl の hello)。
+
+        だれが送ったかは、押した人が分かっているので名前で出す。10 分以内に続いたら 1 件にして回数を付ける。
+        話しかけられた(talked)は、会話の行がもうあるので、ここでは出さない
+        """
+        f = self.src.char_dir / "state" / "contact" / f"{day.strftime('%Y%m%d')}.jsonl"
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out: list[dict] = []
+        for line in lines:
+            try:
+                ev = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = _local(ev.get("ts", "")) if isinstance(ev, dict) else None
+            if ts is None or ts.date() != day or ev.get("type") != "hello":
+                continue
+            who = self.src.user_label(ev["with"]) if isinstance(ev.get("with"), str) and ev["with"] else ""
+            text = f"{who}から「ここにいるよ」が届いた" if who else "「ここにいるよ」が届いた"
+            prev = out[-1] if out else None
+            if prev and prev["text"] == text and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
+                prev["count"] += 1
+                prev["_last"] = ts
+                continue
+            out.append({"_ts": ts, "_last": ts, "kind": "body", "text": text, "count": 1})
+        return out
+
     def day(self, day: Date) -> list[dict]:
         """その日の行(新しい順)。画面に渡す形にして返す"""
-        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day)
+        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day) + self._hello(day)
         if self.src.anniversaries:   # その日のいちばん上に出す(時刻は持たない)
             top = datetime.combine(day, datetime.max.time())
             items += [{"_ts": top, "kind": "anniv", "text": a["label"], "note": a.get("note", "")} for a in self.src.anniversaries(day)]

@@ -98,9 +98,10 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 
 ## 「ここにいるよ」(世話人からぷちへの合図)
 
-ダッシュボードの 🌱 ようす にある「👋 ここにいるよ」を押すと、みんなに合図が届きます(Issue #67。`scripts/hello.py`)。
+ダッシュボードの 🌱 ようす か、右上の 📍(わたしのいま)にある「👋 ここにいるよ」を押すと、みんなに合図が届きます(Issue #67。`scripts/hello.py`)。
 
 - 子ごとに、接点(`characters/<id>/state/contact/`)に `hello` が 1 件残ります。欲求の「会いたい」が読みます
+- ぷちログにも「○○から「ここにいるよ」が届いた」と出ます
 - 体が起きていれば、その子の応え方を体に頼みます。眠っている子は起こしません(届いたことだけ残します)
 - 応え方は家の設定 `PETIT_DATA_DIR/config/hello.json`(無い子は、記録だけ)
 
