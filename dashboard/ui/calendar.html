@@ -15,6 +15,7 @@
     /* 📅 よてい(2026-11-14 ありさん): 月のカレンダーに 予定(📅)と 記念日(🎂)。日を押すと、その日の中身と「＋」 */
     .c-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 6px; }
     .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
+    .c-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
     .c-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
     .c-wd { text-align: center; font-size: 0.72rem; color: var(--ui-text-sub); padding: 2px 0; }
     .c-wd.sun { color: #d9534f; } .c-wd.sat { color: #4a7abf; }
@@ -52,6 +53,12 @@
       <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(-1)">‹ 前の月</button>
       <h2 id="monthTitle"></h2>
       <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(1)">次の月 ›</button>
+    </div>
+    <div class="c-top" id="topBtns">
+      <button class="a-btn a-btn--ghost a-btn--s" id="todayBtn" onclick="goToday()">今月にもどる</button>
+      <span style="flex:1"></span>
+      <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('event')">＋ 予定</button>
+      <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('anniv')">＋ 記念日</button>
     </div>
     <div class="c-grid" id="grid"></div>
 
@@ -104,9 +111,16 @@
       q.set("month", ym); history.replaceState(null, "", location.pathname + "?" + q.toString());
       loadMonth();
     }
+    function goToday() {
+      ym = today.slice(0, 7); sel = today;
+      q.set("month", ym); q.set("date", sel); history.replaceState(null, "", location.pathname + "?" + q.toString());
+      loadMonth();
+    }
     function renderGrid() {
       const [y, m] = ym.split("-").map(Number);
       document.getElementById("monthTitle").textContent = `${y}年${m}月`;
+      document.getElementById("todayBtn").style.visibility = ym === today.slice(0, 7) ? "hidden" : "";
+      document.getElementById("topBtns").style.display = canEdit() ? "" : "none";
       const first = new Date(y, m - 1, 1), start = new Date(y, m - 1, 1 - first.getDay());
       let html = WD.map((w, i) => `<div class="c-wd${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${w}</div>`).join("");
       for (let i = 0; i < 42; i++) {
