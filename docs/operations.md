@@ -60,6 +60,14 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 
 「眠い」のような欲求は、子ごとの `config/desire_config.json` の欲求に `"rhythm": {"hours": 14, …}` を書くと、朝に 0 へ戻り、光に合わせて進む形で動く(書かなければ今までどおり)。項目は m5-petit-desire の README。状態は `characters/<id>/data/desire_rhythm.json` にできる。動きはダッシュボードの 🫧 欲求で見られる。
 
+## 欲求の relief(体の出来事や言葉で、少しずつ満たされる欲求)
+
+「触られたい」のような欲求は、子ごとの `config/desire_config.json` の欲求に `"relief": {"hours": 48, "by": [...]}` を書くと、
+時間で上がり、体の出来事(撫でられた・短く触られた・持たれた)や言葉があるたびに少しずつ下がります。書かなければ今までどおり。
+体の出来事は `experience-daemon` の記録を読むので、デーモンが動いていることが前提です。撫でとタッチの区別は、体のファームが
+`tap_count` / `stroke_count` を返すときだけ記録に残ります。状態は `characters/<id>/data/desire_relief.json`。
+書き方は [m5-petit-desire の README](https://github.com/PetitOnes/m5-petit-desire#relief--体の出来事や言葉で少しずつ満たされる欲求任意)。
+
 ## 家の知らせ(失敗を世話人へ)
 
 ぷちが Claude を呼べなかったとき・Claude がエラーで終わったときに、Slack と家の手紙箱(ダッシュボードの「メール」)へ知らせます(`scripts/house_alert.py`)。
