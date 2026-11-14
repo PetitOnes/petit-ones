@@ -7927,7 +7927,7 @@ HTML = """<!DOCTYPE html>
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
       kairanban: {icon: "📋", name: "回覧板",     pane: "kairanban"},
       library:   {icon: "📚", name: "ライブラリ", pane: "library"},
-      kankei:    {icon: "🔒", name: "ひみつ",     attr: 'href="/kankei"'},
+      kankei:    {icon: "🔒", name: "ひみつ",     pane: "kankei"},
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
@@ -8108,7 +8108,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -9865,80 +9865,86 @@ KANKEI_HTML = """<!DOCTYPE html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
   <link rel="stylesheet" href="/ui/tokens.css">
-  <title>秘密の相関図</title>
+  <title>関係と秘密</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: var(--ui-font-maru); background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
-    .top-bar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 16px 20px 0; }
-    .top-bar h1 { font-size: 1.2rem; color: white; }
-    .back-btn { background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
-    .back-btn:hover { background: #0f3460; }
+    /* ほかのページ(記念日・音・回覧板)と同じ色づかい: クリームの地・白いカード・紫の見出し(2026-11-14) */
+    body { font-family: var(--ui-font-maru); background: #FBF4E8; color: #3A322D; min-height: 100vh; }
+    .top-bar { display: flex; align-items: center; gap: 12px; max-width: 720px; margin: 0 auto; padding: 14px 16px 4px; }
+    .top-bar h1 { font-family: var(--ui-font-maru-head, inherit); font-size: 1.15rem; color: #3A322D; }
+    html.embed .top-bar { display: none; }
+    .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
+    .back-btn:hover { background: #f0eaf8; }
+    .jump { display: flex; gap: 6px; max-width: 720px; margin: 8px auto 0; padding: 0 16px; }
+    .jump a { padding: 6px 14px; font-size: 0.85rem; font-weight: 700; color: #9b8ec4; text-decoration: none; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 999px; }
+    .sec-title { max-width: 720px; margin: 16px auto 0; padding: 0 16px; font-size: 1rem; color: #9b8ec4; letter-spacing: 0.04em; }
     .chart-container { display: flex; justify-content: center; padding: 20px; }
     svg { max-width: 700px; width: 100%; height: auto; }
     .tooltip {
-      position: fixed; background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+      position: fixed; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 10px;
       padding: 10px 14px; font-size: 0.85rem; pointer-events: none; opacity: 0;
-      transition: opacity 0.2s; z-index: 100; max-width: 260px; color: #e0e0e0;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      transition: opacity 0.2s; z-index: 100; max-width: 260px; color: #3A322D;
+      box-shadow: 0 4px 14px rgba(58,50,45,0.16);
     }
     .tooltip .feeling { margin-bottom: 6px; line-height: 1.4; }
-    .tooltip .gauge-bar { background: #2a2a4a; border-radius: 4px; height: 8px; overflow: hidden; }
+    .tooltip .gauge-bar { background: #f0eaf8; border-radius: 4px; height: 8px; overflow: hidden; }
     .tooltip .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
-    .tooltip .gauge-label { font-size: 0.75rem; color: #888; margin-top: 2px; }
+    .tooltip .gauge-label { font-size: 0.75rem; color: #6E625A; margin-top: 2px; }
     .mail-section { max-width: 640px; margin: 0 auto; padding: 20px 20px 30px; }
-    .mail-section h2 { font-size: 1rem; color: #e0e0e0; margin-bottom: 12px; }
+    .mail-section h2 { font-size: 1rem; color: #9b8ec4; letter-spacing: 0.04em; margin-bottom: 12px; }
     .mail-thread { display: flex; flex-direction: column; gap: 10px; max-height: 600px; overflow-y: auto; padding-right: 4px; }
     .mail-thread::-webkit-scrollbar { width: 6px; }
-    .mail-thread::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .mail-thread::-webkit-scrollbar-thumb { background: #d9cdbf; border-radius: 3px; }
     .mail-thread::-webkit-scrollbar-track { background: transparent; }
     .mail-bubble {
       max-width: 80%; padding: 10px 14px; border-radius: 12px; font-size: 0.85rem;
       line-height: 1.5; white-space: pre-wrap; position: relative;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
-    .mail-bubble.left { align-self: flex-start; background: #16213e; border: 1px solid #0f3460; }
-    .mail-bubble.right { align-self: flex-end; background: #2a1a3e; border: 1px solid #4a2a6e; }
-    .mail-meta { font-size: 0.7rem; color: #888; margin-top: 4px; }
+    .mail-bubble.left { align-self: flex-start; background: #fff; border: 1.5px solid #eee1cf; }
+    .mail-bubble.right { align-self: flex-end; background: #f6f1fb; border: 1.5px solid #e0d8f0; }
+    .mail-meta { font-size: 0.7rem; color: #9a8d82; margin-top: 4px; }
     .mail-sender { font-size: 0.75rem; font-weight: 600; margin-bottom: 4px; }
-    .mail-empty { color: #666; font-size: 0.85rem; text-align: center; padding: 20px; }
+    .mail-empty { color: #9a8d82; font-size: 0.85rem; text-align: center; padding: 20px; }
     .cards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; padding: 0 20px 30px; }
     .card {
-      background: #16213e; border-radius: 12px; padding: 16px; width: 260px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3); border-top: 3px solid #cab8d9;
+      background: #fff; border-radius: 12px; padding: 16px; width: 260px;
+      border: 1.5px solid #eee1cf; border-top: 3px solid #cab8d9;
     }
     .card h3 { font-size: 1rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .card .avatar-small { width: 28px; height: 28px; border-radius: 50%; }
-    .card .likes { font-size: 0.8rem; color: #aaa; margin-bottom: 4px; }
-    .card .notes { font-size: 0.85rem; color: #ccc; font-style: italic; }
+    .card .likes { font-size: 0.8rem; color: #6E625A; margin-bottom: 4px; }
+    .card .notes { font-size: 0.85rem; color: #6E625A; font-style: italic; }
     .detail-overlay {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 200;
+      position: fixed; inset: 0; background: rgba(58,50,45,0.45); z-index: 200;
       display: none; align-items: center; justify-content: center; padding: 20px;
     }
     .detail-overlay.open { display: flex; }
     .detail-panel {
-      background: #16213e; border-radius: 14px; padding: 20px; max-width: 360px; width: 100%;
-      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+      background: #fff; border-radius: 20px; padding: 20px; max-width: 360px; width: 100%;
+      box-shadow: 0 8px 30px rgba(58,50,45,0.25);
     }
     .detail-panel .header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
     .detail-panel .header img { width: 48px; height: 48px; border-radius: 50%; background: white; }
-    .detail-panel .header h2 { font-size: 1.1rem; color: white; }
+    .detail-panel .header h2 { font-size: 1.1rem; color: #3A322D; }
     .detail-panel .rel-item { margin-bottom: 14px; }
-    .detail-panel .rel-target { font-size: 0.9rem; color: #ccc; margin-bottom: 2px; }
-    .detail-panel .rel-feeling { font-size: 1rem; color: #e0e0e0; margin-bottom: 6px; line-height: 1.5; }
-    .detail-panel .rel-gauge { background: #2a2a4a; border-radius: 6px; height: 10px; overflow: hidden; }
+    .detail-panel .rel-target { font-size: 0.9rem; color: #6E625A; margin-bottom: 2px; }
+    .detail-panel .rel-feeling { font-size: 1rem; color: #3A322D; margin-bottom: 6px; line-height: 1.5; }
+    .detail-panel .rel-gauge { background: #f0eaf8; border-radius: 6px; height: 10px; overflow: hidden; }
     .detail-panel .rel-gauge-fill { height: 100%; border-radius: 6px; }
-    .detail-panel .rel-gauge-label { font-size: 0.8rem; color: #888; margin-top: 2px; }
+    .detail-panel .rel-gauge-label { font-size: 0.8rem; color: #6E625A; margin-top: 2px; }
     .detail-panel .close-btn {
-      display: block; margin: 12px auto 0; background: #0f3460; border: none; color: white;
-      padding: 8px 24px; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+      display: block; margin: 12px auto 0; background: #9b8ec4; border: none; color: white;
+      padding: 10px 24px; border-radius: 12px; cursor: pointer; font-size: 0.9rem; font-weight: 700;
     }
   </style>
 </head>
 <body>
   <div class="top-bar">
     <a href="/" class="back-btn">← もどる</a>
-    <h1>🔒 秘密のそうかんず</h1>
+    <h1>🔒 関係と秘密</h1>
   </div>
+  <div class="jump"><a href="#secRel">関係</a><a href="#secMail">秘密(メール)</a></div>
+  <h2 class="sec-title" id="secRel">🕸️ 関係</h2>
   <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
   <div class="tooltip" id="tip"></div>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
@@ -9946,13 +9952,16 @@ KANKEI_HTML = """<!DOCTYPE html>
   </div>
   <div class="cards" id="cards"></div>
   <div class="mail-section">
-    <h2>📮 おてがみ</h2>
+    <h2 id="secMail">✉️ 秘密(メール)</h2>
     <div id="mailThread" class="mail-thread"></div>
     <div id="mailMore" style="text-align:center;padding:10px;display:none">
-      <button onclick="showMoreMails()" style="background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 20px;border-radius:8px;cursor:pointer;font-size:0.85rem">もっと見る ↓</button>
+      <button onclick="showMoreMails()" style="background:#fff;border:1.5px solid #E3D6C2;color:#9b8ec4;padding:8px 20px;border-radius:12px;cursor:pointer;font-size:0.85rem;font-weight:700">もっと見る ↓</button>
     </div>
   </div>
   <script>
+    // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
+    function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
+    if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
     const SVG_NS = "http://www.w3.org/2000/svg";
     const CX = 350, CY = 350, RADIUS = 220, NODE_R = 40;
 
@@ -9970,10 +9979,10 @@ KANKEI_HTML = """<!DOCTYPE html>
       const outgoing = _edges.filter(e => e.from === nodeId);
       const incoming = _edges.filter(e => e.to === nodeId);
       const panel = document.getElementById("detailPanel");
-      let html = `<div class="header"><img src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"><h2 style="color:${n.color}">${n.name}</h2></div>`;
+      let html = `<div class="header"><img src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"><h2 style="color:${ink(n.color)}">${n.name}</h2></div>`;
 
       if (outgoing.length) {
-        html += `<div style="font-size:0.8rem;color:#888;margin-bottom:8px">${n.name} → みんなへの気持ち</div>`;
+        html += `<div style="font-size:0.8rem;color:#6E625A;margin-bottom:8px">${n.name} → みんなへの気持ち</div>`;
         outgoing.forEach(e => {
           const target = _nodes.find(x => x.id === e.to);
           html += `<div class="rel-item">
@@ -9985,7 +9994,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         });
       }
       if (incoming.length) {
-        html += `<div style="font-size:0.8rem;color:#888;margin:12px 0 8px">みんな → ${n.name} への気持ち</div>`;
+        html += `<div style="font-size:0.8rem;color:#6E625A;margin:12px 0 8px">みんな → ${n.name} への気持ち</div>`;
         incoming.forEach(e => {
           const src = _nodes.find(x => x.id === e.from);
           html += `<div class="rel-item">
@@ -10124,7 +10133,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         } else {
           // arisan: color circle
           g.appendChild(svgEl("circle", {
-            cx: p.x, cy: p.y, r: NODE_R, fill: n.color, stroke: "#e0e0e0", "stroke-width": 2
+            cx: p.x, cy: p.y, r: NODE_R, fill: n.color, stroke: "#E3D6C2", "stroke-width": 2
           }));
           const initials = svgEl("text", {
             x: p.x, y: p.y, "text-anchor": "middle", "dominant-baseline": "central",
@@ -10137,7 +10146,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         // name label
         const label = svgEl("text", {
           x: p.x, y: p.y + NODE_R + 18, "text-anchor": "middle",
-          fill: "#e0e0e0", "font-size": "14", "font-weight": "bold"
+          fill: "#3A322D", "font-size": "14", "font-weight": "bold"
         });
         label.textContent = n.name;
         g.appendChild(label);
@@ -10209,7 +10218,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       const bubble = document.createElement("div");
       bubble.className = "mail-bubble " + (isLeft ? "left" : "right");
       bubble.innerHTML =
-        '<div class="mail-sender" style="color:' + senderColor + '">' + senderName + ' → ' + recipientName + '</div>' +
+        '<div class="mail-sender" style="color:' + ink(senderColor) + '">' + senderName + ' → ' + recipientName + '</div>' +
         body.replace(/</g, "&lt;").replace(/\\n/g, "<br>") +
         '<div class="mail-meta">' + mail.dateStr + '</div>';
       return bubble;
