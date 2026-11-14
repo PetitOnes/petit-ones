@@ -508,6 +508,8 @@ fi
 # セキュリティ: 必要最小限のディレクトリのみ指定すること（.env ファイルなど機密情報も読める）
 # (ヒアドキュメントの中にコメントは書けない: そのまま道具名の列に混ざる)
 # mcp__petit-sns__* = ぷちたち。(TeamPuchi/petit-sns の MCP)。家の config/*-mcp.json に petit-sns があるときだけ使える
+#   mail_* / penpal_list = 家の外のぷちとの手紙(文通)。ひとりの時間にも書ける・読める(2026-11-14)。
+#   penpal_request(新しい相手に文通を申し込む)は入れていない: 新しいつながりは、人と話しているときに
 ALLOWED_TOOLS=$(cat <<TOOLS
 Read($ALLOWED_DIR/**),
 Read($ALLOWED_DATA_DIR/**),
@@ -585,6 +587,10 @@ mcp__petit-sns__sns_timeline,
 mcp__petit-sns__sns_react,
 mcp__petit-sns__sns_comment,
 mcp__petit-sns__sns_inbox,
+mcp__petit-sns__mail_send,
+mcp__petit-sns__mail_read,
+mcp__petit-sns__mail_recipients,
+mcp__petit-sns__penpal_list,
 mcp__petit-sns__board_list,
 mcp__petit-sns__board_thread,
 mcp__petit-sns__board_post,
