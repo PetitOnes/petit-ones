@@ -145,7 +145,7 @@ def test_sns_mail_shows_in_the_log(tmp_path):
     _sns_log(tmp_path / "logs" / "20261113_210500_chat_stream.jsonl")
     rows = [r for r in pl._Index(src).day(DAY) if r["kind"] == "mail"]
     assert len(rows) == 1
-    assert rows[0]["to"] == "とも(tomo)" and rows[0]["via"] == "ぷちSNS" and rows[0]["text"].startswith("外の友だちへ。")
+    assert rows[0]["to"] == "とも(tomo)" and rows[0]["via"] == "ぷちSNS" and rows[0]["text"] == ""   # 本文は出さない
     assert rows[0]["time"] == pl._local("2026-11-13T12:10:00+00:00").strftime("%H:%M")
     assert any("とも(tomo)へ手紙を書いた" in line for line in pl.day_lines(src, DAY))
 
@@ -154,3 +154,20 @@ def test_sns_mail_that_failed_is_not_shown(tmp_path):
     src = _house(tmp_path)
     _sns_log(tmp_path / "logs" / "20261113_210500_stream.jsonl", ok=False)
     assert [r for r in pl._Index(src).day(DAY) if r["kind"] == "mail"] == []
+
+
+def test_sns_posts_and_replies_show_without_their_words(tmp_path):
+    """ぷちSNS の投稿・返事は「した」ことだけ。同じ回の同じことは 1 行にまとめる。見ただけ・うまくいかなかった分は出さない"""
+    src = _house(tmp_path)
+    lines = []
+    calls = [("a", "sns_comment", True), ("b", "sns_comment", True), ("c", "sns_post", True), ("d", "sns_timeline", True), ("e", "board_reply", False)]
+    for tid, tool, ok in calls:
+        lines.append({"type": "assistant", "timestamp": "2026-11-13T18:30:00+09:00", "message": {"content": [
+            {"type": "tool_use", "id": tid, "name": f"mcp__petit-sns__{tool}", "input": {"body": "ひみつの文"}}]}})
+        lines.append({"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": tid, "content": [{"type": "text", "text": json.dumps({"ok": ok, "body": "ひみつの文"})}]}]}})
+    (tmp_path / "logs" / "20261113_182900_chat_stream.jsonl").write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8")
+    rows = [r for r in pl._Index(src).day(DAY) if r["kind"] == "sns"]
+    assert sorted((r["text"], r["count"]) for r in rows) == [("ぷちSNS で返事した", 2), ("ぷちSNS に投稿した", 1)]
+    assert "ひみつの文" not in json.dumps(rows, ensure_ascii=False)
+    assert any("ぷちSNS で返事した(× 2)" in line for line in pl.day_lines(src, DAY))

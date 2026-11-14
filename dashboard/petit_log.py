@@ -71,6 +71,13 @@ _MCP_DID = {
 }
 SNS_MAIL_TOOL = "mcp__petit-sns__mail_send"   # ぷちSNS(家の外のぷちとの手紙)。家のメールボックスには残らない
 SNS_MAIL_VIA = "ぷちSNS"
+# ぷちSNS でしたこと(道具の名前 → ぷちログの言い方)。中身(投稿・返事の文)は写さない。見ただけ・反応しただけは出さない
+SNS_DID = {
+    "mcp__petit-sns__sns_post": "ぷちSNS に投稿した",
+    "mcp__petit-sns__sns_comment": "ぷちSNS で返事した",
+    "mcp__petit-sns__board_post": "ぷちSNS の掲示板に書いた",
+    "mcp__petit-sns__board_reply": "ぷちSNS の掲示板で返事した",
+}
 QUIET_NOTE_PREFIX = "しずかな時間"   # scripts/quiet_time.py が足すノート(何も残さなかった回の、その子の言葉)
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
@@ -206,16 +213,17 @@ def _alone_words(log: Path, char_id: str) -> str:
     return "、".join([te for te, _ in words[:-1]] + [words[-1][1]])
 
 
-def _sns_mails(log: Path) -> list[dict]:
-    """行動の記録 1 つから、ぷちSNS で送れた手紙を拾う: [{"at": 時刻か None, "to": 宛先, "body": 本文}]
+def _sns_events(log: Path) -> list[dict]:
+    """行動の記録 1 つから、ぷちSNS でうまくいったことを拾う。
 
-    道具の呼び出し(宛先・本文)と、その返事(送れたか・相手の呼び名・時刻)を組にする。送れなかったものは出さない
+    手紙: {"tool", "at": 時刻か None, "to": 宛先の呼び名}、投稿・返事: {"tool", "at"}。本文は持ち出さない。
+    道具の呼び出しと、その返事(うまくいったか・相手の呼び名・時刻)を組にする。うまくいかなかったものは出さない
     """
     try:
         text = log.read_text(encoding="utf-8", errors="ignore")
     except OSError:
         return []
-    if SNS_MAIL_TOOL not in text:
+    if "mcp__petit-sns__" not in text:
         return []
     asked: dict[str, dict] = {}
     out: list[dict] = []
@@ -231,12 +239,13 @@ def _sns_mails(log: Path) -> list[dict]:
         for c in content if isinstance(content, list) else []:
             if not isinstance(c, dict):
                 continue
-            if c.get("type") == "tool_use" and c.get("name") == SNS_MAIL_TOOL:
+            name = c.get("name")
+            if c.get("type") == "tool_use" and (name == SNS_MAIL_TOOL or name in SNS_DID):
                 args = c.get("input") if isinstance(c.get("input"), dict) else {}
-                asked[str(c.get("id"))] = {"to": str(args.get("to", "")), "body": str(args.get("body", "")),
+                asked[str(c.get("id"))] = {"tool": name, "to": str(args.get("to", "")),
                                            "at": _local(str(ev.get("timestamp", "")))}
             elif c.get("type") == "tool_result" and str(c.get("tool_use_id")) in asked and not c.get("is_error"):
-                mail = asked.pop(str(c.get("tool_use_id")))
+                did = asked.pop(str(c.get("tool_use_id")))
                 parts = c.get("content")
                 raw = parts[0].get("text", "") if isinstance(parts, list) and parts and isinstance(parts[0], dict) else parts
                 try:
@@ -246,9 +255,10 @@ def _sns_mails(log: Path) -> list[dict]:
                 if not isinstance(res, dict) or res.get("ok") is not True:
                     continue
                 sent = res.get("sent") if isinstance(res.get("sent"), dict) else {}
-                mail["to"] = str(sent.get("to") or mail["to"])
-                mail["at"] = _local(str(sent.get("at", ""))) or mail["at"]
-                out.append(mail)
+                if did["tool"] == SNS_MAIL_TOOL:
+                    did["to"] = str(sent.get("to") or did["to"])
+                    did["at"] = _local(str(sent.get("at", ""))) or did["at"]
+                out.append(did)
     return out
 
 
@@ -284,14 +294,25 @@ class _Index:
                 if ts:
                     self.streams.setdefault(ts.date(), []).append(f)
 
-    def _sns_mail(self, day: Date) -> list[dict]:
-        """その日に、ぷちSNS で送った手紙(家の外のぷちへ)。前の日に始まって日をまたいだ回も見る"""
+    def _sns(self, day: Date) -> list[dict]:
+        """その日に、ぷちSNS でしたこと(家の外のぷちへの手紙、投稿、返事)。前の日に始まって日をまたいだ回も見る。
+
+        手紙は 1 通 1 行(だれへ)。投稿・返事は、同じ回の同じことを 1 行にまとめて回数を付ける。どれも中身は出さない
+        """
         out = []
         for f in self.streams.get(day, []) + self.streams.get(day - timedelta(days=1), []):
-            for m in _sns_mails(f):
+            merged: dict[str, dict] = {}
+            for m in _sns_events(f):
                 ts = m["at"] or _stamp(f.name)
-                if ts and ts.date() == day:
-                    out.append({"_ts": ts, "kind": "mail", "to": m["to"], "via": SNS_MAIL_VIA, "_text": m["body"].strip()})
+                if not ts or ts.date() != day:
+                    continue
+                if m["tool"] == SNS_MAIL_TOOL:
+                    out.append({"_ts": ts, "kind": "mail", "to": m["to"], "via": SNS_MAIL_VIA, "_text": ""})
+                elif m["tool"] in merged:
+                    merged[m["tool"]]["count"] += 1
+                else:
+                    merged[m["tool"]] = {"_ts": ts, "kind": "sns", "text": SNS_DID[m["tool"]], "count": 1}
+            out += merged.values()
         return out
 
     def _add(self, ts: datetime, **item) -> None:
@@ -575,7 +596,7 @@ class _Index:
 
     def day(self, day: Date) -> list[dict]:
         """その日の行(新しい順)。画面に渡す形にして返す"""
-        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day) + self._hello(day) + self._sns_mail(day)
+        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day) + self._hello(day) + self._sns(day)
         if self.src.anniversaries:   # その日のいちばん上に出す(時刻は持たない)
             top = datetime.combine(day, datetime.max.time())
             items += [{"_ts": top, "kind": "anniv", "text": a["label"], "note": a.get("note", "")} for a in self.src.anniversaries(day)]
@@ -651,6 +672,8 @@ def day_lines(src: Sources, day: Date) -> list[str]:
                 out.append(f"{when} ひとりの時間: {r['text']}")
         elif kind == "mail":
             out.append(f"{when} {r['to']}へ手紙を書いた")
+        elif kind == "sns":
+            out.append(f"{when} {r['text']}" + (f"(× {r['count']})" if r.get("count", 1) > 1 else ""))
         elif kind == "note":
             out.append(f"{when} ノート「{r['name']}」を書いた")
         elif kind == "photo":
