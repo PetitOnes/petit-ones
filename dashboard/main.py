@@ -2267,6 +2267,8 @@ def api_relations(request: Request):
                 "to": target_id,
                 "closeness": info.get("closeness", 0),
                 "feeling": info.get("feeling", ""),
+                # その相手への気持ちを、さいごに書きかえた日(部品 m5-petit-relations が残す。前の記録には無い)
+                "updated": str(info.get("updated_at") or "")[:10],
             })
 
     return {"nodes": nodes, "edges": edges}
@@ -10119,6 +10121,7 @@ KANKEI_HTML = """<!DOCTYPE html>
     .feel + .feel { border-top: 1px solid #f3eadb; }
     .feel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
     .feel-to { font-size: 0.92rem; font-weight: 700; color: #3A322D; }
+    .feel-day { margin-left: auto; font-size: 0.72rem; color: #9a8d82; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .feel-pct { font-size: 0.8rem; color: #6E625A; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .feel-bar { height: 6px; margin: 4px 0 6px; background: #f0eaf8; border-radius: 999px; overflow: hidden; }
     .feel-bar > div { height: 100%; border-radius: 999px; }
@@ -10190,6 +10193,8 @@ KANKEI_HTML = """<!DOCTYPE html>
     const personDot = (n, size) => `<span class="person-dot" style="width:${size}px;height:${size}px;background:${esc(n.color)};font-size:${Math.round(size * 0.36)}px">${esc(n.name.slice(0, 2))}</span>`;
     const isPetit = n => !!n && n.kind !== "human";
     const pct = v => Math.round((v || 0) * 100);
+    // yyyy-mm-dd → yyyy/m/d(日付でなければ空)
+    const dayText = v => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(v || ""); return m ? `${m[1]}/${+m[2]}/${+m[3]}` : ""; };
 
     function svgEl(tag, attrs) {
       const el = document.createElementNS(SVG_NS, tag);
@@ -10371,7 +10376,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         const si = n.self_info || {};
         const out = edges.filter(e => e.from === n.id).sort((a, b) => b.closeness - a.closeness);
         const rows = out.map(e => `<div class="feel">
-            <div class="feel-head"><span class="feel-to">→ ${esc(nameOf(e.to))}</span><span class="feel-pct">♥ ${pct(e.closeness)}%</span></div>
+            <div class="feel-head"><span class="feel-to">→ ${esc(nameOf(e.to))}</span>${dayText(e.updated) ? `<span class="feel-day">${dayText(e.updated)}</span>` : ""}<span class="feel-pct">♥ ${pct(e.closeness)}%</span></div>
             <div class="feel-bar"><div style="width:${pct(e.closeness)}%;background:${esc(n.color)}"></div></div>
             <div class="feel-text">${e.feeling ? esc(e.feeling) : '<span class="feel-none">(まだ書いていない)</span>'}</div>
           </div>`).join("");
@@ -10379,7 +10384,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         const list = v => [].concat(v || []).filter(Boolean).join("、");
         const self = [["好きなもの", list(si.likes)], ["わたしとは", si.notes], ["大切にしていること", list(si.important)], ["にがてなもの", list(si.dislikes)], ["じぶんへの気持ち", si.feeling]]
           .filter(([, v]) => v).map(([label, v]) => `<div class="self-item"><b>${label}</b>${esc(v)}</div>`).join("");
-        const day = /^\\d{4}-\\d{2}-\\d{2}$/.test(n.updated || "") ? n.updated.replace(/^(\\d+)-0?(\\d+)-0?(\\d+)$/, "$1/$2/$3") : "";
+        const day = dayText(n.updated);
         return `<div class="card" style="border-top-color:${esc(n.color)}">
           <h3>${faceSvg(n.color, 44)}<span>${esc(n.name)}</span>${day ? `<span class="card-date">さいごに書きかえた日 ${day}</span>` : ""}</h3>
           ${self ? `<div class="self">${self}</div>` : ""}
