@@ -3365,20 +3365,35 @@ async def api_voice_memo_register_speaker(person_id: str, filename: str, request
     return {"ok": True, "result": result}
 
 
+LIBRARY_SHARED = "shared/"   # みんなの本の名前の頭(「shared/やまなし_宮沢賢治.txt」)。じぶんの本は、名前だけ
+
+
+def _library_books(d: Path, prefix: str = "") -> list[dict]:
+    if not d.exists():
+        return []
+    return [{"name": prefix + f.name, "size": f.stat().st_size, "modified": f.stat().st_mtime, "shared": bool(prefix)}
+            for f in sorted(d.iterdir()) if f.is_file() and not f.name.startswith(".")]
+
+
+def _library_path(request: Request, name: str) -> Path | None:
+    """本の置き場所。みんなの本は library/ の直下、じぶんの本は library/<その人>/。外へ出る道は None"""
+    root = (DATA_DIR / "library").resolve()
+    if name.startswith(LIBRARY_SHARED):
+        rest = name[len(LIBRARY_SHARED):]
+        path = (root / rest).resolve()
+        return path if path.parent == root and not rest.startswith(".") else None   # 直下のファイルだけ(人のフォルダには入らない)
+    mine = _my_library_dir(request).resolve()
+    path = (mine / name).resolve()
+    return path if str(path).startswith(str(mine) + os.sep) else None
+
+
 @app.get("/api/library")
 async def api_library_list(request: Request):
-    lib_dir = _my_library_dir(request)
-    if not lib_dir.exists():
-        return []
-    files = []
-    for f in sorted(lib_dir.iterdir()):
-        if f.is_file() and not f.name.startswith("."):
-            files.append({
-                "name": f.name,
-                "size": f.stat().st_size,
-                "modified": f.stat().st_mtime,
-            })
-    return files
+    """じぶんの本(library/<その人>/)と、みんなの本(library/ の直下。ぷちたちが読む本と同じ棚)。
+
+    どこまで読んだか(しおり・読了)は、どちらの本も、人ごとに library/<その人>/.bookmarks.json に持つ
+    """
+    return _library_books(_my_library_dir(request)) + _library_books(DATA_DIR / "library", LIBRARY_SHARED)
 
 
 def _bookmarks_file(request: Request) -> Path:
@@ -3411,11 +3426,10 @@ async def api_library_bookmarks_put(request: Request):
 
 @app.get("/api/library/{name:path}")
 async def api_library_content(name: str, request: Request):
-    lib_dir = _my_library_dir(request)
-    filepath = (lib_dir / name).resolve()
-    if not str(filepath).startswith(str(lib_dir.resolve())):
+    filepath = _library_path(request, name)
+    if filepath is None:
         return JSONResponse({"error": "invalid path"}, 403)
-    if not filepath.exists():
+    if not filepath.is_file():
         return JSONResponse({"error": "not found"}, 404)
     content = filepath.read_text(encoding="utf-8")
     return {"name": name, "content": content}
@@ -10565,6 +10579,8 @@ LIBRARY_HTML = """<!DOCTYPE html>
     .book-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
     .book-list::-webkit-scrollbar { width: 6px; }
     .book-list::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    .shelf-head { margin: 12px 4px 6px; font-size: 0.78rem; font-weight: 700; color: #9aa7c7; letter-spacing: 0.04em; }
+    .shelf-head:first-child { margin-top: 2px; }
     .book-item { padding: 10px 12px; background: #16213e; border: 1px solid #0f3460; border-radius: 8px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s; }
     .book-item:hover { background: #1a2a4e; }
     .book-item.active { background: #0f3460; border-color: #4a7abf; }
@@ -10672,6 +10688,8 @@ LIBRARY_HTML = """<!DOCTYPE html>
       loadBookList();
     }
 
+    // 画面に出す題: みんなの本の印(shared/)と、拡張子を取る
+    function bookTitle(name) { return name.replace(/^shared\\//, "").replace(/\\.[^.]+$/, ""); }
     async function loadBookList() {
       const list = document.getElementById("bookList");
       try {
@@ -10690,17 +10708,21 @@ LIBRARY_HTML = """<!DOCTYPE html>
               ${showFinished ? "読了を隠す" : `読了した本 (${finishedCount})`}
             </button></div>`;
         }
+        // 棚は 2 つ: じぶんの本と、みんなの本(ぷちたちが読む本と同じ棚)。しおりと読了は、どちらも自分だけのもの
+        let shelf = null;
         html += books.filter(b => {
           if (!showFinished && (b.name in finished) && currentBook !== b.name) return false;
           return true;
         }).map(b => {
           const sizeStr = b.size < 1024 ? b.size + " B" : (b.size / 1024).toFixed(1) + " KB";
-          const dispName = b.name.replace(/\\.[^.]+$/, "");
+          const dispName = bookTitle(b.name);
+          const head = shelf === !!b.shared ? "" : `<div class="shelf-head">${b.shared ? "📚 みんなの本" : "📖 じぶんの本"}</div>`;
+          shelf = !!b.shared;
           const done = b.name in finished;
           const bm = bookmarks[b.name];
           const bmHtml = bm != null ? `<div class="bookmark-indicator">🔖 ${bm + 1}行目</div>` : "";
           const doneHtml = done ? `<div class="bookmark-indicator">✓ 読了 ${finished[b.name]}</div>` : "";
-          return `<div class="book-item${currentBook === b.name ? " active" : ""}${done ? " finished" : ""}" onclick="loadBook('${b.name.replace(/'/g, "\\\\'")}')">
+          return head + `<div class="book-item${currentBook === b.name ? " active" : ""}${done ? " finished" : ""}" onclick="loadBook('${b.name.replace(/'/g, "\\\\'")}')">
             <div class="book-name">${done ? "✓ " : ""}${dispName}</div>
             <div class="book-meta">${sizeStr}</div>
             ${bmHtml}${doneHtml}
@@ -10770,7 +10792,7 @@ LIBRARY_HTML = """<!DOCTYPE html>
       try {
         const res = await fetch(`/api/library/${encodeURIComponent(name)}`);
         const data = await res.json();
-        const dispName = name.replace(/\\.[^.]+$/, "");
+        const dispName = bookTitle(name);
         const bmLine = bookmarks[name];
 
         const lines = data.content.split("\\n").map((line, i) => {

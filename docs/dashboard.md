@@ -166,6 +166,11 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 決めた中身は `PETIT_DATA_DIR/config/access.json`(`{"<ユーザー名>": {"children": [...], "chat": [...], "mail_in": [...], "mail_out": [...], "petitlog": [...], "diary": [...], "notes": [...], "album": [...], "voice": [...], "hide_tools": [...], "can": {"rest": false, …}}}`)。入口は `GET` / `POST /api/access`(家の持ち主だけ)。
 
+## ライブラリ(📚)
+
+棚は 2 つ。**じぶんの本**は `PETIT_DATA_DIR/library/<ユーザー名>/`、**みんなの本**は `PETIT_DATA_DIR/library/` の直下(ぷちたちが読む本と同じ棚)。
+どこまで読んだか(しおり・読了)は、どちらの本も人ごとに `library/<ユーザー名>/.bookmarks.json` に持つ(みんなの本は `shared/<ファイル名>` の名前で)。
+
 ## タブの印(favicon)
 
 3 つの点。色は、その家のぷちたちの色(一覧の順に 3 人まで。足りない分は薄い紫)。絵のファイルは置かず、家の設定から描く
