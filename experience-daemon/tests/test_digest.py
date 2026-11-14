@@ -137,3 +137,33 @@ def test_touch_kinds_are_told_apart(tmp_path, monkeypatch):
     assert "撫でられた（1回）、タッチされた（2回）" in text
     assert "タッチされた（1回）" in text
     assert "タッチされた（4回）" in text
+
+
+def test_setting_is_added_without_saying_whose_hand(tmp_path, monkeypatch):
+    """「設定は ○○」と添えるだけ。だれの手だったかは言い切らない"""
+    monkeypatch.setattr(ed, "DATA_DIR", tmp_path)
+    character = "testchar"
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "people.json").write_text(
+        json.dumps(
+            {"_comment": "x", "keeper": {"name": "せわにん", "color": "#aaa"}}, ensure_ascii=False
+        ),
+        encoding="utf-8",
+    )
+    base = datetime.now() - timedelta(minutes=30)
+
+    def at(minute: int) -> str:
+        return (base + timedelta(minutes=minute)).isoformat(timespec="seconds")
+
+    _write_events(_today_path(tmp_path, character), [
+        {"ts": at(1), "type": "touch", "detail": {"count": 1, "strokes": 1, "cam_to": "keeper"}},
+        {"ts": at(2), "type": "picked_up", "detail": {"cam_to": "keeper"}},
+        {"ts": at(3), "type": "put_down", "detail": {"carried_sec": 40, "cam_to": "other"}},
+        {"ts": at(4), "type": "touch", "detail": {"count": 2}},
+    ])
+    lines, _now = ed.build_digest(character)
+    text = "\n".join(lines)
+    assert "撫でられた（1回）（設定は せわにん）" in text
+    assert "くらい運ばれた（設定は other）" in text   # 名前の設定が無い ID は、そのまま
+    assert "タッチされた（2回）" in text and "タッチされた（2回）（" not in text
+    assert "に撫でられた" not in text

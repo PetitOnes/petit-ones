@@ -57,6 +57,9 @@ experience_state.json       # {"state": "awake|asleep|offline", "since": "..."}
 | `sleep` / `woken` | `/status`の`is_sleeping`遷移。true→falseの`woken`は`source:"unknown"`（出典特定はPhase 2） |
 | `battery_low` | 電池が20%/10%を下回った時に各1回（+5%回復で再アーム） |
 
+体が `/sensors` で `cam_to`(体の設定ページの「CAM TO」= 世話人の ID)を返すなら、`touch` / `picked_up` / `put_down` の detail に同じ名前で残す。
+ぷちに渡す文には「（設定は ○○）」と添える(呼び名は家の `config/people.json`)。**設定がその人になっていた、というだけ**で、だれの手だったかは体には分からないので、言い切らない。
+
 閾値・根拠は `detectors.py` 冒頭の定数コメントを参照。
 
 ## 自律行動への注入

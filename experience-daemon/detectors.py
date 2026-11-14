@@ -69,6 +69,10 @@ TOUCH_KEYS = ("last_touch", "lastTouchEventTime")
 # タッチの種類ごとの通算(起動してから)。返す体だけ。
 # 記録の detail に taps / strokes として残る(2026-11-14)
 TOUCH_KIND_KEYS = {"taps": "tap_count", "strokes": "stroke_count"}
+# 体の設定ページの「CAM TO」(世話人の ID)。返す体だけ。
+# 人の手が関わる出来事の detail に同じ名前で残す
+SETTING_TO_KEY = "cam_to"
+HAND_EVENT_TYPES = ("touch", "picked_up", "put_down")
 
 # --- オフライン検出 ---
 # ポーリング失敗がこの秒数以上続いたら offline_gap イベントとして記録する。
@@ -239,6 +243,13 @@ class ExperienceDetector:
         events += self._process_ambient(ts, sensors)
         events += self._process_touch(ts, sensors)
         events += self._process_battery(ts, sensors)
+        # 人の手が関わる出来事には、そのときの体の設定「CAM TO」(だれに向けているか)を添える。
+        # 設定がその人になっていた、というだけで、だれの手だったかは体には分からない(2026-11-14)
+        who = sensors.get(SETTING_TO_KEY)
+        if isinstance(who, str) and who:
+            for event in events:
+                if event.type in HAND_EVENT_TYPES:
+                    event.detail[SETTING_TO_KEY] = who
         return events
 
     def _process_motion(self, ts: datetime, sensors: dict) -> list[Event]:
