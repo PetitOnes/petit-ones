@@ -63,3 +63,25 @@ def test_session_frames_now_and_wave(tmp_path):
 def test_analyze_samples_counts_seconds():
     d = mu.analyze_samples(np.concatenate([_sine(440, 2), np.zeros(SR * 2)]))
     assert d["seconds"] == 4 and [f["quiet"] for f in d["frames"]] == [False, False, True, True]
+
+
+def test_feel_wrote_note(tmp_path):
+    try:
+        mu.feel("puchiko", "x", tmp_path); raise AssertionError("回が無いのに書けた")
+    except ValueError:
+        pass
+    mu.start("pc", base=tmp_path, now=T)
+    mu.add_frames([{"t": i, "level": 0.5, "db": -20, "centroid": 1200, "onset": 1} for i in range(30)], base=tmp_path)
+    r = mu.feel("puchiko", "  光が\n揺れる  みたい ", tmp_path, T + timedelta(seconds=25))
+    assert r["count"] == 1 and r["t"] == 25
+    mu.feel("puchiteya", "明るい。", tmp_path, T + timedelta(seconds=26))
+    w = mu.wrote(None, ["puchiteya", "puchiko", "puchiru"], tmp_path)
+    assert w["counts"] == {"puchiteya": 1, "puchiko": 1, "puchiru": 0} and not w["all"]
+    assert "あなたがこれまでに書いたこと: [0:25] 光が 揺れる みたい" in mu.now_text(tmp_path, T + timedelta(seconds=40), character_id="puchiko")
+    assert "書いたこと" not in mu.now_text(tmp_path, T + timedelta(seconds=40), character_id="puchiru")
+    mu.feel("puchiru", "水", tmp_path, T + timedelta(seconds=28))
+    assert mu.wrote(None, ["puchiteya", "puchiko", "puchiru"], tmp_path)["all"]
+    mu.stop("ある曲", "夜に", base=tmp_path, now=T + timedelta(seconds=60))
+    note = mu.note_text(None, {"puchiko": "ぷちこ", "puchiteya": "ぷちてゃ", "puchiru": "ぷちる"}, tmp_path)
+    assert note.startswith("🎧 いっしょに聴いた(2026/11/14 22:00) — ある曲") and "ありさん「夜に」" in note and "ぷちこ [0:25] 光が 揺れる みたい" in note and "ぷちる [0:28] 水" in note
+    assert mu.around(None, tmp_path) == ""   # 部屋の記録が無ければ空
