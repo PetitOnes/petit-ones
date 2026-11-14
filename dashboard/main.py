@@ -2657,7 +2657,7 @@ async def api_hello(request: Request):
     username = _get_username(request) or "arisan"
     config = hello.load_config(DATA_DIR)
     night = hello.is_night(config, datetime.now())
-    chars = [c for c in _my_chars(request) if c["id"] in GROUP_CHAR_IDS]   # 見られる子が決まっている人は、その子にだけ届ける
+    chars = [c for c in _pin_targets(request, "hello_to") if c["id"] in GROUP_CHAR_IDS]   # その人が設定で選んだ子(選んでいなければ、送ってよい子ぜんぶ)
     results = await asyncio.gather(*[_hello_one(c, username, config, night) for c in chars])
     return {"ok": True, "night": night, "results": list(results)}
 
@@ -5220,6 +5220,19 @@ def _group_chars(request: Request | None) -> list[dict]:
     return [c for c in chars if _ok_for(who, "chat", c["id"])]
 
 
+def _pin_targets(request: Request | None, key: str) -> list[dict]:
+    """📍 の「ここにいるよ」(hello_to)・「からだ おやすみ」(rest_to)が届く子。
+
+    その人が設定(🏠 家 → 📍 から送る相手)で選んだ子。選んでいなければ、動かしてよい子ぜんぶ
+    """
+    chars = _my_chars(request)
+    picked = _load_ui_settings(_me(request)).get(key)
+    if isinstance(picked, list) and picked:
+        chosen = [c for c in chars if c["id"] in picked]
+        chars = chosen or chars   # 選んだ子が、もう動かせない子ばかりなら、みんなに戻す
+    return chars
+
+
 def _my_chars(request: Request | None) -> list[dict]:
     """その人が動かしてよい子(見られる子が決まっている人は、その子だけ)"""
     allowed = _get_allowed_characters(request) if request is not None else None
@@ -5228,19 +5241,22 @@ def _my_chars(request: Request | None) -> list[dict]:
 
 @app.get("/api/switches/rest")
 def api_switches_rest_all_get(request: Request = None):
-    """みんなの からだ おやすみ の様子(📍 のメニュー用)。見られる子が決まっている人には、その子だけ"""
+    """みんなの からだ おやすみ の様子(📍 のメニュー用)。見られる子が決まっている人には、その子だけ。
+
+    targets は、📍 のボタンが効く子(その人が設定で選んだ子)
+    """
     out = {}
     for c in _my_chars(request):
         v = _body().view(get_settings(c["id"]))["rest"]
         out[c["id"]] = {"name": c.get("name", c["id"]), "on": v["on"], "until": v["until"], "why": v["why"]}
-    return {"chars": out}
+    return {"chars": out, "targets": [c["id"] for c in _pin_targets(request, "rest_to")]}
 
 
 @app.post("/api/switches/rest")
 def api_switches_rest_all(body: RestBody, request: Request = None):
-    """みんな一度に、いまから n 分 からだ おやすみ(0 でやめる)。見られる子が決まっている人は、その子だけ"""
+    """📍 から、いまから n 分 からだ おやすみ(0 でやめる)。効くのは、その人が設定で選んだ子(選んでいなければ、動かしてよい子ぜんぶ)"""
     try:
-        for c in _my_chars(request):
+        for c in _pin_targets(request, "rest_to"):
             _body().set_rest(c["id"], body.minutes, DATA_DIR)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
@@ -5299,6 +5315,8 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
         return {}
     base.pop("topbar_color", None)
     base.pop("topbar_saved", None)
+    base.pop("hello_to", None)   # 📍 から送る相手も、人ごと
+    base.pop("rest_to", None)
     base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
     return base
 
@@ -5316,6 +5334,8 @@ def api_ui_get(request: Request = None):
 class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
     topbar_saved: str | None = None   # 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、この色に戻せる
+    hello_to: list[str] | None = None   # 📍 の「ここにいるよ」が届く子。空・null なら、みんな(自分が送ってよい子ぜんぶ)
+    rest_to: list[str] | None = None    # 📍 の「からだ おやすみ」が効く子。空・null なら、みんな
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
@@ -5332,6 +5352,11 @@ def api_ui_set(req: UiSettings, request: Request = None):
         cur["topbar_color"] = req.topbar_color or None
     if req.topbar_saved and re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_saved):
         cur["topbar_saved"] = req.topbar_saved
+    # 📍 から送る相手: 送られてきたときだけ変える。空の並びは「みんな」に戻す
+    for key in ("hello_to", "rest_to"):
+        if key in req.model_fields_set:
+            ids = [c for c in (getattr(req, key) or []) if isinstance(c, str) and re.fullmatch(r"[a-zA-Z0-9_]+", c)]
+            cur[key] = ids or None
     if req.house_title:
         cur["house_title"] = req.house_title.strip()[:30]
     if req.send_key in ("enter", "ctrl_enter"):
@@ -7483,7 +7508,7 @@ HTML = """<!DOCTYPE html>
   <div class="overlay" id="mailboxOverlay" onclick="closeIfOverlay(event,'mailboxOverlay')">
     <div class="popup">
       <div class="popup-header">
-        <span class="popup-title">📬 メールボックス</span>
+        <span class="popup-title">📬 メールボックス<span style="display:inline-block;margin-left:8px;font-size:0.72rem;font-weight:400;color:#999;">既読と反応は、ぷちに伝わります</span></span>
         <span style="display:flex;align-items:center;gap:4px">
           <button class="mail-new-btn" onclick="openMailCompose()" title="メールを書く">＋</button>
           <button class="popup-close" onclick="closePopup('mailboxOverlay')">✕</button>
@@ -7861,9 +7886,16 @@ HTML = """<!DOCTYPE html>
     let _meNowHours = null;
     function _hm(iso) { const t = iso ? new Date(iso) : null; return t && !isNaN(t) ? `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}` : ""; }
     let _restAll = {};   // みんなの からだ おやすみ(/api/switches/rest)
+    let _restTargets = null;   // 📍 の からだ おやすみ が効く子(設定で選んだ子。null は分からない)
+    // 📍 から送る相手の名前(「ぷちる」「ぷちてゃ・ぷちこ」)。みんな(選んでいない)なら "みんな"
+    function pinNames(ids) {
+      const all = (window._allChars || characters);
+      if (!Array.isArray(ids) || !ids.length) return "みんな";
+      return ids.map(id => (all.find(c => c.id === id) || {}).name || id).join("・");
+    }
     async function loadMeNow() {
       try { _meNow = await fetch("/api/whereabouts").then(r => r.json()); } catch (e) { return; }
-      try { _restAll = (await fetch("/api/switches/rest").then(r => r.json())).chars || {}; } catch (e) {}
+      try { const r = await fetch("/api/switches/rest").then(x => x.json()); _restAll = r.chars || {}; _restTargets = r.targets || null; } catch (e) {}
       document.getElementById("meNowText").textContent = _meNow.mine || "";
       document.getElementById("meNowBtn").title = _meNow.mine ? `わたしのいま: ${_meNow.mine}` : "わたしのいま";
       if (document.getElementById("meNowMenu").style.display !== "none") renderMeNow();
@@ -7883,10 +7915,12 @@ HTML = """<!DOCTYPE html>
         (_meNow.mine ? `<button class="chip" onclick="setMeNow('')">消す</button>` : "") +
         (others ? `<div class="others">${others}</div>` : "") +
         // 「ここにいるよ」: ぷちたちに合図を送る(🌱 ようす にあるものと同じ)
-        (canDo("hello") ? `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button></div>` +
+        (canDo("hello") ? `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button><span class="others" style="margin:0 0 0 6px">→ ${esc(pinNames(_uiSettings.hello_to))}</span></div>` +
         `<div class="others" id="meNowHelloMsg"></div>` : "") +
         // からだ おやすみ(2026-11-14 ありさん): 3 人まとめて、いまから n 分 カメラ・声・効果音を止める。考える・書くはいつも通り
         `<div class="others" style="margin-top:8px">🌙 からだ おやすみ(カメラ・声・音を止める): ${restWords()}</div>` +
+        // だれに効くか(設定 → 🏠 家 → 📍 から送る相手 で選んだ子)。みんなに効くなら、何も添えない
+        (Array.isArray(_restTargets) && _restTargets.length < Object.keys(_restAll).length ? `<div class="others">→ ${esc(pinNames(_restTargets))} に</div>` : "") +
         // からだ おやすみ を使えないことになっている人には、様子だけを出して、押すところは出さない
         (canDo("rest") ? `<div class="chips small">${[[30, "30 分"], [60, "1 時間"], [180, "3 時間"]].map(([m, l]) => `<button class="chip" onclick="setRestAll(${m})">${l}</button>`).join("")}` +
         (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>` : "");
@@ -8121,8 +8155,12 @@ HTML = """<!DOCTYPE html>
       const pick = (key, v) => v == null ? "" : row(key === "brightness" ? "🔆 明るさ" : "🔊 音量", key === "brightness" ? "画面の明るさ" : "音量",
         BODY_CHOICES[key].some(([n]) => near(n, v)) ? "" : `いま ${v}%`, BODY_CHOICES[key].map(([n, label]) => btn(key, n, label, near(n, v))).join(""));
       // 起こす・眠らせる(2026-11-14 ありさん: それぞれのページでなく、ここに)。sleeping は ようす が /status から渡す
-      const sleep = b.sleeping == null ? "" : row("💤 ねむり", "体を眠らせる(画面を消す)・起こす。体を 3 回触っても起きる", "",
-        btn("sleeping", "false", "☀️ おこす", !b.sleeping) + btn("sleeping", "true", "🌙 ねかす", b.sleeping));
+      // ここは「いまの値を選ぶ」ではなく「すること」。いまできないほう(起きているときの おこす、眠っているときの ねかす)は、灰色にして押せなくする
+      const act = (value, label, off) => `<button data-body="${c.id}" data-key="sleeping" data-value="${value}" ${off ? 'disabled data-off="1"' : ""}
+          style="flex:1 1 0;min-width:3.4em;min-height:42px;padding:0 6px;font:inherit;font-size:0.85rem;font-weight:700;border-radius:10px;
+                 border:1.5px solid ${off ? "#ececec" : (c.color || "#cab8d9")};background:${off ? "#f4f4f4" : "#fff"};color:${off ? "#bdbdbd" : "#444"};cursor:${off ? "default" : "pointer"};">${label}</button>`;
+      const sleep = b.sleeping == null ? "" : row("💤 ねむり", "体を眠らせる(画面を消す)・起こす。体を 3 回触っても起きる", b.sleeping ? "いま 眠っている" : "いま 起きている",
+        act("false", "☀️ おこす", !b.sleeping) + act("true", "🌙 ねかす", b.sleeping));
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
@@ -8155,7 +8193,7 @@ HTML = """<!DOCTYPE html>
         if (!r.ok || (b.failed || []).length) throw new Error(b.error || "変えられませんでした");
         card.innerHTML = bodySettingsHtml(_bodyChars[id], {...b, sleeping: _bodyLast[id] && _bodyLast[id].sleeping});
       } catch (err) {
-        card.querySelectorAll("button").forEach(x => { x.disabled = false; });
+        card.querySelectorAll("button").forEach(x => { x.disabled = x.dataset.off === "1"; });   // 灰色のボタン(いまできないほう)は、押せないまま
         if (msg) msg.textContent = err.message;
       }
     });
