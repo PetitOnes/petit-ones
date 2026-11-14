@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>よてい</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 📅 よてい(2026-11-14 ありさん): 月のカレンダーに 予定(📅)と 記念日(🎂)。日を押すと、その日の中身と「＋」 */
+    .c-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 6px; }
+    .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
+    .c-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+    .c-wd { text-align: center; font-size: 0.72rem; color: var(--ui-text-sub); padding: 2px 0; }
+    .c-wd.sun { color: #d9534f; } .c-wd.sat { color: #4a7abf; }
+    .c-day { position: relative; min-height: 52px; padding: 4px 4px 2px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+    .c-day.other { opacity: 0.35; }
+    .c-day.today { border-color: var(--ui-accent-line); }
+    .c-day.sel { background: var(--ui-accent-soft); border-color: var(--ui-accent); }
+    .c-day .n { font-size: 0.85rem; font-weight: 700; color: var(--ui-text); }
+    .c-day.sun .n { color: #d9534f; } .c-day.sat .n { color: #4a7abf; }
+    .c-day .m { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text-sub); }
+    .c-list { margin-top: 12px; }
+    .c-item { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--ui-line-soft); }
+    .c-item:last-child { border-bottom: none; }
+    .c-item .t { flex: 1; min-width: 0; }
+    .c-item .t b { font-size: 1rem; }
+    .c-item .sub { font-size: 0.82rem; color: var(--ui-text-sub); }
+    .c-item .who span { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
+    .c-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #ccc; }
+    .c-form label { display: block; margin-top: 8px; }
+    .c-form .row { display: flex; gap: 6px; }
+    .c-form .row > * { flex: 1; min-width: 0; }
+    .c-form .a-input { width: 100%; min-height: 38px; }
+    .c-form .who { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .c-form .who .a-pill { display: inline-flex; align-items: center; gap: 5px; }
+    .c-form .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; align-items: center; }
+    .c-form .msg { flex: 1; font-size: 0.8rem; color: #d9534f; }
+    .c-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+    .c-toast.on { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📅 よてい</h1></div>
+    <div class="c-head">
+      <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(-1)">‹ 前の月</button>
+      <h2 id="monthTitle"></h2>
+      <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(1)">次の月 ›</button>
+    </div>
+    <div class="c-grid" id="grid"></div>
+
+    <div class="m-card c-list" id="dayCard">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <span class="a-heading" id="dayTitle"></span>
+        <span style="display:flex;gap:6px" id="addBtns">
+          <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('event')">＋ 予定</button>
+          <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('anniv')">＋ 記念日</button>
+        </span>
+      </div>
+      <div id="dayItems"></div>
+    </div>
+
+    <div class="m-card c-form" id="formCard" style="display:none">
+      <span class="a-heading" id="formTitle"></span>
+      <div id="formBody"></div>
+      <div class="acts"><span class="msg" id="fMsg"></span><button class="a-btn a-btn--ghost a-btn--s" onclick="closeForm()">やめる</button><button class="a-btn a-btn--s" id="saveBtn" onclick="save()">保存</button></div>
+    </div>
+    <p class="a-label" style="margin-top:10px">予定は 7 日前から、記念日は前の日に、ぷちたちへさらっと伝わります。</p>
+  </div>
+  <div class="c-toast" id="toast"></div>
+
+  <script>
+    const { esc } = PetitPage;
+    const q = new URLSearchParams(location.search);
+    const WD = ["日", "月", "火", "水", "木", "金", "土"];
+    const REPEAT = { yearly: "毎年", monthly: "毎月", once: "その日だけ" };
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const today = iso(new Date());
+    let ym = (q.get("month") || today).slice(0, 7);   // 見ている月 "YYYY-MM"
+    let sel = q.get("date") || today;                  // 選んでいる日
+    let month = { days: {} }, people = [], chars = [], me = {};
+    let form = null;   // {kind: "event"|"anniv", id?}
+
+    function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1600); }
+    const canEdit = () => !me.can || me.can.anniv !== false;
+    const canTouch = it => canEdit() && (!me.limited || it.by === me.username);
+    const nameOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {name: id}).name;
+    const colorOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {}).color || "#ccc";
+
+    async function loadMonth() {
+      try { month = await (await fetch(`/api/calendar?month=${ym}`)).json(); } catch (e) { month = { days: {} }; }
+      renderGrid(); renderDay();
+    }
+    function moveMonth(d) {
+      const [y, m] = ym.split("-").map(Number);
+      const nd = new Date(y, m - 1 + d, 1);
+      ym = iso(nd).slice(0, 7);
+      q.set("month", ym); history.replaceState(null, "", location.pathname + "?" + q.toString());
+      loadMonth();
+    }
+    function renderGrid() {
+      const [y, m] = ym.split("-").map(Number);
+      document.getElementById("monthTitle").textContent = `${y}年${m}月`;
+      const first = new Date(y, m - 1, 1), start = new Date(y, m - 1, 1 - first.getDay());
+      let html = WD.map((w, i) => `<div class="c-wd${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${w}</div>`).join("");
+      for (let i = 0; i < 42; i++) {
+        const d = new Date(start); d.setDate(start.getDate() + i);
+        const k = iso(d), info = month.days[k] || {anniv: [], events: []};
+        const marks = info.events.map(e => `📅 ${esc(e.title)}`).concat(info.anniv.map(a => `🎂 ${esc(a.label)}`));
+        const cls = ["c-day", d.getMonth() !== m - 1 ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${d.getDate()}</span>${marks.slice(0, 2).map(t => `<span class="m">${t}</span>`).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
+      }
+      document.getElementById("grid").innerHTML = html;
+    }
+    function pick(k) {
+      sel = k; q.set("date", k); history.replaceState(null, "", location.pathname + "?" + q.toString());
+      if (k.slice(0, 7) !== ym) { ym = k.slice(0, 7); loadMonth(); return; }
+      renderGrid(); renderDay();
+    }
+    function renderDay() {
+      const d = new Date(sel + "T00:00:00");
+      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}`;
+      document.getElementById("addBtns").style.display = canEdit() ? "" : "none";
+      const info = month.days[sel] || {anniv: [], events: []};
+      const ev = info.events.map(e => {
+        const span = e.date !== e.end ? `${e.date.slice(5).replace("-", "/")}〜${e.end.slice(5).replace("-", "/")}` : "";
+        const sub = [span, e.time ? `${esc(e.time)} から` : "", e.place ? `📍 ${esc(e.place)}` : ""].filter(Boolean).join(" ・ ");
+        const who = e.who.length ? `<div class="who">${e.who.map(w => `<span><i class="c-dot" style="background:${esc(colorOf(w))}"></i>${esc(nameOf(w))}</span>`).join("")}</div>` : "";
+        return `<div class="c-item"><span>📅</span><div class="t"><b>${esc(e.title)}</b>${sub ? `<div class="sub">${sub}</div>` : ""}${who}${e.note ? `<div class="sub">${esc(e.note)}</div>` : ""}</div>
+          ${canTouch(e) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('event', ${JSON.stringify(e.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('event', ${JSON.stringify(e.id)}, ${JSON.stringify(e.title)})">消す</button>` : ""}</div>`;
+      });
+      const an = info.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
+          ${canTouch(a) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('anniv', ${JSON.stringify(a.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('anniv', ${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})">消す</button>` : ""}</div>`);
+      document.getElementById("dayItems").innerHTML = ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`;
+    }
+
+    // ---- 足す・直す ----
+    function openForm(kind, id) {
+      const info = month.days[sel] || {anniv: [], events: []};
+      const it = id ? (kind === "event" ? info.events : info.anniv).find(x => x.id === id) : null;
+      form = {kind, id: id || null};
+      document.getElementById("formTitle").textContent = kind === "event" ? (id ? "予定を直す" : "予定を足す") : (id ? "記念日を直す" : "記念日を足す");
+      const whoAll = chars.concat(people);
+      document.getElementById("formBody").innerHTML = kind === "event" ? `
+        <label><span class="a-label">題</span><input class="a-input" id="fTitle" maxlength="40" placeholder="たとえば 展示会" value="${esc(it ? it.title : "")}"></label>
+        <div class="row"><label><span class="a-label">日にち</span><input class="a-input" type="date" id="fDate" value="${esc(it ? it.date : sel)}"></label>
+          <label><span class="a-label">終わりの日(同じ日なら空)</span><input class="a-input" type="date" id="fEnd" value="${esc(it && it.end !== it.date ? it.end : "")}"></label></div>
+        <div class="row"><label><span class="a-label">時間(なくてもよい)</span><input class="a-input" type="time" id="fTime" value="${esc(it ? it.time : "")}"></label>
+          <label><span class="a-label">場所(なくてもよい)</span><input class="a-input" id="fPlace" maxlength="60" value="${esc(it ? it.place : "")}"></label></div>
+        <span class="a-label" style="display:block;margin-top:8px">行く人・子</span>
+        <div class="who">${whoAll.map(w => `<button class="a-pill${it && it.who.includes(w.id) ? " is-on" : ""}" data-who="${esc(w.id)}" onclick="this.classList.toggle('is-on')"><i class="c-dot" style="background:${esc(w.color || "#ccc")}"></i>${esc(w.name)}</button>`).join("")}</div>
+        <label><span class="a-label">ひとこと(なくてもよい。ぷちたちにも伝わる)</span><input class="a-input" id="fNote" maxlength="200" value="${esc(it ? it.note : "")}"></label>` : `
+        <label><span class="a-label">名前</span><input class="a-input" id="fName" maxlength="40" placeholder="たとえば ぷちるの誕生日" value="${esc(it ? it.name : "")}"></label>
+        <label><span class="a-label">日にち</span><input class="a-input" type="date" id="fDate" value="${esc(it && it.date.length === 10 ? it.date : sel)}"></label>
+        <label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="fNoYear" ${it && it.date.length === 5 ? "checked" : ""}><span class="a-label">年は数えない(人の誕生日など)</span></label>
+        <label><span class="a-label">くり返し</span><select class="a-input" id="fRepeat">${Object.entries(REPEAT).map(([k, v]) => `<option value="${k}"${it && it.repeat === k ? " selected" : ""}>${v}</option>`).join("")}</select></label>
+        <label><span class="a-label">ひとこと(なくてもよい。ぷちたちにも伝わる)</span><input class="a-input" id="fNote" maxlength="200" value="${esc(it ? it.note : "")}"></label>`;
+      document.getElementById("fMsg").textContent = "";
+      document.getElementById("formCard").style.display = "";
+      document.getElementById("formCard").scrollIntoView({block: "start", behavior: "smooth"});
+    }
+    function closeForm() { form = null; document.getElementById("formCard").style.display = "none"; }
+    const $ = id => document.getElementById(id);
+    async function save() {
+      if (!form) return;
+      let url, body;
+      if (form.kind === "event") {
+        url = form.id ? `/api/events/${form.id}` : "/api/events";
+        body = {title: $("fTitle").value, date: $("fDate").value, end: $("fEnd").value || null, time: $("fTime").value || "", place: $("fPlace").value,
+                who: [...document.querySelectorAll("#formBody [data-who].is-on")].map(b => b.dataset.who), note: $("fNote").value};
+      } else {
+        url = form.id ? `/api/anniversaries/${form.id}` : "/api/anniversaries";
+        const d = $("fDate").value;
+        body = {name: $("fName").value, date: $("fNoYear").checked ? d.slice(5) : d, repeat: $("fRepeat").value, count: !$("fNoYear").checked, note: $("fNote").value};
+      }
+      try {
+        const r = await fetch(url, {method: form.id ? "PUT" : "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { $("fMsg").textContent = j.error || "保存できなかった"; return; }
+      } catch (e) { $("fMsg").textContent = "保存できなかった"; return; }
+      toast(form.id ? "直した" : "足した"); closeForm(); loadMonth();
+    }
+    async function remove(kind, id, title) {
+      if (!confirm(`「${title}」を消す?`)) return;
+      try { await fetch(kind === "event" ? `/api/events/${id}` : `/api/anniversaries/${id}`, {method: "DELETE"}); } catch (e) {}
+      toast("消した"); loadMonth();
+    }
+
+    (async () => {
+      try { me = await (await fetch("/api/me")).json(); } catch (e) {}
+      try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) {}
+      try { people = (await (await fetch("/api/people")).json()).people || []; } catch (e) {}
+      loadMonth();
+    })();
+  </script>
+</body>
+</html>
