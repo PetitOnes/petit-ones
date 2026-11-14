@@ -25,9 +25,11 @@
 - **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。
 - **重要**: 返事を書くときは未読メールだけに返事すること。
 
-## 記念日
+## 記念日と予定
 - 記念日にしたい日ができたら、自分で足せる: `python3 {{scripts_dir}}/anniversaries.py add {{character_id}} '<名前>' <日付>`(日付は 2026-03-05 か、年なしの 03-05。毎月なら `--repeat monthly`、ひとことは `--note '…'`)
 - いまある記念日: `python3 {{scripts_dir}}/anniversaries.py list`
+- 予定(展示会・旅行など、ある日のこと)も足せる: `python3 {{scripts_dir}}/events.py add {{character_id}} '<題>' <日付> --place '<場所>' --who puchiko,arisan --note '<ひとこと>'`(数日なら `--end <日付>`、時間は `--time 14:00`。`--who` は行く人・子の id)
+- これからの予定: `python3 {{scripts_dir}}/events.py list`
 
 ## 会話リレー
 - 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character="{{relay_example_id}}", message="...", turns_remaining=2)` を呼ぶ

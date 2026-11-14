@@ -14,9 +14,12 @@
 - ぷちへ: 7 日以内の予定を、自律行動と会話の冒頭に 1 行ずつ(`events.py lines --character <id>`)。
   自分が行かない予定は「(自分は留守番)」と分かる形
 
+ぷちも自分で足せる(記念日と同じ。足した人の id が by に残る):
+
 Usage:
     python3 events.py lines --character <id> [--date YYYY-MM-DD]   # ぷちに渡す行(無ければ何も出さない)
-    python3 events.py list
+    python3 events.py list [--all]                                 # これからの予定を 1 行ずつ(--all で過ぎた分も)
+    python3 events.py add <足す人・子の id> "<題>" <日付> [--end 日付] [--time 14:00] [--place "場所"] [--who puchiko,arisan] [--note "ひとこと"]
 """
 
 from __future__ import annotations
@@ -167,21 +170,55 @@ def lines(base: Path | None, me: str | None, today: Date | None = None) -> list[
     return [line(it, today, me, base) for it in upcoming(load(base), today)]
 
 
+def list_lines(base: Path | None, today: Date, all_: bool = False) -> list[str]:
+    """人にもぷちにも読める一覧。「11/22(日) 展示会(ビッグサイト、14:00 から)。行く: ぷちこ・ありさん  [id 44a68fd95508]」"""
+    out = []
+    for it in sorted(load(base), key=lambda it: (it["date"], it["time"])):
+        if not all_ and it["end"] < today.isoformat():
+            continue
+        start, end = Date.fromisoformat(it["date"]), Date.fromisoformat(it["end"])
+        when = f"{start.month}/{start.day}({WEEKDAYS[start.weekday()]})" + (f"〜{end.month}/{end.day}" if end != start else "")
+        detail = "、".join(x for x in (it["place"], f"{it['time']} から" if it["time"] else "") if x)
+        who = f"。行く: {'・'.join(_names(base, it['who']))}" if it["who"] else ""
+        note = f"。{it['note']}" if it["note"] else ""
+        out.append(f"{when} {it['title']}" + (f"({detail})" if detail else "") + who + note + f"  [id {it['id']}]")
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("lines")
     p.add_argument("--character", default=None)
     p.add_argument("--date", default=None)
-    sub.add_parser("list")
+    p = sub.add_parser("list")
+    p.add_argument("--all", action="store_true")
+    p = sub.add_parser("add")
+    p.add_argument("by", help="足す人・子の id(puchiko / arisan など)")
+    p.add_argument("title")
+    p.add_argument("date", help="2026-11-22")
+    p.add_argument("--end", default=None)
+    p.add_argument("--time", default="")
+    p.add_argument("--place", default="")
+    p.add_argument("--who", default="", help="行く人・子の id をカンマ区切り(puchiko,arisan)")
+    p.add_argument("--note", default="")
     a = ap.parse_args()
     base = data_dir()
     if a.cmd == "lines":
         today = Date.fromisoformat(a.date) if a.date else Date.today()
         for text in lines(base, a.character, today):
             print(text)
+    elif a.cmd == "list":
+        rows = list_lines(base, Date.today(), a.all)
+        print("\n".join(rows) if rows else "予定はありません")
     else:
-        print(json.dumps(load(base), ensure_ascii=False, indent=2))
+        try:
+            it = add({"title": a.title, "date": a.date, "end": a.end, "time": a.time, "place": a.place,
+                      "who": [w.strip() for w in a.who.split(",") if w.strip()], "note": a.note, "by": a.by}, base)
+        except ValueError as e:
+            print(f"足せなかった: {e}", file=sys.stderr)
+            return 1
+        print("足しました: " + list_lines(base, Date.fromisoformat(it["date"]))[0] if list_lines(base, Date.fromisoformat(it["date"])) else "足しました")
     return 0
 
 
