@@ -52,3 +52,17 @@ def test_load_skips_broken(tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "events.json").write_text(json.dumps({"items": [{"title": "", "date": "x"}, {"title": "ok", "date": "2026-11-20"}]}), encoding="utf-8")
     assert [it["title"] for it in ev.load(tmp_path)] == ["ok"]
+
+
+def test_list_lines_and_cli_add(tmp_path, monkeypatch, capsys):
+    base = _house(tmp_path)
+    monkeypatch.setenv("PETIT_DATA_DIR", str(base))
+    monkeypatch.setattr(sys, "argv", ["events.py", "add", "puchiko", "展示会", "2026-11-22", "--time", "14:00", "--place", "ビッグサイト", "--who", "puchiko,arisan", "--note", "たのしみ"])
+    assert ev.main() == 0
+    out = capsys.readouterr().out
+    assert out.startswith("足しました: 11/22(日) 展示会(ビッグサイト、14:00 から)。行く: ぷちこ・ありさん。たのしみ  [id ")
+    assert ev.load(base)[0]["by"] == "puchiko"
+    assert ev.list_lines(base, Date(2026, 12, 1)) == []                 # 過ぎたら出ない
+    assert len(ev.list_lines(base, Date(2026, 12, 1), all_=True)) == 1
+    monkeypatch.setattr(sys, "argv", ["events.py", "add", "puchiko", "", "2026-11-22"])
+    assert ev.main() == 1                                               # 題が無いと足せない
