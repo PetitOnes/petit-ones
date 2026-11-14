@@ -65,3 +65,15 @@ def test_no_config(tmp_path):
     assert pp.config(tmp_path)["phones"] == {}
     assert pp.lines(tmp_path) == []
     assert wa.lines(tmp_path, now=T) == []
+
+
+def test_first_sighting_after_empty_reports_does_not_pick_a_room_by_tie(tmp_path):
+    """空の報告 2 回のあとに初めて印が見えても、まんなかが -100 同士の引き分けで部屋を決めない(2026-11-14 実機)"""
+    base = _house(tmp_path)
+    pp.report("arisan", {}, base, T)
+    pp.report("arisan", {}, base, T + timedelta(seconds=30))
+    r = pp.report("arisan", {"DFE455C969D7": -44, "70041D7E07AE": -52}, base, T + timedelta(seconds=60))
+    assert r["room"] is None
+    r = pp.report("arisan", {"DFE455C969D7": -44, "70041D7E07AE": -52}, base, T + timedelta(seconds=90))
+    assert r["room"] == "あり部屋"
+    assert pp.decide(None, {"寝室": -100, "あり部屋": -100}, 6) is None
