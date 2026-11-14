@@ -3488,6 +3488,20 @@ def api_note_star(body: NoteStarBody, request: Request):
     return {"stars": nm.set_star(DATA_DIR, body.char, body.name, body.on, _get_username(request) or "arisan")}
 
 
+@app.get("/api/notes/pins")
+def api_note_pins(request: Request):
+    """見ている人のピン留め(子ごと → ファイル名)。自分だけの印で、ぷちには知らせない"""
+    return {"pins": _note_marks().load_pins(DATA_DIR).get(_get_username(request) or "arisan", {})}
+
+
+@app.post("/api/notes/pin")
+def api_note_pin(body: NoteStarBody, request: Request):
+    nm = _note_marks()
+    if not nm.valid_name(body.name) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", body.char):
+        return JSONResponse({"error": "名前がおかしい"}, status_code=400)
+    return {"pins": nm.set_pin(DATA_DIR, _get_username(request) or "arisan", body.char, body.name, body.on)}
+
+
 @app.get("/api/notes/reads")
 def api_note_reads(request: Request):
     """見ている人の既読(子ごと → ファイル名 → 開いた時刻)"""
@@ -10356,6 +10370,8 @@ NOTES_HTML = """<!DOCTYPE html>
     .note-item .note-actions button:hover { opacity: 1; }
     .note-item .note-actions { display: flex; gap: 2px; }
     .note-item .note-actions button.star.on { opacity: 1; color: #f5b301; }   /* ★ を付けたノート */
+    .note-item .note-actions button.pin { font-size: 0.75rem; }
+    .note-item .note-actions button.pin.on { opacity: 1; }   /* ピン留め(自分だけ。いちばん上に) */
     .note-item .unread { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f58e7d; margin-right: 6px; flex-shrink: 0; }   /* まだ見ていない(開いてから更新された) */
 
     .create-btn { padding: 7px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.83rem; text-align: center; flex-shrink: 0; }
@@ -10436,6 +10452,8 @@ NOTES_HTML = """<!DOCTYPE html>
     let allNotes = [];
     let stars = {};   // ★(/api/notes/stars)。{id: {ファイル名: {by, at}}}
     let reads = {};   // 自分の既読(/api/notes/reads)。{id: {ファイル名: 開いた時刻}}
+    let pins = {};    // 自分のピン留め(/api/notes/pins)。{id: [ファイル名]}。ぷちには知らせない
+    const isPin = n => (pins[currentChar] || []).includes(n.name);
     const isStar = n => !!(stars[currentChar] || {})[n.name];
     // まだ見ていない = 開いた記録が無い、か、開いたあとに更新された。自分のノート(書ける子)は数えない
     const isUnread = n => !isEditable() && (!(reads[currentChar] || {})[n.name] || new Date((reads[currentChar] || {})[n.name]) < new Date(n.modified));
@@ -10464,8 +10482,9 @@ NOTES_HTML = """<!DOCTYPE html>
     function renderFolderChips(notes) {
       const folders = buildFolders(notes);
       const el = document.getElementById("folderChips");
-      const starred = notes.filter(isStar).length;
+      const starred = notes.filter(isStar).length, pinned = notes.filter(isPin).length;
       el.innerHTML = `<div class="folder-chip${currentFolder===''?' active':''}" onclick="setFolder('')">全て (${notes.length})</div>` +
+        (pinned ? `<div class="folder-chip${currentFolder==='📌'?' active':''}" onclick="setFolder('📌')">📌 (${pinned})</div>` : "") +
         (starred ? `<div class="folder-chip${currentFolder==='★'?' active':''}" onclick="setFolder('★')">★ (${starred})</div>` : "") +
         folders.slice(0, 3).map(([f, c]) =>
           `<div class="folder-chip${currentFolder===f?' active':''}" onclick="setFolder('${f}')">${f} (${c})</div>`
@@ -10482,14 +10501,15 @@ NOTES_HTML = """<!DOCTYPE html>
       const q = document.getElementById("searchInput").value.toLowerCase();
       const sort = document.getElementById("sortSelect").value;
       let notes = allNotes.filter(n => {
-        const inFolder = !currentFolder || (currentFolder === "★" ? isStar(n) : getFolder(n.name) === currentFolder);
+        const inFolder = !currentFolder || (currentFolder === "★" ? isStar(n) : currentFolder === "📌" ? isPin(n) : getFolder(n.name) === currentFolder);
         const inSearch = !q || n.name.toLowerCase().includes(q) || (n.title||"").toLowerCase().includes(q);
         return inFolder && inSearch;
       });
       if (sort === "date") notes.sort((a,b) => new Date(b.modified) - new Date(a.modified));
       else if (sort === "size") notes.sort((a,b) => b.size - a.size);
       else notes.sort((a,b) => a.name.localeCompare(b.name));
-      return notes.filter(isStar).concat(notes.filter(n => !isStar(n)));   // ★ は上に
+      const rank = n => isPin(n) ? 0 : isStar(n) ? 1 : 2;   // 📌 がいちばん上、つぎに ★
+      return notes.map((n, i) => [rank(n), i, n]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]);
     }
 
     function renderList() {
@@ -10509,13 +10529,22 @@ NOTES_HTML = """<!DOCTYPE html>
         const esc = disp.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
         const nameEsc = n.name.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
         const star = `<button class="star${isStar(n) ? " on" : ""}" title="★" onclick="event.stopPropagation();toggleStar('${nameEsc}')">${isStar(n) ? "★" : "☆"}</button>`;
-        const del = `<div class="note-actions">${star}${editable && window._canDeleteNotes !== false ? `<button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button>` : ""}</div>`;
+        const pin = `<button class="pin${isPin(n) ? " on" : ""}" title="ピン留め(自分だけ)" onclick="event.stopPropagation();togglePin('${nameEsc}')">📌</button>`;
+        const del = `<div class="note-actions">${pin}${star}${editable && window._canDeleteNotes !== false ? `<button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button>` : ""}</div>`;
         return `<div class="note-item${currentNote===n.name?" active":""}" onclick="loadNote('${nameEsc}')">
           ${isUnread(n) ? '<span class="unread" title="まだ見ていない"></span>' : ""}<div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
         </div>`;
       }).join("");
     }
 
+    async function togglePin(name) {
+      const on = !(pins[currentChar] || []).includes(name);
+      try {
+        const r = await fetch("/api/notes/pin", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({char: currentChar, name, on})});
+        if (r.ok) pins = (await r.json()).pins || {};
+      } catch (e) {}
+      renderFolderChips(allNotes); renderList();
+    }
     async function toggleStar(name) {
       const on = !(stars[currentChar] || {})[name];
       try {
@@ -10530,6 +10559,7 @@ NOTES_HTML = """<!DOCTYPE html>
         allNotes = await res.json();
         try { stars = (await (await fetch("/api/notes/stars")).json()).stars || {}; } catch (e) {}
         try { reads = (await (await fetch("/api/notes/reads")).json()).reads || {}; } catch (e) {}
+        try { pins = (await (await fetch("/api/notes/pins")).json()).pins || {}; } catch (e) {}
         currentFolder = "";
         renderFolderChips(allNotes);
         renderList();
