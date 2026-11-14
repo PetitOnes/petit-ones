@@ -44,14 +44,15 @@ def test_summary_and_line(tmp_path):
 def test_no_key(tmp_path, monkeypatch):
     monkeypatch.delenv("SWITCHBOT_TOKEN", raising=False)
     monkeypatch.delenv("SWITCHBOT_SECRET", raising=False)
+    monkeypatch.setattr(rl, "omron_present", lambda cfg: False)   # この PC には本物の OMRON が差さっているので、無いことにする
     assert rl.read_all(tmp_path) is None and rl.record(tmp_path) is None and rl.line(tmp_path) == ""
 
 
 def test_cfg_off_and_names(tmp_path):
-    assert rl.load_cfg(tmp_path) == {"off": [], "names": {}}
+    assert rl.load_cfg(tmp_path) == {"off": [], "names": {}, "omron": {"port": "/dev/omron-env", "name": "PC の OMRON"}}
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "room.json").write_text(json.dumps({"names": {"a": "あり部屋"}}), encoding="utf-8")
-    assert rl.set_off(tmp_path, ["b", "a", "b"]) == {"off": ["a", "b"], "names": {"a": "あり部屋"}}
+    assert rl.set_off(tmp_path, ["b", "a", "b"]) == {"off": ["a", "b"], "names": {"a": "あり部屋"}}   # omron は元のファイルに無ければ書かない
     assert rl.load_cfg(tmp_path)["off"] == ["a", "b"] and rl.load_cfg(tmp_path)["names"] == {"a": "あり部屋"}   # 言い換えは残る
 
 
@@ -104,3 +105,33 @@ def test_latest_uses_presence_when_newer(tmp_path):
     # 気配の記録が無くても困らない
     (tmp_path / "state" / "presence_state.json").unlink()
     assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T18:05:00"
+
+
+def test_omron_joins_the_record(tmp_path, monkeypatch):
+    """PC に差した OMRON は、SwitchBot の鍵が無くても id omron-env の 1 台として記録に入る。まとめ・行・変化にも気圧が出る"""
+    monkeypatch.delenv("SWITCHBOT_TOKEN", raising=False); monkeypatch.delenv("SWITCHBOT_SECRET", raising=False)
+    monkeypatch.setattr(rl, "omron_present", lambda cfg: True)
+    import omron_env
+    monkeypatch.setattr(omron_env, "read", lambda port: {"temperature": 24.1, "humidity": 50.2, "light": 2, "pressure": 1015.6, "noise": 53.1, "eco2": 1349, "etvoc": 144})
+    snap = rl.record(tmp_path)
+    assert set(snap["devices"]) == {"omron-env"} and snap["devices"]["omron-env"]["pressure"] == 1015.6 and snap["devices"]["omron-env"]["name"] == "PC の OMRON"
+    devs = rl.devices(tmp_path)
+    assert devs == [{"id": "omron-env", "name": "PC の OMRON", "type": "OMRON 2JCIE-BU", "on": True}]
+    day = rl.day_summary(tmp_path, snap["ts"][:10])
+    assert day["devices"]["omron-env"]["pressure_min"] == 1015.6 and day["devices"]["omron-env"]["eco2_max"] == 1349
+    assert "気圧 1015.6 hPa" in rl.line(tmp_path) and "CO2 1349 ppm" in rl.line(tmp_path)
+    assert rl.change_line(tmp_path, "puchiko", mark=True) == ""   # はじめは覚えるだけ
+    monkeypatch.setattr(omron_env, "read", lambda port: {"temperature": 24.1, "humidity": 50.2, "light": 2, "pressure": 1011.2, "noise": 53.1, "eco2": 1349, "etvoc": 144})
+    rl.record(tmp_path)
+    assert "気圧 1015.6 → 1011.2 hPa(下がってきた)" in rl.change_line(tmp_path, "puchiko", mark=True)
+    # 切ったら入らない。名前は config の omron.name
+    (tmp_path / "config").mkdir(exist_ok=True)
+    (tmp_path / "config" / "room.json").write_text(json.dumps({"off": ["omron-env"], "omron": {"name": "机"}}), encoding="utf-8")
+    assert rl.read_all(tmp_path) is None
+    assert rl.devices(tmp_path)[0]["name"] == "机" and rl.devices(tmp_path)[0]["on"] is False
+
+
+def test_omron_absent_without_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("SWITCHBOT_TOKEN", raising=False); monkeypatch.delenv("SWITCHBOT_SECRET", raising=False)
+    monkeypatch.setattr(rl, "omron_present", lambda cfg: False)
+    assert rl.read_all(tmp_path) is None and rl.devices(tmp_path) is None

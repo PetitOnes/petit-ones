@@ -8743,6 +8743,9 @@ HTML = """<!DOCTYPE html>
         const bits = [];
         if ("temperature" in d) bits.push(`🌡 ${d.temperature}℃`);
         if ("humidity" in d) bits.push(`💧 ${d.humidity}%`);
+        if ("pressure" in d) bits.push(`🌀 ${d.pressure} hPa`);
+        if ("eco2" in d) bits.push(`CO2 ${d.eco2} ppm`);
+        if ("noise" in d) bits.push(`🔊 ${Math.round(d.noise)} dB`);
         if ("light" in d) bits.push(`☀️ 明るさ ${d.light}`);
         if ("move" in d) { const last = (latest.last_move || {})[id]; bits.push(d.move ? "🚶 動きあり" : `🚶 動きなし${last ? `(最後 ${hm(last)})` : "(まだ記録なし)"}`); }
         if ("power" in d) bits.push(d.power === "on" ? "💡 オン" : "💡 オフ");
