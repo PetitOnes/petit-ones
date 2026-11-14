@@ -1,6 +1,9 @@
 自律行動タイム(Heartbeat)
 
 現在の日時: {{current_date}} (JST)
+{{#if whereabouts}}
+{{whereabouts}}
+{{/if}}
 
 @{{character_dir}}/SOUL.md
 {{reflection_index_line}}

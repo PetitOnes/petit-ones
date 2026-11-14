@@ -441,13 +441,20 @@ if [ -f "$MAIL_RECEIPT_SCRIPT" ]; then
   MAIL_RECEIPT_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$MAIL_RECEIPT_SCRIPT" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# いま どこ(2026-11-14): 家の人の「いま」(自室・お外・会社 など。ダッシュボードの右上で決める。state/whereabouts.json)と、
+# ぷちの体の居場所(家 / お外。体験デーモンが書く体の Wi-Fi から)。この子の体は「あなたの体」。無ければ何も足さない
+WHEREABOUTS=""
+if [ -f "$PROJECT_DIR/scripts/whereabouts.py" ]; then
+  WHEREABOUTS=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$PROJECT_DIR/scripts/whereabouts.py" line --character "$CHARACTER_ID" 2>/dev/null || true)
+fi
+
 # user prompt の全体は prompts/autonomous/user.md。各節はここまでで作った変数を渡す
 PROMPT="$(render autonomous/user \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
   --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
-  --var permission_rules="$PERMISSION_RULES")"
+  --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
 
 # プロジェクトディレクトリに移動
 cd "$CLAUDE_CWD" || {

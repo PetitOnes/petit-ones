@@ -3,6 +3,9 @@
 {{soul}}
 
 現在の日時: {{now}}
+{{#if whereabouts}}
+{{whereabouts}}
+{{/if}}
 今話しかけているのは{{user_display_name}}です。{{user_display_name}}と自然に会話してください。必要があればMCPツールを使ってください。印象に残った話題や気づきは `remember` で記憶に残してください。記憶を書くときは今日の日付（{{now}}）を意識して書いてください。
 
 ## ファイル

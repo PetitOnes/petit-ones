@@ -63,6 +63,11 @@ class M5Client:
         self._hosts = hosts
         self._active_host: str | None = None
 
+    @property
+    def active_host(self) -> str | None:
+        """最後につながったホスト(まだ無ければ None)"""
+        return self._active_host
+
     def get_json(self, path: str) -> dict | None:
         if not self._hosts:
             return None
@@ -103,11 +108,36 @@ def _append_events(character: str, events: list[Event], now: datetime) -> None:
             f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
 
 
-def _write_state(character: str, state: str, since: datetime) -> None:
+SEEN_WRITE_INTERVAL_SEC = 60.0   # 変わりが無くても、生きている印(seen)をこの間隔で書き直す
+
+
+def _net_of(status: dict | None, host: str | None) -> dict:
+    """体の /status から、どのネットにいるか(wifi: 何番目の Wi-Fi か、ip、つないだ先)。
+
+    scripts/whereabouts.py が読んで「家 / お外」を決める
+    """
+    if status is None:
+        return {}
+    net: dict = {}
+    if isinstance(status.get("wifi"), int):
+        net["wifi"] = status["wifi"]
+    if status.get("ip"):
+        net["ip"] = str(status["ip"])
+    if host:
+        net["host"] = host
+    return net
+
+
+def _write_state(character: str, state: str, since: datetime, net: dict | None = None,
+                 net_since: datetime | None = None, seen: datetime | None = None) -> None:
     path = _state_path(character)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"state": state, "since": since.isoformat(timespec="seconds")}
+        payload: dict = {"state": state, "since": since.isoformat(timespec="seconds")}
+        if net is not None:
+            payload["net"] = {**net, "since": (net_since or since).isoformat(timespec="seconds")}
+        if seen is not None:
+            payload["seen"] = seen.isoformat(timespec="seconds")
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     except OSError as e:
         logging.warning("state ファイル書き込み失敗: %s", e)
@@ -124,7 +154,10 @@ def run(character: str) -> None:
 
     current_state = "awake"
     state_since = datetime.now()
-    _write_state(character, current_state, state_since)
+    net: dict = {}
+    net_since = state_since
+    seen_written = 0.0
+    _write_state(character, current_state, state_since, net, net_since, state_since)
 
     logging.info("experienced 起動: character=%s hosts=%s", character, hosts)
 
@@ -157,10 +190,16 @@ def run(character: str) -> None:
             events = []
             new_state = current_state
 
-        if new_state != current_state:
-            current_state = new_state
-            state_since = now
-            _write_state(character, current_state, state_since)
+        new_net = _net_of(status, client.active_host) if status is not None else net
+        net_changed = new_net != net
+        if net_changed:
+            net, net_since = new_net, now
+        seen_due = time.monotonic() - seen_written >= SEEN_WRITE_INTERVAL_SEC
+        if new_state != current_state or net_changed or seen_due:
+            if new_state != current_state:
+                current_state, state_since = new_state, now
+            seen_written = time.monotonic()
+            _write_state(character, current_state, state_since, net, net_since, now)
 
         try:
             _append_events(character, events, now)

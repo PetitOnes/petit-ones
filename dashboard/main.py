@@ -1407,6 +1407,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
         relay_example_id=(other_ids[0] if other_ids else character_id),
         restriction_text=restriction_text,
+        whereabouts=_whereabouts_text(character_id),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -1863,6 +1864,22 @@ def _anniv():
     return anniversaries
 
 
+def _whereabouts():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import whereabouts
+    return whereabouts
+
+
+def _whereabouts_text(character_id: str) -> str:
+    """いま どこ(家の人の「いま」と、ぷちの体の居場所)の行。その子の体は「あなたの体」。読めなければ空"""
+    try:
+        return "\n".join(_whereabouts().lines(DATA_DIR, me=character_id, label=_user_label))
+    except Exception:
+        return ""
+
+
 def _mail_receipts():
     """手紙が届いたことの知らせ(読まれた・スタンプ)。計算は scripts/mail_receipts.py(自律行動と同じもの)"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -1934,6 +1951,39 @@ def api_anniversaries_delete(item_id: str):
         return JSONResponse({"error": "not found"}, status_code=404)
     an.save(rest, DATA_DIR)
     return _anniv_view(rest)
+
+
+# ---- いま どこ: 家の人の「いま」(自室・お外・会社 など。右上の 📍 で決める)と、ぷちの体の居場所(家 / お外。体の Wi-Fi から)。
+#      保存と文は scripts/whereabouts.py ----
+class WhereaboutsBody(BaseModel):
+    text: str = ""   # 空にすると消える
+
+
+def _whereabouts_view(d: dict, me: str) -> dict:
+    wa = _whereabouts()
+    users = {u: {**cur, "name": _user_label(u)} for u, cur in d["users"].items()}
+    bodies = {}
+    for cid, name in wa.characters(DATA_DIR):
+        b = wa.body(cid, DATA_DIR)
+        if b:
+            bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"])}
+    return {"users": users, "bodies": bodies, "choices": wa.choices(d), "me": me, "mine": d["users"].get(me, {}).get("text", "")}
+
+
+@app.get("/api/whereabouts")
+def api_whereabouts(request: Request):
+    me = _get_username(request) or "arisan"
+    return _whereabouts_view(_whereabouts().load(DATA_DIR), me)
+
+
+@app.post("/api/whereabouts")
+def api_whereabouts_set(body: WhereaboutsBody, request: Request):
+    me = _get_username(request) or "arisan"
+    try:
+        d = _whereabouts().set_status(me, body.text, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _whereabouts_view(d, me)
 
 
 # ---- ぷちログ(1 日のタイムライン)と日記の一覧。組み立ては petit_log.py、ページは dashboard/ui/ ----
@@ -6024,6 +6074,17 @@ HTML = """<!DOCTYPE html>
     .char-opt .name { flex: 1; }
     .char-opt .m5-dot { width: 7px; height: 7px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
     .char-opt.sep { margin-top: 4px; }
+    /* 右上の 📍 わたしのいま。決めてあるときは丸が伸びて言葉が出る */
+    .me-now { position: relative; }
+    .topbar .me-now-btn { width: auto; min-width: 38px; padding: 0 10px; gap: 4px; border-radius: 999px; font-family: var(--ui-font-maru-head); font-weight: 700; font-size: 0.9rem; color: var(--topbar-fg, var(--char-mid)); }
+    .me-now-text:empty { display: none; }
+    .me-now-menu { left: auto; right: 0; min-width: 220px; padding: 10px; gap: 8px; }
+    .me-now-menu .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .me-now-menu .chip { min-height: 36px; padding: 0 14px; border: 1.5px solid #e6dcd6; border-radius: 999px; background: #fff; color: #444; font: inherit; font-size: 0.95rem; font-weight: 700; cursor: pointer; }
+    .me-now-menu .chip.active { background: var(--topbar-bg, var(--char)); border-color: transparent; color: var(--topbar-fg, #fff); }
+    .me-now-menu .row { display: flex; gap: 6px; }
+    .me-now-menu input { flex: 1; min-width: 0; min-height: 36px; padding: 0 10px; border: 1.5px solid #e6dcd6; border-radius: 10px; font: inherit; font-size: 0.95rem; }
+    .me-now-menu .others { font-size: 0.8rem; color: #888; }
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .char-tabs::-webkit-scrollbar { display: none; }
@@ -6267,6 +6328,11 @@ HTML = """<!DOCTYPE html>
       <div class="char-menu" id="charTabs" style="display:none"></div>
     </div>
     <div class="topbar-btns">
+      <!-- 家の人の「いま」(2026-11-14 ありさん): 自室・お外・会社 など。ぷちたちの会話・自律行動に 1 行で伝わる -->
+      <div class="me-now" id="meNow">
+        <button class="gear-btn me-now-btn" id="meNowBtn" onclick="toggleMeNow(event)" aria-haspopup="true" aria-expanded="false" title="わたしのいま">📍<span class="me-now-text" id="meNowText"></span></button>
+        <div class="char-menu me-now-menu" id="meNowMenu" style="display:none"></div>
+      </div>
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬<span class="mail-badge" id="mailBadge"></span></button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
     </div>
@@ -6906,6 +6972,51 @@ HTML = """<!DOCTYPE html>
       document.getElementById("charPickBtn").setAttribute("aria-expanded", "false");
     }
     document.addEventListener("click", e => { if (!e.target.closest("#charPick")) closeCharMenu(); });
+
+    // 📍 わたしのいま(自室・お外・会社 など)。GET/POST /api/whereabouts。ぷちたちには 1 行で伝わる
+    let _meNow = { users: {}, bodies: {}, choices: [], me: "", mine: "" };
+    async function loadMeNow() {
+      try { _meNow = await fetch("/api/whereabouts").then(r => r.json()); } catch (e) { return; }
+      document.getElementById("meNowText").textContent = _meNow.mine || "";
+      document.getElementById("meNowBtn").title = _meNow.mine ? `わたしのいま: ${_meNow.mine}` : "わたしのいま";
+      if (document.getElementById("meNowMenu").style.display !== "none") renderMeNow();
+    }
+    function renderMeNow() {
+      const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+      const chips = _meNow.choices.map(c => `<button class="chip${c === _meNow.mine ? " active" : ""}" onclick="setMeNow(${JSON.stringify(c).replace(/"/g, "&quot;")})">${esc(c)}</button>`).join("");
+      const others = Object.entries(_meNow.users).filter(([u]) => u !== _meNow.me).map(([, v]) => `${esc(v.name)}: ${esc(v.text)}`)
+        .concat(Object.values(_meNow.bodies || {}).filter(b => b.text).map(b => `${esc(b.name)}: ${esc(b.text)}`)).join(" / ");
+      document.getElementById("meNowMenu").innerHTML =
+        `<div class="chips">${chips}</div>` +
+        `<div class="row"><input id="meNowInput" placeholder="ほかの言葉で…" maxlength="30"><button class="chip" onclick="setMeNow(document.getElementById('meNowInput').value)">決める</button></div>` +
+        (_meNow.mine ? `<button class="chip" onclick="setMeNow('')">消す</button>` : "") +
+        (others ? `<div class="others">${others}</div>` : "");
+      const inp = document.getElementById("meNowInput");
+      inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
+    }
+    function toggleMeNow(ev) {
+      if (ev) ev.stopPropagation();
+      const m = document.getElementById("meNowMenu");
+      const open = m.style.display === "none";
+      if (open) renderMeNow();
+      m.style.display = open ? "" : "none";
+      document.getElementById("meNowBtn").setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    function closeMeNow() {
+      document.getElementById("meNowMenu").style.display = "none";
+      document.getElementById("meNowBtn").setAttribute("aria-expanded", "false");
+    }
+    async function setMeNow(text) {
+      try {
+        const r = await fetch("/api/whereabouts", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ text: text || "" }) });
+        const d = await r.json();
+        if (!r.ok) { alert(d.error || "決められなかった"); return; }
+        _meNow = d;
+      } catch (e) { return; }
+      document.getElementById("meNowText").textContent = _meNow.mine || "";
+      closeMeNow();
+    }
+    document.addEventListener("click", e => { if (!e.target.closest("#meNow")) closeMeNow(); });
     function switchChar(id) {
       closeCharMenu();
       if (_pane) showPane(null);   // ぷちを選んだら会話へもどる
@@ -8243,6 +8354,8 @@ HTML = """<!DOCTYPE html>
     document.getElementById("input").addEventListener("input", growInput);
 
     checkAuth();
+    loadMeNow();
+    setInterval(loadMeNow, 60000);
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
     // 一覧・表示するまとまり・会話の読み込みをまとめて。下にある #updated ができてから
     document.addEventListener("DOMContentLoaded", () => switchChar(currentCharId));
