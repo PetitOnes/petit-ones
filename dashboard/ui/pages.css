@@ -93,3 +93,28 @@ html.embed .p-head { display: none; }
 .o-desire-key i { display: inline-block; vertical-align: middle; margin-right: 4px; }
 .o-desire-trial { margin-top: 2px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
 .o-desire-trial b { color: var(--ui-text); font-variant-numeric: tabular-nums; }
+
+/* 音: 取り込む欄、家の音の 1 行、体ごとの音 */
+.o-sound-form { display: grid; gap: 8px; }
+.o-sound-form .a-input { width: 100%; box-sizing: border-box; }
+.o-sound-form input[type="file"].a-input { padding: 8px 10px; height: auto; }
+.o-sound-form-row { display: flex; align-items: center; gap: 8px; }
+.o-sound-msg { flex: 1; min-width: 0; font-size: var(--ui-fs-s); color: var(--ui-danger); overflow-wrap: anywhere; }
+.o-sound { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 10px 0; border-bottom: var(--ui-line-w) solid var(--ui-line-soft); }
+.o-sound:last-child { border-bottom: 0; }
+.o-sound-main { flex: 1 1 9em; min-width: 0; overflow-wrap: anywhere; }
+.o-sound-main b { font-family: var(--ui-font-head); font-size: 0.95rem; }
+.o-sound-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+.o-sound-send { flex: 0 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 12px; background: var(--ui-accent-soft); border-radius: var(--ui-radius-card); }
+.o-sound-pick { display: inline-flex; align-items: center; gap: 5px; font-size: var(--ui-fs-s); white-space: nowrap; }
+.o-sound-pick.is-off { color: var(--ui-text-mute); }
+.o-sound-body { padding: 10px 0; border-bottom: var(--ui-line-w) solid var(--ui-line-soft); }
+.o-sound-body:last-child { border-bottom: 0; }
+.o-sound-body-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
+.o-sound-body-head b { font-family: var(--ui-font-head); }
+.o-sound-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.o-sound-chip { min-height: var(--ui-ctl-h-s); padding: 0 10px; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text); background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
+.o-sound-chip:hover { background: var(--ui-accent-soft); border-color: var(--ui-accent-line); }
+.o-sound-chip:disabled { opacity: 0.5; cursor: default; }
+.o-sound-chip.is-only { border-style: dashed; color: var(--ui-text-sub); }
+@media (max-width: 520px) { .o-sound-main { flex-basis: 100%; } }   /* スマホ幅: 名前を 1 段、ボタンを次の段にそろえる */
