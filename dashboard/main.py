@@ -3451,6 +3451,44 @@ def _note_title(filename: str) -> str:
     return name
 
 
+# ---- ノートの ★(2026-11-14 ありさん)。家の state/note_stars.json に {子や人の id: [ファイル名, …]}。ぷちのノートの中身は触らない ----
+NOTE_STARS_FILE = DATA_DIR / "state" / "note_stars.json"
+NOTE_STARS_MAX = 500
+
+
+def _note_stars() -> dict[str, list[str]]:
+    try:
+        d = json.loads(NOTE_STARS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {k: [n for n in v if isinstance(n, str)] for k, v in d.items() if isinstance(v, list)} if isinstance(d, dict) else {}
+
+
+class NoteStarBody(BaseModel):
+    char: str    # 子や人の id
+    name: str    # ノートのファイル名
+    on: bool
+
+
+@app.get("/api/notes/stars")
+def api_note_stars():
+    return {"stars": _note_stars()}
+
+
+@app.post("/api/notes/star")
+def api_note_star(body: NoteStarBody):
+    if "/" in body.name or "\\" in body.name or not body.name.endswith(".md") or not re.fullmatch(r"[a-zA-Z0-9_-]{1,40}", body.char):
+        return JSONResponse({"error": "名前がおかしい"}, status_code=400)
+    stars = _note_stars()
+    names = [n for n in stars.get(body.char, []) if n != body.name]
+    if body.on:
+        names.append(body.name)
+    stars[body.char] = names[-NOTE_STARS_MAX:]
+    NOTE_STARS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NOTE_STARS_FILE.write_text(json.dumps(stars, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"stars": stars}
+
+
 @app.get("/api/{character_id}/notes")
 async def api_notes_list(character_id: str):
     """ノート一覧を返す"""
@@ -10294,6 +10332,8 @@ NOTES_HTML = """<!DOCTYPE html>
     .note-item .note-meta { font-size: 0.72rem; color: #888; }
     .note-item .note-actions button { background: none; border: none; cursor: pointer; font-size: 0.8rem; padding: 2px 4px; opacity: 0.5; }
     .note-item .note-actions button:hover { opacity: 1; }
+    .note-item .note-actions { display: flex; gap: 2px; }
+    .note-item .note-actions button.star.on { opacity: 1; color: #f5b301; }   /* ★ を付けたノート */
 
     .create-btn { padding: 7px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.83rem; text-align: center; flex-shrink: 0; }
     .create-btn:hover { background: #1a4a7a; }
@@ -10371,6 +10411,8 @@ NOTES_HTML = """<!DOCTYPE html>
     let chars = [];
     let currentChar = new URLSearchParams(location.search).get("char") || "";
     let allNotes = [];
+    let stars = {};   // ★(/api/notes/stars)。{id: [ファイル名]}
+    const isStar = n => (stars[currentChar] || []).includes(n.name);
     let currentFolder = "";
     let currentNote = null, currentNoteTitle = null, currentNoteContent = null;
 
@@ -10396,7 +10438,9 @@ NOTES_HTML = """<!DOCTYPE html>
     function renderFolderChips(notes) {
       const folders = buildFolders(notes);
       const el = document.getElementById("folderChips");
+      const starred = notes.filter(isStar).length;
       el.innerHTML = `<div class="folder-chip${currentFolder===''?' active':''}" onclick="setFolder('')">全て (${notes.length})</div>` +
+        (starred ? `<div class="folder-chip${currentFolder==='★'?' active':''}" onclick="setFolder('★')">★ (${starred})</div>` : "") +
         folders.slice(0, 3).map(([f, c]) =>
           `<div class="folder-chip${currentFolder===f?' active':''}" onclick="setFolder('${f}')">${f} (${c})</div>`
         ).join("");
@@ -10412,14 +10456,14 @@ NOTES_HTML = """<!DOCTYPE html>
       const q = document.getElementById("searchInput").value.toLowerCase();
       const sort = document.getElementById("sortSelect").value;
       let notes = allNotes.filter(n => {
-        const inFolder = !currentFolder || getFolder(n.name) === currentFolder;
+        const inFolder = !currentFolder || (currentFolder === "★" ? isStar(n) : getFolder(n.name) === currentFolder);
         const inSearch = !q || n.name.toLowerCase().includes(q) || (n.title||"").toLowerCase().includes(q);
         return inFolder && inSearch;
       });
       if (sort === "date") notes.sort((a,b) => new Date(b.modified) - new Date(a.modified));
       else if (sort === "size") notes.sort((a,b) => b.size - a.size);
       else notes.sort((a,b) => a.name.localeCompare(b.name));
-      return notes;
+      return notes.filter(isStar).concat(notes.filter(n => !isStar(n)));   // ★ は上に
     }
 
     function renderList() {
@@ -10438,17 +10482,27 @@ NOTES_HTML = """<!DOCTYPE html>
         const disp = n.title || n.name.replace(/\\.md$/,"");
         const esc = disp.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
         const nameEsc = n.name.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
-        const del = editable && window._canDeleteNotes !== false ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button></div>` : "";
+        const star = `<button class="star${isStar(n) ? " on" : ""}" title="★" onclick="event.stopPropagation();toggleStar('${nameEsc}')">${isStar(n) ? "★" : "☆"}</button>`;
+        const del = `<div class="note-actions">${star}${editable && window._canDeleteNotes !== false ? `<button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button>` : ""}</div>`;
         return `<div class="note-item${currentNote===n.name?" active":""}" onclick="loadNote('${nameEsc}')">
           <div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
         </div>`;
       }).join("");
     }
 
+    async function toggleStar(name) {
+      const on = !(stars[currentChar] || []).includes(name);
+      try {
+        const r = await fetch("/api/notes/star", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({char: currentChar, name, on})});
+        if (r.ok) stars = (await r.json()).stars || {};
+      } catch (e) {}
+      renderFolderChips(allNotes); renderList();
+    }
     async function loadNotes() {
       try {
         const res = await fetch(`/api/${currentChar}/notes`);
         allNotes = await res.json();
+        try { stars = (await (await fetch("/api/notes/stars")).json()).stars || {}; } catch (e) {}
         currentFolder = "";
         renderFolderChips(allNotes);
         renderList();
