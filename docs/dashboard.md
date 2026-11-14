@@ -120,9 +120,9 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 ## 家の設定（`config/ui.json`）
 
-家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの ⚙️（「みんな」「だれか」のとき）から変えられる。
+家ぜんたいの見た目と使い方の設定。置き場所は `PETIT_DATA_DIR/config/ui.json`（git には入れない）。ダッシュボードの道具の列「⚙️ 設定」の「🏠 家」タブから変えられる。
 
-ぷちを 1 人選んでいるときの ⚙️ は「○○の設定画面」。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
+道具の列「⚙️ 設定」は、上のタブで 家 / 各ぷち を切り替える（1 人を選んでいればその子、「みんな」「だれか」なら家が最初に出る）。ぷちのタブは「○○の設定画面」。その子の `characters/<id>/config/settings.json`（アクティブタイム・今日のスケジュール・頻度・1 回の最大ターン数 `max_turns`・カメラ/音/マイクの許可）と、「くわしい設定」に体のアドレス（`config.json` の `m5_hosts`）。cron で動き出す時刻は crontab を読んで見せるだけ（`GET /api/<id>/cron`。画面からは変えない）。
 
 | 項目 | 中身 |
 |---|---|
