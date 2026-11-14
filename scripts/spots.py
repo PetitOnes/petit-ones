@@ -42,7 +42,8 @@ from pathlib import Path
 ROOM_MAX = 20
 SPOTS_MAX = 40
 GUESS_FRESH_S = 300   # これより古い電波の記録は使わない
-GUESS_SAMPLES = 3     # まんなかを取る回数
+GUESS_SAMPLES = 5     # まんなかを取る回数(体は、探しても目印を聞きのがすことがある。聞こえた回だけで比べる)
+GUESS_HEARD_MIN = 2   # 目印がこの回数より少なくしか聞こえていなければ、聞こえなかったことにする
 GUESS_SILENT = -100   # 聞こえなかった目印の強さ
 
 
@@ -144,7 +145,7 @@ def guess_rules(base: Path | None, character_id: str) -> list[dict]:
 
 
 def _wifi_levels(base: Path | None, character_id: str, now: datetime) -> dict[str, float] | None:
-    """ここ数回の電波の強さの、目印ごとのまんなか。新しい記録が 2 回分より少なければ None"""
+    """ここ数回の電波の強さの、目印ごとのまんなか(聞こえた回だけで)。新しい記録が 2 回分より少なければ None"""
     try:
         d = json.loads(((base or data_dir()) / "characters" / character_id / "state" / "wifi_near.json").read_text(encoding="utf-8"))
         samples = [x for x in d["samples"] if now - datetime.fromisoformat(x["ts"]) <= timedelta(seconds=GUESS_FRESH_S)]
@@ -156,8 +157,9 @@ def _wifi_levels(base: Path | None, character_id: str, now: datetime) -> dict[st
     names = {"now"} | {n for x in samples for n in (x.get("marks") or {})}
     out = {}
     for n in names:
-        vals = sorted((x.get("now") if n == "now" else (x.get("marks") or {}).get(n)) or GUESS_SILENT for x in samples)
-        out[n] = vals[len(vals) // 2]
+        # 聞きのがした回(値なし)は数えない。1 回の探しで目印が聞こえないことは、すぐそばでもよくある(2026-11-14 に実機で見た)
+        vals = sorted(v for v in ((x.get("now") if n == "now" else (x.get("marks") or {}).get(n)) for x in samples) if isinstance(v, (int, float)))
+        out[n] = vals[len(vals) // 2] if len(vals) >= GUESS_HEARD_MIN else GUESS_SILENT
     return out
 
 
