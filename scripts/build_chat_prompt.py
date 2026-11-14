@@ -94,9 +94,20 @@ def build_vars(char_ids: list[str]) -> dict:
     }
 
 
+def _whereabouts_lines() -> str:
+    """いま どこ(家の人の「いま」と、ぷちの体の居場所。scripts/whereabouts.py)。読めなければ空"""
+    try:
+        import whereabouts
+        return "\n".join(whereabouts.lines(DATA_DIR))
+    except Exception:
+        return ""
+
+
 def main(argv: list[str]) -> int:
     ids = argv or all_character_ids()
-    sys.stdout.write(render_prompt.render("chat/system", build_vars(ids), data_dir=DATA_DIR, project_dir=PROJECT_DIR))
+    variables = build_vars(ids)
+    variables["whereabouts"] = _whereabouts_lines()
+    sys.stdout.write(render_prompt.render("chat/system", variables, data_dir=DATA_DIR, project_dir=PROJECT_DIR))
     return 0
 
 
