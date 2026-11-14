@@ -681,6 +681,21 @@ else
   else
     MCP_CONFIG="$PROJECT_DIR/autonomous-mcp.json"
   fi
+  # つないだときだけ使う道具(外付けのセンサーなど): 「使う」と決めてあって機体が見つかるときだけ渡す(scripts/optional_mcp.py)。
+  # 外すものがあれば写しの設定を使い、一部の機体だけ無いときはその道具を --disallowedTools に足す。スクリプトが無ければ何もしない
+  if [ -f "${PROJECT_DIR}/scripts/optional_mcp.py" ]; then
+    OPTIONAL_MCP=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/optional_mcp.py" apply --config "$MCP_CONFIG" 2>/dev/null || true)
+    OPTIONAL_MCP_CONFIG=$(printf '%s\n' "$OPTIONAL_MCP" | sed -n 1p)
+    OPTIONAL_MCP_DROP=$(printf '%s\n' "$OPTIONAL_MCP" | sed -n 2p)
+    if [ -n "$OPTIONAL_MCP_CONFIG" ] && [ -f "$OPTIONAL_MCP_CONFIG" ]; then
+      MCP_CONFIG="$OPTIONAL_MCP_CONFIG"
+    fi
+    if [ -n "$OPTIONAL_MCP_DROP" ]; then
+      DISALLOWED_TOOLS="${DISALLOWED_TOOLS:+$DISALLOWED_TOOLS,}$OPTIONAL_MCP_DROP"
+      DISALLOW_ARGS=(--disallowedTools "$DISALLOWED_TOOLS")
+      echo "[optional-mcp] 機体が見つからない道具: $OPTIONAL_MCP_DROP" >> "$LOG_FILE"
+    fi
+  fi
   echo "[mcp-config] $MCP_CONFIG" >> "$LOG_FILE"
 
   log_usage() {

@@ -160,6 +160,12 @@
         <div id="spotRows"></div>
         <div style="display:flex;gap:6px;margin-top:8px"><button class="a-btn a-btn--ghost a-btn--s" onclick="addSpotRow()">＋ 場所を足す</button><span style="flex:1"></span><button class="a-btn a-btn--s" onclick="saveSpots()">保存</button></div>
       </div>
+      <div class="m-card" id="optMcpCard" style="display:none">
+        <span class="a-heading">🔌 つないだときだけ使う道具</span>
+        <p class="a-hint" style="margin:0 0 4px">外付けのセンサーなど、つないでいないことがある機体の道具。「使う」にしてあって、機体がいま見つかるときだけ、ぷちに渡す(見つからないあいだは、ぷちの道具の一覧に出ない)。</p>
+        <div id="optMcpRows"></div>
+        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="a-btn a-btn--sub a-btn--s" onclick="loadOptMcp(true)">機体を探し直す</button></div>
+      </div>
       <div class="m-card">
         <span class="a-heading">SwitchBot 連携</span>
         <p class="a-hint" style="margin:0 0 4px">部屋の記録(10 分ごと)に入れる機体(SwitchBot と、PC に差した OMRON)。切った機体は記録せず、ようす・よてい・ぷちにも出ない。SwitchBot の鍵は家の .env</p>
@@ -383,6 +389,32 @@
       await loadRoomDevices();   // 場所の行に機体の粒を出すので、先に
       loadSpots();
       loadNotify();
+      loadOptMcp(false);
+    }
+    // 🔌 つないだときだけ使う道具(家の config/optional_mcp.json。無ければ、この欄ごと出さない)
+    function optMcpHtml(servers) {
+      return Object.entries(servers).map(([id, sv]) => {
+        const devs = (sv.devices || []).map(d => `${esc(d.name)}: ${d.alive === true ? "見つかった" : d.alive === false ? "見つからない" : "探していない"}`).join(" ・ ");
+        const now = !sv.on ? "ぷちには渡していない" : sv.use ? "ぷちに渡している" : "機体が見つからないので、渡していない";
+        return `<div class="s-row"><span style="min-width:0"><b>${esc(sv.label)}</b><br><span class="a-hint">${esc(now)}${devs ? `(${devs})` : ""}</span></span>
+          <span class="m-pills" style="flex:0 0 auto"><button class="a-pill${sv.on ? " is-on" : ""}" onclick="setOptMcp('${esc(id)}', true)">使う</button><button class="a-pill${sv.on ? "" : " is-on"}" onclick="setOptMcp('${esc(id)}', false)">使わない</button></span></div>`;
+      }).join("");
+    }
+    function drawOptMcp(d) {
+      const servers = (d && d.servers) || {};
+      document.getElementById("optMcpCard").style.display = Object.keys(servers).length ? "" : "none";
+      document.getElementById("optMcpRows").innerHTML = optMcpHtml(servers);
+    }
+    async function loadOptMcp(fresh) {
+      try { drawOptMcp(await (await fetch("/api/optional_mcp" + (fresh ? "?fresh=1" : ""))).json()); if (fresh) toast("探し直しました"); } catch (e) {}
+    }
+    async function setOptMcp(server, on) {
+      try {
+        const res = await fetch("/api/optional_mcp", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({server, on})});
+        const d = await res.json();
+        if (!res.ok) { toast(d.error || "決められませんでした"); return; }
+        drawOptMcp(d); toast("決めました");
+      } catch (e) { toast("決められませんでした"); }
     }
     // 🔔 Slack 通知(自分あての手紙。config/mail_notify.json の自分の分。送るのは家の cron)
     let notify = {on: false, to: "", quiet: null, house_ok: false};

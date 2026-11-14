@@ -1832,6 +1832,12 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     allowed_tools = SENSOR_ALLOWED_TOOLS if source in _m5_sources else build_allowed_tools(switches)
     # 止める道具は --disallowedTools で本当に使えなくする(--dangerously-skip-permissions でも効く)
     disallowed_tools = _bs.disallowed_tools(switches)
+    # つないだときだけ使う道具(外付けのセンサーなど): 「使う」と決めてあって機体が見つかるときだけ渡す(scripts/optional_mcp.py)
+    try:
+        mcp_config, _optional_drop = await asyncio.to_thread(_optional_mcp().apply, DATA_DIR, Path(mcp_config))
+        disallowed_tools = list(disallowed_tools) + [t for t in _optional_drop if t not in disallowed_tools]
+    except Exception:
+        pass
     # 制限の各行は自律行動と同じ prompts/autonomous/permission_rules.md
     restriction_text = _render_prompt.render("autonomous/permission_rules", _bs.template_vars(body_eff), data_dir=DATA_DIR, project_dir=PROJECT_DIR).strip()
     mailbox_dir = DATA_DIR / "mailbox"
@@ -2396,6 +2402,35 @@ def _room_change_text(character_id: str) -> str:
         return _room().change_line(DATA_DIR, character_id, mark=True)
     except Exception:
         return ""
+
+
+def _optional_mcp():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import optional_mcp
+    return optional_mcp
+
+
+class OptionalMcpBody(BaseModel):
+    server: str
+    on: bool
+
+
+@app.get("/api/optional_mcp")
+def api_optional_mcp(fresh: bool = False):
+    """つないだときだけ使う道具の一覧(使うか・機体が見つかるか)。fresh=1 で機体を探し直す"""
+    return {"servers": _optional_mcp().status(DATA_DIR, fresh=fresh)}
+
+
+@app.post("/api/optional_mcp")
+def api_optional_mcp_set(body: OptionalMcpBody, request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "決められるのは、家の世話人だけです"}, status_code=403)
+    om = _optional_mcp()
+    try:
+        om.set_on(DATA_DIR, body.server, body.on)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"servers": om.status(DATA_DIR, fresh=True)}
 
 
 def _spot_change_text(character_id: str) -> str:
