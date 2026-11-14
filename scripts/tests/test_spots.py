@@ -87,3 +87,20 @@ def test_change_line_only_when_place_changes(tmp_path):
     assert sp.change_line(tmp_path, "t", mark=True, now=now) == "あなたの体の場所: あり部屋:ソファかも(「かも」は、体のまわりの電波からの見立て。外れることがある)"
     sp.set_body_spot(tmp_path, "t", sofa["id"], "a", now)
     assert sp.change_line(tmp_path, "t", mark=True, now=now) == ""
+
+
+def test_guess_ignores_missed_scans(tmp_path):
+    """体が目印を聞きのがした回(値なし)があっても、聞こえた回だけで見立てる"""
+    import json
+    now = datetime(2026, 11, 14, 21, 52)
+    (desk,) = sp.save([{"room": "あり部屋", "spot": "机"}], tmp_path)
+    (tmp_path / "config" / "spot_guess.json").write_text(json.dumps({"t": {"rules": [{"spot_id": desk["id"], "min": {"bea": -41}, "max": {"now": -50}}]}}), encoding="utf-8")
+    d = tmp_path / "characters" / "t" / "state"
+    d.mkdir(parents=True)
+    rows = [("21:47:16", -55, -30), ("21:48:17", -55, -32), ("21:49:18", -54, None), ("21:50:18", -55, None), ("21:51:19", -54, -31)]
+    samples = [{"ts": f"2026-11-14T{t}", "now": n, "marks": {} if b is None else {"bea": b}} for t, n, b in rows]
+    (d / "wifi_near.json").write_text(json.dumps({"samples": samples}), encoding="utf-8")
+    assert sp.guess(tmp_path, "t", now) == (True, desk["id"])
+    # 1 回しか聞こえていなければ、聞こえなかったことにする
+    (d / "wifi_near.json").write_text(json.dumps({"samples": [{**x, "marks": {}} for x in samples[:4]] + samples[4:]}), encoding="utf-8")
+    assert sp.guess(tmp_path, "t", now) == (True, None)

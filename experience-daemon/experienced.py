@@ -195,7 +195,12 @@ def _poll_wifi_near(
         return every
     ch = cfg.get("ch")
     path = f"/wifi_near?ch={int(ch)}" if isinstance(ch, int) else "/wifi_near"
-    sample = _wifi_sample(client.get_json(path), now)
+    near = client.get_json(path)
+    if isinstance(near, dict) and not near.get("list"):
+        # 何も聞こえなかったら、もう 1 回だけ(体は、すぐそばの目印でも聞きのがすことがある)
+        time.sleep(1.0)
+        near = client.get_json(path) or near
+    sample = _wifi_sample(near, now)
     if sample is not None:
         samples.append(sample)
         del samples[:-WIFI_NEAR_KEEP]
