@@ -3535,7 +3535,7 @@ async def api_album_delete(person_id: str, filename: str, request: Request = Non
 # ===================== ボイスメモ =====================
 VOICE_MEMO_DIR = DATA_DIR / "voice_memo"
 VOICE_MEMO_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
-VOICE_MEMO_MAX = 10          # 人のボイスメモ
+VOICE_MEMO_MAX = 20          # 人のボイスメモ(2026-11-14 ありさん: 10 → 20。ぷちと同じ)
 VOICE_MEMO_MAX_PETIT = 20    # ぷちのボイスメモ(2026-11-10 ありさん)
 VOICE_MEMO_MAX_SEC = 30
 VOICE_MEMO_MAX_BYTES = 6 * 1024 * 1024  # 6MB ≈ 30秒の上限
