@@ -31,3 +31,17 @@ def test_write_state_has_net_and_seen(tmp_path, monkeypatch):
     ex._write_state("puchiko", "offline", T0)   # 昔の呼び方でも壊れない
     st = json.loads(ex._state_path("puchiko").read_text(encoding="utf-8"))
     assert st == {"state": "offline", "since": "2026-11-14T12:30:00"}
+
+
+def test_wifi_sample_keeps_strongest_per_name():
+    from datetime import datetime
+
+    import experienced as ex
+
+    now = datetime(2026, 11, 14, 21, 0)
+    near = {"now": {"s": "home", "r": -56},
+            "list": [{"s": "bea", "r": -42}, {"s": "bea", "r": -37}, {"s": "", "r": -30},
+                     {"s": "x"}]}
+    want = {"ts": "2026-11-14T21:00:00", "now": -56, "marks": {"bea": -37}}
+    assert ex._wifi_sample(near, now) == want
+    assert ex._wifi_sample(None, now) is None and ex._wifi_sample({"list": []}, now) is None

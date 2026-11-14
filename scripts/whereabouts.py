@@ -224,11 +224,11 @@ def body(character_id: str, base: Path | None = None, now: datetime | None = Non
         return {"place": "", "how": "", "since": st.get("since", ""), "offline": True}
     place, how = place_of(net, load_places(base))
     spot = ""
-    try:   # 家の中の場所(人が ようす で決める。scripts/spots.py)。家にいるときだけ
+    try:   # 家の中の場所(人が ようす で決める。電波からの見立てがあれば「かも」。scripts/spots.py)。家にいるときだけ
         import spots
-        b = spots.body_spot(base, character_id)
+        b = spots.effective(base, character_id, now)
         if b and place == DEFAULT_PLACES["wifi"]["1"]:
-            spot = b["label"]
+            spot = b["label"] + ("かも" if b["guess"] else "")   # かも = 電波からの見立て(人は押していない)
     except Exception:
         spot = ""
     return {"place": place, "how": how, "since": net.get("since", ""), "offline": False, "spot": spot}

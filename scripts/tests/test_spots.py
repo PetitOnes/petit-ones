@@ -25,3 +25,43 @@ def test_save_load_and_body(tmp_path):
         sp.set_body_spot(tmp_path, "puchiko", "nope")
     with pytest.raises(ValueError):
         sp.clean({"room": "", "spot": "x"})
+
+
+def _near(tmp_path, cid, rows):
+    import json
+    d = tmp_path / "characters" / cid / "state"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "wifi_near.json").write_text(json.dumps({"samples": [{"ts": ts, "now": now, "marks": {"bea": bea}} for ts, now, bea in rows]}), encoding="utf-8")
+
+
+def test_guess_and_effective(tmp_path):
+    import json
+    now = datetime(2026, 11, 14, 21, 0)
+    sofa, desk, bed = sp.save([{"room": "あり部屋", "spot": "ソファ"}, {"room": "あり部屋", "spot": "机"}, {"room": "寝室", "spot": "窓際"}], tmp_path)
+    assert sp.guess(tmp_path, "t", now) == (False, None) and sp.effective(tmp_path, "t", now) is None   # 決まりが無い
+    (tmp_path / "config" / "spot_guess.json").write_text(json.dumps({"t": {"ch": 13, "rules": [
+        {"spot_id": sofa["id"], "min": {"now": -38}},
+        {"spot_id": desk["id"], "min": {"bea": -41}, "max": {"now": -50}}]}}), encoding="utf-8")
+    assert sp.guess(tmp_path, "t", now) == (False, None)   # 記録が無い
+    _near(tmp_path, "t", [("2026-11-14T20:58:00", -56, -42), ("2026-11-14T20:59:00", -55, -37), ("2026-11-14T20:59:30", -57, -32)])
+    assert sp.guess(tmp_path, "t", now) == (True, desk["id"])   # まんなか(-37)で決まる
+    e = sp.effective(tmp_path, "t", now)
+    assert e["label"] == "あり部屋:机" and e["guess"] is True
+    assert sp.guess(tmp_path, "t", datetime(2026, 11, 14, 21, 30)) == (False, None)   # 古い記録は使わない
+    # 人が同じ場所を押せば「かも」が取れる。違う場所を押せば、見立てが変わらないあいだは押した場所
+    sp.set_body_spot(tmp_path, "t", desk["id"], "a", now)
+    assert sp.effective(tmp_path, "t", now)["guess"] is False
+    sp.set_body_spot(tmp_path, "t", bed["id"], "a", now)
+    e = sp.effective(tmp_path, "t", now)
+    assert e["label"] == "寝室:窓際" and e["guess"] is False
+    # ソファへ動いた → ソファかも(押した寝室より、変わった見立てが先)
+    _near(tmp_path, "t", [("2026-11-14T20:59:00", -35, -45), ("2026-11-14T20:59:30", -33, -46)])
+    e = sp.effective(tmp_path, "t", now)
+    assert e["label"] == "あり部屋:ソファ" and e["guess"] is True
+    # 机と押したあと、どの決まりにも合わない所へ動いた → 分からない。寝室と押していたなら、そのまま
+    _near(tmp_path, "t", [("2026-11-14T20:59:00", -56, -37), ("2026-11-14T20:59:30", -56, -37)])
+    sp.set_body_spot(tmp_path, "t", desk["id"], "a", now)
+    _near(tmp_path, "t", [("2026-11-14T20:59:00", -47, -47), ("2026-11-14T20:59:30", -47, -47)])
+    assert sp.guess(tmp_path, "t", now) == (True, None) and sp.effective(tmp_path, "t", now) is None
+    sp.set_body_spot(tmp_path, "t", bed["id"], "a", now)
+    assert sp.effective(tmp_path, "t", now)["label"] == "寝室:窓際"

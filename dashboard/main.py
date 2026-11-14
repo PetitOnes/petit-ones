@@ -2394,6 +2394,9 @@ def api_spots():
         b = sp.body_spot(DATA_DIR, c["id"])
         if b:
             bodies[c["id"]] = {"spot_id": b["id"], "label": b["label"], "since": b["since"]}
+        e = sp.effective(DATA_DIR, c["id"])   # 電波からの見立て(かも)。人が押した場所と違うときだけ
+        if e and e["guess"]:
+            bodies.setdefault(c["id"], {"spot_id": None})["guess"] = {"spot_id": e["id"], "label": e["label"]}
     return {"spots": sp.load(DATA_DIR), "bodies": bodies}
 
 
@@ -8675,7 +8678,8 @@ HTML = """<!DOCTYPE html>
           style="flex:1 1 0;min-height:42px;padding:0 10px;font:inherit;font-size:0.85rem;font-weight:700;border-radius:10px;cursor:pointer;
                  border:1.5px solid ${b.spot ? color : "#e4e4e4"};background:${b.spot ? color : "#fff"};color:${b.spot ? "#444" : "#777"};">
           ${opt("", "—", !b.spot)}${(b.spots || []).map(s => opt(s.id, s.spot ? `${s.room} ${s.spot}` : s.room, s.id === b.spot)).join("")}</select>`;
-      const spot = !(b.spots || []).length ? "" : row("📍 場所", "家の中のどこに置かれているか(人が決める)。📍 の体の居場所と、家の空気の「いる部屋」に使う", "", spotSel);
+      const spot = !(b.spots || []).length ? "" : row("📍 場所", "家の中のどこに置かれているか(人が決める)。📍 の体の居場所と、家の空気の「いる部屋」に使う。「〜かも」は、体のまわりの電波からの見立て(合っていたら、その場所を選ぶと決まる)",
+        b.spotGuess ? `${safe(b.spotGuess.label)}かも` : "", spotSel);
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
@@ -8705,7 +8709,7 @@ HTML = """<!DOCTYPE html>
         if (key === "spot") {   // 場所 は家の記録(体には何も送らない)
           const r = await fetch(`/api/${id}/spot`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({spot_id: value || null})});
           if (!r.ok) throw new Error("決められませんでした");
-          card.innerHTML = bodySettingsHtml(_bodyChars[id], {..._bodyLast[id], spot: value || null});
+          card.innerHTML = bodySettingsHtml(_bodyChars[id], {..._bodyLast[id], spot: value || null, spotGuess: null});
           return;
         }
         if (key === "sleeping") {   // 眠らせる・起こす は体の /sleep /wake。ほかの値はそのまま
@@ -8776,7 +8780,7 @@ HTML = """<!DOCTYPE html>
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
           const mine = characters.some(x => x.id === c.id && !x.chat_only);   // 子でない子(話すだけの子も)は、設定を変えられない
-          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, {...body, sleeping: !!m5_sleeping, spots: spotsInfo.spots || [], spot: (spotsInfo.bodies[c.id] || {}).spot_id || null}) : "";
+          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, {...body, sleeping: !!m5_sleeping, spots: spotsInfo.spots || [], spot: (spotsInfo.bodies[c.id] || {}).spot_id || null, spotGuess: (spotsInfo.bodies[c.id] || {}).guess || null}) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
