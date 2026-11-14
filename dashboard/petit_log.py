@@ -478,6 +478,43 @@ class _Index:
         return min(days) if days else None
 
 
+DIARY_LINES_MAX = 60      # 日記の材料にする出来事の行数の上限
+_ALONE_QUIET = {ALONE_NOTHING[1], ALONE_DID[5][2]}   # 「様子を見た」「記憶に残した」だけの回は、日記の材料にしない(記憶は別に渡る)
+
+
+def day_lines(src: Sources, day: Date) -> list[str]:
+    """その日の出来事を、日記の材料にする 1 行ずつ(古い順)。
+
+    ぷちログの行から組み立てる。記憶は入れない(日記は記憶の一覧を別に受け取る)。会話の中身・手紙の本文・
+    ノートの中身は写さず、だれと・いつ・何回だけ。ひとりの時間は、何かした回(起きた・手紙を読んだ・眠った など)だけ
+    """
+    rows = _Index(src).day(day)
+    out: list[str] = []
+    for r in reversed(rows):
+        kind, when = r["kind"], r.get("time", "")
+        if r.get("end") and r["end"] != when:
+            when = f"{when}〜{r['end']}"
+        if kind == "anniv":
+            out.insert(0, f"記念日: {r['text']}" + (f"({r['note']})" if r.get("note") else ""))
+        elif kind == "talk":
+            who = f"みんなで話した({r['who']}から {r['count']} 回)" if r.get("group") else f"{r['who']}と話した({r['count']} 回)"
+            out.append(f"{when} {who}")
+        elif kind == "body":
+            out.append(f"{when} {r['text']}" + (f"(× {r['count']})" if r.get("count", 1) > 1 else ""))
+        elif kind == "alone":
+            if r.get("text") and r["text"] not in _ALONE_QUIET:
+                out.append(f"{when} ひとりの時間: {r['text']}")
+        elif kind == "mail":
+            out.append(f"{when} {r['to']}へ手紙を書いた")
+        elif kind == "note":
+            out.append(f"{when} ノート「{r['name']}」を書いた")
+        elif kind == "photo":
+            out.append(f"{when} 写真を残した" + (f"「{r['title']}」" if r.get("title") else ""))
+        elif kind == "voice":
+            out.append(f"{when} ボイスメモを残した" + (f"「{r['title']}」" if r.get("title") else ""))
+    return out[:DIARY_LINES_MAX]
+
+
 def build(src: Sources, before: str | None = None, days: int = 3, today: Date | None = None) -> dict:
     """before(YYYY-MM-DD、その日は含まない。無ければあしたより前 = 今日から)より前の、行のある日を days 日ぶん。
 

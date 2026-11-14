@@ -1654,6 +1654,17 @@ async def _generate_diary_with_openai(prompt: str) -> str:
     return response.choices[0].message.content.strip()
 
 
+def _diary_events(character_id: str, date: str) -> str:
+    """その日のぷちログ(体に起きたこと・会話・ひとりの時間 など)を、日記の材料の箇条書きに。読めなければ空"""
+    import petit_log
+    try:
+        lines = petit_log.day_lines(_petit_log_sources(character_id), datetime.fromisoformat(date).date())
+    except Exception as e:
+        print(f"[diary] ぷちログを読めなかった({character_id} {date}): {e}", file=sys.stderr)
+        return ""
+    return "\n".join(f"- {line}" for line in lines)
+
+
 async def generate_diary_summary(character_id: str, date: str, memories: list[dict]) -> str:
     """1日の記憶をAIで短くまとめる。DIARY_BACKEND=gemini でGemini Flashを使用。"""
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
@@ -1669,7 +1680,7 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
 
     soul = get_soul(character_id)
     lines = "\n".join(f"- {m['content']}" for m in memories)
-    prompt = _prompt("diary", character_id=character_id, soul=soul, date=date, lines=lines)
+    prompt = _prompt("diary", character_id=character_id, soul=soul, date=date, lines=lines, events=_diary_events(character_id, date))
 
     backend = os.getenv("DIARY_BACKEND", "claude")
     try:
