@@ -7143,6 +7143,12 @@ async def api_interact_group(req: InteractGroupRequest, request: Request):
     return {"exchanges": exchanges}
 
 
+@app.get("/api/people")
+def api_people():
+    """家の人の一覧(config/people.json の表示名と色)。📅 よてい の「行く人」など、人を選ぶ所で使う"""
+    return {"people": [{"id": k, "name": v.get("name", k), "color": v.get("color", "")} for k, v in _USER_DISPLAY.items()]}
+
+
 @app.get("/api/me")
 def api_me(request: Request):
     username = _get_username(request) or "arisan"
