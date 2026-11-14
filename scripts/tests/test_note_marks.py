@@ -45,3 +45,12 @@ def test_old_star_format(tmp_path):
 def test_valid_name_and_title():
     assert nm.valid_name("20261114_070000_あさ.md") and not nm.valid_name("../x.md") and not nm.valid_name(".stars.md")
     assert nm.note_title("20261114_070000_あさ.md") == "あさ" and nm.note_title("poem_1.md") == "poem_1"
+
+
+def test_pins_are_private(tmp_path):
+    nm.set_pin(tmp_path, "arisan", "puchiko", "a.md", True)
+    nm.set_pin(tmp_path, "arisan", "puchiko", "b.md", True)
+    assert nm.load_pins(tmp_path)["arisan"]["puchiko"] == ["a.md", "b.md"]
+    nm.set_pin(tmp_path, "arisan", "puchiko", "a.md", False)
+    assert nm.load_pins(tmp_path)["arisan"]["puchiko"] == ["b.md"]
+    assert nm.notice(tmp_path, "puchiko") == []   # ピン留めは知らせない

@@ -5,9 +5,11 @@
 
     state/note_stars.json  {"puchiko": {"20261114_070000_あさ.md": {"by": "arisan", "at": "2026-11-14T17:20"}}}
     state/note_reads.json  {"arisan": {"puchiko": {"20261114_070000_あさ.md": "2026-11-14T17:20"}}}
+    state/note_pins.json   {"arisan": {"puchiko": ["20261114_070000_あさ.md"]}}
 
 - ★: 子(や人)ごとに、ファイル名 → だれが・いつ。外すと消える(古い形 {"id": ["名前", …]} も読める)
 - 既読: 人ごと・子ごとに、ファイル名 → 開いた時刻。ノートがそれより新しければ「まだ見ていない」(ダッシュボードがピンクの丸を出す)
+- ピン留め: 人ごと・子ごとの一覧の上に置くノート。自分だけの印で、ぷちには知らせない
 
 ぷちには、自分のノートが読まれた・★ が付いたことを、手紙の「読まれた・スタンプ」と同じく、前に伝えたあとの分をまとめて
 次の自律行動か会話で 1 回だけ、さらっと伝える。伝えたことは characters/<id>/state/note_marks_told.json に残す。
@@ -98,6 +100,23 @@ def set_read(base: Path, user: str, char: str, name: str, now: datetime | None =
     reads.setdefault(user, {}).setdefault(char, {})[name] = (now or datetime.now()).isoformat(timespec="minutes")
     _write(base / "state" / "note_reads.json", reads)
     return reads[user]
+
+
+# ---- ピン留め(自分だけ。ぷちには知らせない) ----
+
+def load_pins(base: Path) -> dict[str, dict[str, list[str]]]:
+    raw = _json(base / "state" / "note_pins.json", {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def set_pin(base: Path, user: str, char: str, name: str, on: bool) -> dict:
+    pins = load_pins(base)
+    names = [n for n in pins.setdefault(user, {}).get(char, []) if n != name]
+    if on:
+        names.append(name)
+    pins[user][char] = names[-STARS_MAX:]
+    _write(base / "state" / "note_pins.json", pins)
+    return pins[user]
 
 
 # ---- ぷちへの知らせ ----
