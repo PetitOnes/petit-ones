@@ -12,21 +12,34 @@
   <link rel="stylesheet" href="/ui/pages.css">
   <script src="/ui/page.js"></script>
   <style>
-    /* 📅 よてい(2026-11-14 ありさん): 月のカレンダーに 予定(📅)と 記念日(🎂)。日を押すと、その日の中身と「＋」 */
-    .c-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 6px; }
-    .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
-    .c-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-    .c-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+    /* 📅 よてい(2026-11-14 ありさん): 月 / 週 / 日 の見方。予定(📅)・記念日(🎂)・祝日(🎌)。右下の ＋ から足す */
+    .c-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin: 12px 0 6px; }
+    .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.02rem; color: var(--ui-heading); white-space: nowrap; }
+    .c-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+    .c-bar .m-pills { flex: 0 0 auto; }
+    .c-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }   /* 列の幅は固定(長い祝日名で伸びない) */
     .c-wd { text-align: center; font-size: 0.72rem; color: var(--ui-text-sub); padding: 2px 0; }
     .c-wd.sun { color: #d9534f; } .c-wd.sat { color: #4a7abf; }
-    .c-day { position: relative; min-height: 52px; padding: 4px 4px 2px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 2px; }
+    .c-day { position: relative; min-width: 0; overflow: hidden; min-height: 52px; padding: 4px 3px 2px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 2px; }
     .c-day.other { opacity: 0.35; }
     .c-day.today { border-color: var(--ui-accent-line); }
     .c-day.sel { background: var(--ui-accent-soft); border-color: var(--ui-accent); }
     .c-day .n { font-size: 0.85rem; font-weight: 700; color: var(--ui-text); }
     .c-day.sun .n, .c-day.hol .n { color: #d9534f; } .c-day.sat .n { color: #4a7abf; }
+    .c-day .m { display: block; max-width: 100%; font-size: 0.6rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text-sub); }
     .c-day .m.hol { color: #d9534f; }
-    .c-day .m { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text-sub); }
+    /* 週の見方: 7 日を縦に */
+    .c-week { display: flex; flex-direction: column; gap: 4px; }
+    .c-wrow { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; }
+    .c-wrow.today { border-color: var(--ui-accent-line); }
+    .c-wrow.sel { background: var(--ui-accent-soft); border-color: var(--ui-accent); }
+    .c-wrow .d { flex: 0 0 3.6em; font-weight: 700; color: var(--ui-text); line-height: 1.3; }
+    .c-wrow.sun .d, .c-wrow.hol .d { color: #d9534f; } .c-wrow.sat .d { color: #4a7abf; }
+    .c-wrow .d small { display: block; font-size: 0.7rem; font-weight: 400; color: var(--ui-text-sub); }
+    .c-wrow .items { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 0.85rem; color: var(--ui-text); }
+    .c-wrow .items .hol { color: #d9534f; }
+    .c-wrow .items .none { color: var(--ui-text-mute); }
+    /* その日の中身 */
     .c-list { margin-top: 12px; }
     .c-item { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--ui-line-soft); }
     .c-item:last-child { border-bottom: none; }
@@ -35,6 +48,7 @@
     .c-item .sub { font-size: 0.82rem; color: var(--ui-text-sub); }
     .c-item .who span { display: inline-flex; align-items: center; gap: 4px; margin-right: 8px; }
     .c-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: #ccc; }
+    /* 足す・直す */
     .c-form label { display: block; margin-top: 8px; }
     .c-form .row { display: flex; gap: 6px; }
     .c-form .row > * { flex: 1; min-width: 0; }
@@ -43,34 +57,39 @@
     .c-form .who .a-pill { display: inline-flex; align-items: center; gap: 5px; }
     .c-form .acts { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; align-items: center; }
     .c-form .msg { flex: 1; font-size: 0.8rem; color: #d9534f; }
-    .c-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+    /* 右下の ＋(予定 / 記念日) */
+    .c-fab { position: fixed; right: 14px; bottom: 18px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+    .c-fab-btn { width: 52px; height: 52px; border-radius: 50%; border: none; background: var(--ui-accent); color: var(--ui-accent-ink, #fff); font-size: 1.7rem; line-height: 1; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.18); }
+    .c-fab-menu { display: none; flex-direction: column; gap: 6px; }
+    .c-fab.open .c-fab-menu { display: flex; }
+    .c-fab-menu button { min-height: 40px; padding: 0 16px; border-radius: 999px; border: none; background: var(--ui-surface); color: var(--ui-text); font: inherit; font-weight: 700; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,0.14); }
+    .c-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 30; }
     .c-toast.on { opacity: 1; }
+    .p-wrap { padding-bottom: 90px; }   /* ＋ の下に中身が隠れないように */
   </style>
 </head>
 <body>
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📅 よてい</h1></div>
-    <div class="c-head">
-      <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(-1)">‹ 前の月</button>
-      <h2 id="monthTitle"></h2>
-      <button class="a-btn a-btn--sub a-btn--s" onclick="moveMonth(1)">次の月 ›</button>
-    </div>
-    <div class="c-top" id="topBtns">
-      <button class="a-btn a-btn--ghost a-btn--s" id="todayBtn" onclick="goToday()">今月にもどる</button>
+    <div class="c-bar">
+      <div class="m-pills" id="viewPills">
+        <button class="a-pill" data-view="month" onclick="setView('month')">月</button>
+        <button class="a-pill" data-view="week" onclick="setView('week')">週</button>
+        <button class="a-pill" data-view="day" onclick="setView('day')">日</button>
+      </div>
       <span style="flex:1"></span>
-      <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('event')">＋ 予定</button>
-      <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('anniv')">＋ 記念日</button>
+      <button class="a-btn a-btn--ghost a-btn--s" id="todayBtn" onclick="goToday()">きょう</button>
     </div>
-    <div class="c-grid" id="grid"></div>
+    <div class="c-head">
+      <button class="a-btn a-btn--sub a-btn--s" onclick="move(-1)">‹</button>
+      <h2 id="title"></h2>
+      <button class="a-btn a-btn--sub a-btn--s" onclick="move(1)">›</button>
+    </div>
+    <div class="c-grid" id="grid" style="display:none"></div>
+    <div class="c-week" id="week" style="display:none"></div>
 
     <div class="m-card c-list" id="dayCard">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <span class="a-heading" id="dayTitle"></span>
-        <span style="display:flex;gap:6px" id="addBtns">
-          <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('event')">＋ 予定</button>
-          <button class="a-btn a-btn--sub a-btn--s" onclick="openForm('anniv')">＋ 記念日</button>
-        </span>
-      </div>
+      <span class="a-heading" id="dayTitle"></span>
       <div id="dayItems"></div>
     </div>
 
@@ -81,6 +100,10 @@
     </div>
     <p class="a-label" style="margin-top:10px">予定は 7 日前から、記念日は前の日に、ぷちたちへさらっと伝わります。</p>
   </div>
+  <div class="c-fab" id="fab" style="display:none">
+    <div class="c-fab-menu"><button onclick="openForm('event')">📅 予定を追加</button><button onclick="openForm('anniv')">🎂 記念日を追加</button></div>
+    <button class="c-fab-btn" id="fabBtn" onclick="toggleFab(event)" title="追加" aria-haspopup="true">＋</button>
+  </div>
   <div class="c-toast" id="toast"></div>
 
   <script>
@@ -89,77 +112,104 @@
     const WD = ["日", "月", "火", "水", "木", "金", "土"];
     const REPEAT = { yearly: "毎年", monthly: "毎月", once: "その日だけ" };
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const parse = k => new Date(k + "T00:00:00");
+    const addDays = (k, n) => { const d = parse(k); d.setDate(d.getDate() + n); return iso(d); };
     const today = iso(new Date());
-    let ym = (q.get("month") || today).slice(0, 7);   // 見ている月 "YYYY-MM"
-    let sel = q.get("date") || today;                  // 選んでいる日
-    let month = { days: {} }, people = [], chars = [], me = {};
-    let form = null;   // {kind: "event"|"anniv", id?}
+    let view = ["month", "week", "day"].includes(q.get("view")) ? q.get("view") : "month";
+    let sel = q.get("date") || today;   // 選んでいる日(月の見方では、その月を見る)
+    const cache = {};                   // "YYYY-MM" → その月(6 週ぶん)の日ごとの中身
+    let people = [], chars = [], me = {};
+    let form = null;                    // {kind: "event"|"anniv", id?}
 
     function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1600); }
     const canEdit = () => !me.can || me.can.anniv !== false;
     const canTouch = it => canEdit() && (!me.limited || it.by === me.username);
     const nameOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {name: id}).name;
     const colorOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {}).color || "#ccc";
+    const info = k => { for (const ym of Object.keys(cache)) if (cache[ym][k]) return cache[ym][k]; return {anniv: [], events: [], holiday: null}; };
+    function saveQ() { q.set("view", view); q.set("date", sel); history.replaceState(null, "", location.pathname + "?" + q.toString()); }
 
-    async function loadMonth() {
-      try { month = await (await fetch(`/api/calendar?month=${ym}`)).json(); } catch (e) { month = { days: {} }; }
-      renderGrid(); renderDay();
+    // ---- 読む(月ごとに覚える。週が月をまたぐときは両方) ----
+    async function ensure(yms) {
+      await Promise.all([...new Set(yms)].filter(ym => !cache[ym]).map(async ym => {
+        try { cache[ym] = (await (await fetch(`/api/calendar?month=${ym}`)).json()).days || {}; } catch (e) { cache[ym] = {}; }
+      }));
     }
-    function moveMonth(d) {
-      const [y, m] = ym.split("-").map(Number);
-      const nd = new Date(y, m - 1 + d, 1);
-      ym = iso(nd).slice(0, 7);
-      q.set("month", ym); history.replaceState(null, "", location.pathname + "?" + q.toString());
-      loadMonth();
+    function weekStart(k) { return addDays(k, -parse(k).getDay()); }
+    async function refresh(clear) {
+      if (clear) for (const k of Object.keys(cache)) delete cache[k];
+      const ws = weekStart(sel);
+      await ensure(view === "week" ? [ws.slice(0, 7), addDays(ws, 6).slice(0, 7)] : [sel.slice(0, 7)]);
+      render();
     }
-    function goToday() {
-      ym = today.slice(0, 7); sel = today;
-      q.set("month", ym); q.set("date", sel); history.replaceState(null, "", location.pathname + "?" + q.toString());
-      loadMonth();
+    function render() {
+      document.querySelectorAll("#viewPills [data-view]").forEach(b => b.classList.toggle("is-on", b.dataset.view === view));
+      document.getElementById("grid").style.display = view === "month" ? "" : "none";
+      document.getElementById("week").style.display = view === "week" ? "" : "none";
+      document.getElementById("fab").style.display = canEdit() ? "" : "none";
+      const d = parse(sel);
+      if (view === "month") { document.getElementById("title").textContent = `${d.getFullYear()}年${d.getMonth() + 1}月`; renderGrid(); }
+      else if (view === "week") { const a = parse(weekStart(sel)), b = parse(addDays(weekStart(sel), 6)); document.getElementById("title").textContent = `${a.getMonth() + 1}/${a.getDate()} 〜 ${b.getMonth() + 1}/${b.getDate()}`; renderWeek(); }
+      else document.getElementById("title").textContent = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日(${WD[d.getDay()]})`;
+      document.getElementById("todayBtn").textContent = view === "month" ? "今月" : view === "week" ? "今週" : "きょう";
+      document.getElementById("todayBtn").style.visibility = (view === "month" ? sel.slice(0, 7) === today.slice(0, 7) : view === "week" ? weekStart(sel) === weekStart(today) : sel === today) ? "hidden" : "";
+      renderDay();
     }
+    function setView(v) { view = v; saveQ(); refresh(); }
+    function move(n) {
+      if (view === "month") { const d = parse(sel); d.setDate(1); d.setMonth(d.getMonth() + n); sel = iso(d); }
+      else sel = addDays(sel, n * (view === "week" ? 7 : 1));
+      saveQ(); refresh();
+    }
+    function goToday() { sel = today; saveQ(); refresh(); }
+    function pick(k) { sel = k; saveQ(); refresh(); }
+
+    const markHtml = (i, cls) => (i.holiday ? [`<span class="${cls} hol">🎌 ${esc(i.holiday)}</span>`] : []).concat(i.events.map(e => `<span class="${cls}">📅 ${esc(e.title)}</span>`), i.anniv.map(a => `<span class="${cls}">🎂 ${esc(a.label)}</span>`));
     function renderGrid() {
-      const [y, m] = ym.split("-").map(Number);
-      document.getElementById("monthTitle").textContent = `${y}年${m}月`;
-      document.getElementById("todayBtn").style.visibility = ym === today.slice(0, 7) ? "hidden" : "";
-      document.getElementById("topBtns").style.display = canEdit() ? "" : "none";
-      const first = new Date(y, m - 1, 1), start = new Date(y, m - 1, 1 - first.getDay());
+      const d = parse(sel), y = d.getFullYear(), m = d.getMonth();
+      const start = new Date(y, m, 1 - new Date(y, m, 1).getDay());
       let html = WD.map((w, i) => `<div class="c-wd${i === 0 ? " sun" : i === 6 ? " sat" : ""}">${w}</div>`).join("");
       for (let i = 0; i < 42; i++) {
-        const d = new Date(start); d.setDate(start.getDate() + i);
-        const k = iso(d), info = month.days[k] || {anniv: [], events: []};
-        const marks = (info.holiday ? [`<span class="m hol">🎌 ${esc(info.holiday)}</span>`] : []).concat(info.events.map(e => `<span class="m">📅 ${esc(e.title)}</span>`), info.anniv.map(a => `<span class="m">🎂 ${esc(a.label)}</span>`));
-        const cls = ["c-day", d.getMonth() !== m - 1 ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", info.holiday ? "hol" : "", d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
-        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${d.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
+        const dd = new Date(start); dd.setDate(start.getDate() + i);
+        const k = iso(dd), inf = info(k), marks = markHtml(inf, "m");
+        const cls = ["c-day", dd.getMonth() !== m ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", dd.getDay() === 0 ? "sun" : dd.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${dd.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
       }
       document.getElementById("grid").innerHTML = html;
     }
-    function pick(k) {
-      sel = k; q.set("date", k); history.replaceState(null, "", location.pathname + "?" + q.toString());
-      if (k.slice(0, 7) !== ym) { ym = k.slice(0, 7); loadMonth(); return; }
-      renderGrid(); renderDay();
+    function renderWeek() {
+      const ws = weekStart(sel);
+      document.getElementById("week").innerHTML = Array.from({length: 7}, (_, i) => {
+        const k = addDays(ws, i), dd = parse(k), inf = info(k), marks = markHtml(inf, "");
+        const cls = ["c-wrow", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", i === 0 ? "sun" : i === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        return `<button class="${cls}" onclick="pick('${k}')"><span class="d">${dd.getMonth() + 1}/${dd.getDate()}<small>${WD[i]}${k === today ? " きょう" : ""}</small></span><span class="items">${marks.join("") || '<span class="none">—</span>'}</span></button>`;
+      }).join("");
     }
     function renderDay() {
-      const d = new Date(sel + "T00:00:00");
-      const hol = (month.days[sel] || {}).holiday;
-      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}${hol ? ` 🎌 ${hol}` : ""}`;
-      document.getElementById("addBtns").style.display = canEdit() ? "" : "none";
-      const info = month.days[sel] || {anniv: [], events: []};
-      const ev = info.events.map(e => {
+      const d = parse(sel), inf = info(sel);
+      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}${inf.holiday ? ` 🎌 ${inf.holiday}` : ""}`;
+      const ev = inf.events.map(e => {
         const span = e.date !== e.end ? `${e.date.slice(5).replace("-", "/")}〜${e.end.slice(5).replace("-", "/")}` : "";
         const sub = [span, e.time ? `${esc(e.time)} から` : "", e.place ? `📍 ${esc(e.place)}` : ""].filter(Boolean).join(" ・ ");
         const who = e.who.length ? `<div class="who">${e.who.map(w => `<span><i class="c-dot" style="background:${esc(colorOf(w))}"></i>${esc(nameOf(w))}</span>`).join("")}</div>` : "";
-        return `<div class="c-item"><span>📅</span><div class="t"><b>${esc(e.title)}</b>${sub ? `<div class="sub">${sub}</div>` : ""}${who}${e.note ? `<div class="sub">${esc(e.note)}</div>` : ""}</div>
+        const by = e.by_name ? `<div class="sub">足した人: ${esc(e.by_name)}</div>` : "";
+        return `<div class="c-item"><span>📅</span><div class="t"><b>${esc(e.title)}</b>${sub ? `<div class="sub">${sub}</div>` : ""}${who}${e.note ? `<div class="sub">${esc(e.note)}</div>` : ""}${by}</div>
           ${canTouch(e) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('event', ${JSON.stringify(e.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('event', ${JSON.stringify(e.id)}, ${JSON.stringify(e.title)})">消す</button>` : ""}</div>`;
       });
-      const an = info.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
+      const an = inf.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
           ${canTouch(a) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('anniv', ${JSON.stringify(a.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('anniv', ${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})">消す</button>` : ""}</div>`);
       document.getElementById("dayItems").innerHTML = ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`;
     }
 
+    // ---- 右下の ＋ ----
+    function toggleFab(ev) { ev.stopPropagation(); document.getElementById("fab").classList.toggle("open"); }
+    document.addEventListener("click", e => { if (!e.target.closest("#fab")) document.getElementById("fab").classList.remove("open"); });
+
     // ---- 足す・直す ----
     function openForm(kind, id) {
-      const info = month.days[sel] || {anniv: [], events: []};
-      const it = id ? (kind === "event" ? info.events : info.anniv).find(x => x.id === id) : null;
+      document.getElementById("fab").classList.remove("open");
+      const inf = info(sel);
+      const it = id ? (kind === "event" ? inf.events : inf.anniv).find(x => x.id === id) : null;
       form = {kind, id: id || null};
       document.getElementById("formTitle").textContent = kind === "event" ? (id ? "予定を直す" : "予定を足す") : (id ? "記念日を直す" : "記念日を足す");
       const whoAll = chars.concat(people);
@@ -200,19 +250,21 @@
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { $("fMsg").textContent = j.error || "保存できなかった"; return; }
       } catch (e) { $("fMsg").textContent = "保存できなかった"; return; }
-      toast(form.id ? "直した" : "足した"); closeForm(); loadMonth();
+      toast(form.id ? "直した" : "足した"); closeForm();
+      if (form === null && body.date && body.date.length === 10) sel = body.date;   // 足した日を選ぶ
+      refresh(true);
     }
     async function remove(kind, id, title) {
       if (!confirm(`「${title}」を消す?`)) return;
       try { await fetch(kind === "event" ? `/api/events/${id}` : `/api/anniversaries/${id}`, {method: "DELETE"}); } catch (e) {}
-      toast("消した"); loadMonth();
+      toast("消した"); refresh(true);
     }
 
     (async () => {
       try { me = await (await fetch("/api/me")).json(); } catch (e) {}
       try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) {}
       try { people = (await (await fetch("/api/people")).json()).people || []; } catch (e) {}
-      loadMonth();
+      refresh();
     })();
   </script>
 </body>
