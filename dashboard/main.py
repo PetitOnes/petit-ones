@@ -1282,6 +1282,16 @@ def save_chat_log(character_id: str, log: list[dict], username: str | None = Non
         json.dump(log[-200:], f, ensure_ascii=False, indent=2)
 
 
+# ぷちが返事を返せなかったとき(2 分のタイムアウト・空の返事)の、画面と記録に残す言葉。
+# 画面にはこの吹き出しに「もう一度きく」が付く(2026-11-14 ありさん)
+NO_REPLY = "言葉にならなかったよ"
+
+
+def _is_no_reply(reply: str) -> bool:
+    """返事が返せなかった(聞き直せる)か。タイムアウト・空のほか、「エラー: …」も"""
+    return reply == NO_REPLY or reply.startswith("エラー: ")
+
+
 def append_chat(character_id: str, role: str, text: str, username: str | None = None, media: str | None = None, via: str | None = None,
                 medias: list[dict] | None = None) -> None:
     log = load_chat_log(character_id, username)
@@ -1442,7 +1452,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             )
             return response.text.strip()
         except asyncio.TimeoutError:
-            return "タイムアウトしました"
+            return NO_REPLY
         except Exception as e:
             return f"エラー: {e}"
 
@@ -1464,7 +1474,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             )
             return response.choices[0].message.content.strip()
         except asyncio.TimeoutError:
-            return "タイムアウトしました"
+            return NO_REPLY
         except Exception as e:
             return f"エラー: {e}"
 
@@ -1584,7 +1594,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
                 _, _, result_ev = _parse_stream_file(stream_path)
                 if result_ev:
                     _append_token_log_from_stream(result_ev)
-            return "タイムアウトしました"
+            return NO_REPLY
         if sf and sf.exists() and "No conversation found" in output:
             sf.unlink(missing_ok=True)
             stream_path2 = stream_log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{source}_stream.jsonl"
@@ -1600,7 +1610,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         if use_session and sf and new_sid:
             sf.parent.mkdir(parents=True, exist_ok=True)
             sf.write_text(new_sid)
-        return reply or output.strip() or err or "返答がありませんでした"
+        return reply or output.strip() or err or NO_REPLY
     except Exception as e:
         return f"エラー: {e}"
     except Exception as e:
@@ -4670,6 +4680,7 @@ class SelectChatRequest(BaseModel):
     char_ids: list[str]
     client_msg_id: str | None = None
     separate: bool = False
+    retry: bool = False                     # 「もう一度きく」(返事が返せなかった子だけに)。ありさんの発言は記録し直さない
     media: str | None = None
     medias: list[ChatMedia] | None = None
 
@@ -4808,7 +4819,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
 
 async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, username: str, log_type: str,
                                media: str | None = None, medias: list[ChatMedia] | None = None,
-                               separate: bool = False, shown: str | None = None):
+                               separate: bool = False, shown: str | None = None, retry: bool = False):
     """キャラに順番に聞き、1人返ってくるたびに entry["messages"] に追記する。
     HTTPコネクションから切り離して実行するので、クライアントが切断しても処理は完走する。"""
     try:
@@ -4825,18 +4836,21 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
             user_entry.update({"media": prep["media"], "media_user": username})
         if prep["medias"]:
             user_entry["medias"] = prep["medias"]
-        append_group_log(user_entry)
+        if not retry:   # 聞き直しは、ありさんの発言をもう一度は記録しない
+            append_group_log(user_entry)
         responses = []
         for i, char in enumerate(chars):
             context = _group_turn_context(prep["prompt"], chars, i, responses, separate, rotating=log_type == "group")
             reply = await call_claude(char["id"], context, username=username)
-            append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
+            if not retry:
+                append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
             append_chat(char["id"], char["id"], reply, username, via="group")
             r = {
                 "character_id": char["id"],
                 "name": char.get("name", char["id"]),
                 "color": char.get("color", "#cab8d9"),
                 "reply": reply,
+                "no_reply": _is_no_reply(reply),
             }
             responses.append(r)
             append_group_log({"type": log_type, "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
@@ -4851,7 +4865,7 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
 
 def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username: str, log_type: str,
                     media: str | None = None, medias: list[ChatMedia] | None = None,
-                    separate: bool = False, shown: str | None = None) -> StreamingResponse:
+                    separate: bool = False, shown: str | None = None, retry: bool = False) -> StreamingResponse:
     """ジョブをバックグラウンドで走らせ、進捗をNDJSONで垂れ流す。
     同じ client_msg_id で再接続されたら、途中まで済んだ結果を最初から再生して続きを流す。"""
     _chat_jobs_gc()
@@ -4860,7 +4874,7 @@ def _stream_via_job(key: tuple | None, chars: list[dict], message: str, username
         entry = {"messages": [], "done": False, "ts": time.time()}
         if key:
             _chat_jobs[key] = entry
-        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type, media, medias, separate, shown))
+        asyncio.create_task(_sequential_chat_job(entry, chars, message, username, log_type, media, medias, separate, shown, retry))
 
     async def tail():
         i = 0
@@ -4892,7 +4906,7 @@ async def api_select_chat_stream(req: SelectChatRequest, request: Request):
     chars_map = {c["id"]: c for c in list_characters() if c["id"] in GROUP_CHAR_IDS}
     chars = [chars_map[cid] for cid in req.char_ids if cid in chars_map]
     key = (username, "select", req.client_msg_id) if req.client_msg_id else None
-    return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias, separate=req.separate)
+    return _stream_via_job(key, chars, req.message, username, "select", req.media, req.medias, separate=req.separate, retry=req.retry)
 
 
 class GroupShareRequest(BaseModel):
@@ -5343,6 +5357,7 @@ async def api_trio_chat(req: GroupChatRequest, request: Request):
 class ChatRequest(BaseModel):
     message: str
     client_msg_id: str | None = None
+    retry: bool = False             # 「もう一度きく」(返事が返せなかったあと)。ありさんの発言は記録し直さない
     medias: list[ChatMedia] | None = None   # 写真を何枚か(4 枚まで)。題つき
     media: str | None = None        # 話すで送った写真/声(chat_media/<me>/ のファイル名。先に /api/chat-media/<me>/upload)
 
@@ -5413,7 +5428,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
         ent = _chat_jobs.get(key)
         if ent:
             if ent.get("state") == "done":
-                resp = {"reply": ent["reply"]}
+                resp = {"reply": ent["reply"], "no_reply": _is_no_reply(ent["reply"])}
                 if ent.get("event"):
                     resp["event"] = ent["event"]
                 return resp
@@ -5426,7 +5441,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
 
     # 写真/声つき(2026-10-16)。写真は 4 枚まで・題つき(2026-11-10)
     prep = await _prepare_chat_media(username, req.message, req.media, req.medias)
-    if not skip_user_append:
+    if not skip_user_append and not req.retry:
         append_chat(character_id, "user", prep["shown"], username, media=prep["media"], medias=prep["medias"])
 
     # 同居人がぷちるに「うまれていいよ」と言ったらcronを有効化
@@ -5466,7 +5481,7 @@ async def api_chat(character_id: str, req: ChatRequest, request: Request):
     _record_last_session(character_id, username)
     if key:
         _chat_jobs[key] = {"state": "done", "reply": reply, "event": "born" if born else None, "ts": time.time()}
-    resp = {"reply": reply}
+    resp = {"reply": reply, "no_reply": _is_no_reply(reply)}
     if born:
         resp["event"] = "born"
     return resp
@@ -6104,6 +6119,7 @@ HTML = """<!DOCTYPE html>
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
     .msg.char { background: var(--char-soft); color: #444; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .msg-retry { display: block; margin-top: 8px; }   /* 「言葉にならなかったよ」の下の「もう一度きく」 */
     .msg.user { background: var(--char-bubble, var(--char)); color: var(--char-btn-text); align-self: flex-end; border-bottom-right-radius: 4px; }
     .msg.system { align-self: center; font-size: 0.7rem; color: #aaa; background: none; }
     .msg-via { font-size: 0.62rem; opacity: 0.55; margin-bottom: 2px; letter-spacing: 0.04em; }
@@ -7524,11 +7540,18 @@ HTML = """<!DOCTYPE html>
         if (separate) offerShare();
         btn.disabled = false; input.focus();
       } else {
+        await askOne(currentCharId, text, mediaName, medias, msgId, false);
+        btn.disabled = false; input.focus();
+      }
+    }
+
+    // 1 人に聞く。retry は「もう一度きく」(返事が返せなかったあと。ありさんの発言は記録し直さない)
+    async function askOne(charId, text, mediaName, medias, msgId, retry) {
         const thinking = addMsg("考え中…", "thinking");
         let attempts = 0;
         while (true) {
           try {
-            const res = await fetch(`/api/${currentCharId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, media:mediaName, medias}) });
+            const res = await fetch(`/api/${charId}/chat`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text, client_msg_id:msgId, media:mediaName, medias, retry}) });
             if (!res.ok) throw new Error("http " + res.status);
             const data = await res.json();
             if (data.status === "processing") {
@@ -7538,7 +7561,8 @@ HTML = """<!DOCTYPE html>
               continue;
             }
             thinking.remove();
-            addMsg(data.reply, "char");
+            const bubble = addMsg(data.reply, "char");
+            if (data.no_reply) addRetry(bubble, () => askOne(charId, text, mediaName, medias, genMsgId(), true));
             if (data.event === "born") {
               const notice = document.createElement("div");
               notice.style.cssText = "text-align:center;padding:16px;margin:12px 0;background:linear-gradient(135deg,#e0f7fa,#b2ebf2);border-radius:12px;font-size:0.95rem;color:#00796b;";
@@ -7555,8 +7579,16 @@ HTML = """<!DOCTYPE html>
             await sleep(3000);
           }
         }
-        btn.disabled = false; input.focus();
-      }
+    }
+
+    // 返事が返せなかった吹き出し(「言葉にならなかったよ」)に「もう一度きく」を付ける。押すと消えて、その子にだけ聞き直す
+    function addRetry(bubble, again) {
+      const b = document.createElement("button");
+      b.className = "a-btn a-btn--sub a-btn--s msg-retry";
+      b.textContent = "もう一度きく";
+      b.onclick = async (ev) => { ev.stopPropagation(); b.remove(); await again(); };
+      bubble.appendChild(b);
+      chatToBottom();
     }
 
     // べつべつに聞く(2026-11-13): 押すと、次の 1 回だけ、ほかの子の返事を見せずに聞く。送ったら元に戻る
@@ -7636,7 +7668,11 @@ HTML = """<!DOCTYPE html>
           const r = JSON.parse(line);
           received++;
           if (received <= (skip || 0)) continue;
-          addMsg(r.reply, "group", r.color, r.name);
+          const bubble = addMsg(r.reply, "group", r.color, r.name);
+          if (r.no_reply && r.character_id) {   // その子にだけ聞き直す(ありさんの発言は記録し直さない)
+            const again = {message: payload.message, char_ids: [r.character_id], client_msg_id: genMsgId(), media: payload.media, medias: payload.medias, separate: payload.separate, retry: true};
+            addRetry(bubble, () => streamWithRetry("/api/select/chat/stream", again, addMsg("もう一度聞いてる…", "thinking")));
+          }
           thinking.textContent = "つぎのこが考えてる…";
           chatEl.appendChild(thinking);
           chatToBottom();
