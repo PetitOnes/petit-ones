@@ -911,6 +911,7 @@ DEFAULT_SETTINGS = {
     "allow_microphone": False,
     "day_type_override": None,
     "autonomous_skip": 0,
+    "max_turns": 20,          # 自律行動 1 回の最大ターン数(autonomous-action.sh が読む。環境変数 MAX_TURNS があればそちら)
 }
 
 
@@ -1255,10 +1256,35 @@ def get_settings(character_id: str) -> dict:
 
 
 def save_settings(character_id: str, data: dict) -> None:
+    """画面から来た項目だけ書き換える(ファイルにある知らない項目は残す)"""
     p = settings_file(character_id)
     p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        cur = json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        cur = {}
+    if not isinstance(cur, dict):
+        cur = {}
+    cur.update(data)
     with open(p, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+
+
+def cron_entries(character_id: str, crontab_text: str | None = None) -> list[dict]:
+    """この子の自律行動が cron で動き出す時刻(crontab の autonomous-action*.sh <id> の行。コメント行は除く)"""
+    if crontab_text is None:
+        try:
+            crontab_text = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=5).stdout
+        except Exception:
+            return []
+    out = []
+    pat = re.compile(rf"autonomous-action[^\s]*\.sh\s+{re.escape(character_id)}(\s|$)")
+    for line in crontab_text.splitlines():
+        parts = line.strip().split(None, 5)
+        if len(parts) < 6 or parts[0].startswith("#") or not pat.search(parts[5]):
+            continue
+        out.append({"minute": parts[0], "hour": parts[1], "dom": parts[2], "month": parts[3], "dow": parts[4]})
+    return out
 
 
 def get_soul(character_id: str) -> str:
@@ -4504,6 +4530,12 @@ def api_get_settings(character_id: str):
     return get_settings(character_id)
 
 
+@app.get("/api/{character_id}/cron")
+def api_get_cron(character_id: str):
+    """設定画面に出す、cron で動き出す時刻(読むだけ。crontab は画面から変えない)"""
+    return {"entries": cron_entries(character_id), "max_turns_env": os.getenv("MAX_TURNS") or None}
+
+
 # ---- 家ぜんたいの見た目の設定(PETIT_DATA_DIR/config/ui.json)。トップバーの色など(2026-10-16 ありさん) ----
 UI_SETTINGS_FILE = DATA_DIR / "config" / "ui.json"
 
@@ -6526,12 +6558,13 @@ HTML = """<!DOCTYPE html>
   <div class="overlay" id="settingsOverlay" onclick="closeIfOverlay(event,'settingsOverlay')">
     <div class="popup">
       <div class="popup-header">
-        <span class="popup-title">設定</span>
+        <span class="popup-title" id="settingsTitle">設定</span>
         <button class="popup-close" onclick="closePopup('settingsOverlay')">✕</button>
       </div>
       <div class="popup-body">
+        <!-- 2026-11-14 ありさん: 題を「○○の設定画面」に、cron で動き出す分と MAX_TURNS を見せる、項目に見出し、M5 接続先は「くわしい設定」へ -->
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:0.8rem;color:#9b8ec4;font-weight:600;" id="activeTimeLabel">アクティブタイム（毎回動く時間帯）</span>
+          <span class="a-heading" id="activeTimeLabel">アクティブタイム（毎回動く時間帯）</span>
           <span id="dayTypeLabel" style="font-size:0.75rem;padding:2px 8px;border-radius:8px;font-weight:600;"></span>
         </div>
         <div class="day-tabs">
@@ -6541,6 +6574,11 @@ HTML = """<!DOCTYPE html>
         <div class="hours-list" id="hoursList"></div>
         <button class="add-hour-btn" onclick="addHourRow()">＋ 追加</button>
         <div style="margin-top:16px;">
+          <span class="a-heading" style="display:block;margin-top:6px">自律行動（ひとりの時間）</span>
+          <div class="setting-row">
+            <span class="setting-label">⏰ cron で動き出す時刻</span>
+            <span id="cronInfo" style="font-size:0.85rem;color:#666;text-align:right"></span>
+          </div>
           <div class="setting-row">
             <span class="setting-label">🕺 今日のスケジュール</span>
             <select id="dayTypeOverride" onchange="updateDayTypeLabel()" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
@@ -6558,6 +6596,14 @@ HTML = """<!DOCTYPE html>
             </select>
           </div>
           <div class="setting-row">
+            <span class="setting-label">🔁 1 回の最大ターン数（MAX_TURNS）</span>
+            <span style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#888">
+              <input type="number" id="maxTurns" min="1" max="200" step="1" style="width:64px;font-size:0.9rem;padding:4px 6px;border-radius:8px;border:1px solid #ccc;text-align:right">
+              <span id="maxTurnsNote"></span>
+            </span>
+          </div>
+          <span class="a-heading" style="display:block;margin-top:18px">体の道具の許可</span>
+          <div class="setting-row">
             <span class="setting-label">📷 カメラ</span>
             <label class="toggle"><input type="checkbox" id="allowCamera"><span class="toggle-slider"></span></label>
           </div>
@@ -6569,16 +6615,18 @@ HTML = """<!DOCTYPE html>
             <span class="setting-label">🎤 マイク</span>
             <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
           </div>
+          <span class="a-heading" style="display:block;margin-top:18px">家</span>
           <div class="setting-row">
             <span class="setting-label">🏠 家の設定（色・道具の列）</span>
             <button class="a-btn a-btn--sub a-btn--s" onclick="closePopup('settingsOverlay'); openHouseSettings()">開く</button>
           </div>
         </div>
-        <div style="margin-top:16px;">
-          <span style="font-size:0.8rem;color:#9b8ec4;font-weight:600;">M5 接続先（上から順に試す）</span>
+        <details style="margin-top:16px;">
+          <summary class="a-heading" style="cursor:pointer">くわしい設定</summary>
+          <div style="margin-top:8px;font-size:0.8rem;color:#888">体のアドレス（M5 接続先）。上から順に試す。ふだんは触らなくてよい（家の Wi-Fi・Tailnet の両方を入れてある）</div>
           <div id="m5HostsList" style="margin-top:8px;"></div>
           <button class="add-hour-btn" onclick="addM5HostRow('')">＋ 追加</button>
-        </div>
+        </details>
         <button class="save-settings-btn" onclick="saveSettings()">保存</button>
       </div>
     </div>
@@ -8341,14 +8389,28 @@ HTML = """<!DOCTYPE html>
       return [...document.querySelectorAll(".m5-host-input")].map(el => el.value.trim()).filter(Boolean);
     }
 
+    // crontab の行(分・時 …)を言葉に。「毎時 5 分・35 分」。それ以外の形はそのまま見せる
+    function cronWords(entries) {
+      if (!entries.length) return "cron に登録なし";
+      return entries.map(e => {
+        if (e.hour === "*" && e.dom === "*" && e.month === "*" && e.dow === "*" && /^[0-9,]+$/.test(e.minute)) {
+          return "毎時 " + e.minute.split(",").map(m => `${parseInt(m)} 分`).join("・");
+        }
+        if (/^\\*\\/\\d+$/.test(e.minute) && e.hour === "*") return `${e.minute.slice(2)} 分ごと`;
+        return `${e.minute} ${e.hour} ${e.dom} ${e.month} ${e.dow}（分 時 日 月 曜日）`;
+      }).join(" / ");
+    }
+
     async function openSettings() {
       if (currentCharId === "select" || currentCharId === "group") return openHouseSettings();   // みんな・だれかのときは家の設定
-      const [res, m5Res] = await Promise.all([
+      const [res, m5Res, cronRes] = await Promise.all([
         fetch(`/api/${currentCharId}/settings`),
         fetch(`/api/${currentCharId}/config/m5_hosts`),
+        fetch(`/api/${currentCharId}/cron`),
       ]);
       const s = await res.json();
       const m5 = await m5Res.json();
+      const cron = await cronRes.json().catch(() => ({entries: []}));
       const ah = s.active_hours || {};
       currentSchedule = {
         weekday: JSON.parse(JSON.stringify(ah.weekday || [])),
@@ -8359,7 +8421,11 @@ HTML = """<!DOCTYPE html>
       document.getElementById("tabWeekend").classList.remove("active");
       const cur = characters.find(c=>c.id===currentCharId);
       const charName = cur ? (cur.name||cur.id) : currentCharId;
-      document.getElementById("activeTimeLabel").textContent = `${charName}のアクティブタイム（毎回動く時間帯）`;
+      document.getElementById("settingsTitle").textContent = `${charName}の設定画面`;
+      document.getElementById("activeTimeLabel").textContent = "アクティブタイム（毎回動く時間帯）";
+      document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
+      document.getElementById("maxTurns").value = s.max_turns ?? 20;
+      document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
       renderHours();
       document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
       document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
@@ -8379,6 +8445,7 @@ HTML = """<!DOCTYPE html>
         allow_camera: document.getElementById("allowCamera").checked,
         allow_sound: document.getElementById("allowSound").checked,
         allow_microphone: document.getElementById("allowMic").checked,
+        max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
       };
       await Promise.all([
         fetch(`/api/${currentCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) }),
