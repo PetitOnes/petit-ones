@@ -825,8 +825,8 @@ async def auth_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else ""
     if client_ip in _load_trusted_ips():
         return await call_next(request)
-    # スマホ(家の印を聞くアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
-    if path.startswith("/api/beacons/"):
+    # スマホ(家の印を聞くアプリ・音を数字にして送るアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
+    if path.startswith("/api/beacons/") or path == "/api/music/frames":
         user = _phone_place().person_for_key(request.headers.get("x-petit-key"), DATA_DIR)
         if not user:
             return JSONResponse({"error": "鍵が合いません"}, status_code=401)
@@ -2358,6 +2358,15 @@ def _notices():
     return notices
 
 
+def _music():
+    """音楽を一緒に感じる(音を 1 秒ごとの数字に)。決まりは scripts/music.py"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import music
+    return music
+
+
 def _phone_place():
     """スマホの居場所(家の印 = SwitchBot の BLE を、スマホが聞く)。決まりは scripts/phone_place.py"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -2807,6 +2816,51 @@ def api_beacons_report(body: BeaconReport, request: Request):
         return JSONResponse({"error": "鍵が合いません"}, status_code=401)
     cur = _phone_place().report(user, body.seen, DATA_DIR)
     return {"room": cur["room"], "since": cur["since"], "levels": cur["levels"]}
+
+
+# ---- 🎧 音楽を一緒に感じる(scripts/music.py)。回を始める・終える(人)、数字を足す(スマホ・PC)、いまの様子 ----
+class MusicStartBody(BaseModel):
+    source: str = "phone"        # pc / phone / mic
+
+
+class MusicStopBody(BaseModel):
+    title: str | None = None     # 答え合わせ(曲名)
+    note: str | None = None      # ありさんのひとこと
+
+
+class MusicFrames(BaseModel):
+    frames: list[dict] = []      # [{"t"?, "level", "db", "centroid", "onset", "quiet"?, "tempo"?}, …]
+    session: str | None = None
+
+
+@app.get("/api/music/session")
+def api_music_session(request: Request):
+    mu = _music()
+    s = mu.session(DATA_DIR)
+    return {"session": s, "position": mu.position(s) if s else None, "now": mu.now_text(DATA_DIR) if s else "", "wave": mu.wave(base=DATA_DIR) if s else ""}
+
+
+@app.post("/api/music/start")
+def api_music_start(body: MusicStartBody, request: Request):
+    if body.source not in ("pc", "phone", "mic"):
+        return JSONResponse({"error": "source は pc / phone / mic"}, status_code=400)
+    return {"session": _music().start(body.source, _me(request), DATA_DIR)}
+
+
+@app.post("/api/music/stop")
+def api_music_stop(body: MusicStopBody, request: Request):
+    return {"session": _music().stop(body.title, body.note, DATA_DIR)}
+
+
+@app.post("/api/music/frames")
+def api_music_frames(body: MusicFrames, request: Request):
+    """スマホ(鍵で名乗る)か PC から、1 秒ごとの数字。回が無ければ 409"""
+    if not _beacon_user(request) and not _get_username(request):
+        return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+    d = _music().add_frames(body.frames[:600], body.session, DATA_DIR)
+    if d is None:
+        return JSONResponse({"error": "聴いている回が無い(先に start)"}, status_code=409)
+    return {"seconds": d["seconds"], "tempo": d.get("tempo")}
 
 
 @app.get("/api/whereabouts")

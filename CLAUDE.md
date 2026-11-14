@@ -36,7 +36,7 @@ M5Stack CoreS3 に体を持つ小さな存在「ぷち」が、性格・欲求�
 ```bash
 uvx ruff check .                                   # 全体(ruff.toml。部品に [tool.ruff] があればそちら)
 (cd experience-daemon && uv sync --all-extras && uv run pytest -q)     # 触った部品(src/ の部品は各リポで)
-uv run --with pytest pytest -q scripts/tests       # scripts の分
+uv run --with pytest --with numpy pytest -q scripts/tests   # scripts の分(numpy は music.py)
 uvx yamllint -c .yamllint .                        # YAML
 ```
 

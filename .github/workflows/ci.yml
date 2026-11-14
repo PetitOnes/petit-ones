@@ -52,7 +52,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
-      - run: uv run --with pytest pytest -q scripts/tests
+      - run: uv run --with pytest --with numpy pytest -q scripts/tests   # numpy は scripts/music.py の分
 
   yaml:
     name: yamllint
