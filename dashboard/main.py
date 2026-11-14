@@ -504,6 +504,22 @@ def _get_allowed_characters(request: Request) -> list[str] | None:
     return None
 
 
+OWNER_USER = "arisan"   # ログインなしで開いたとき(この PC から、など)の人。家の設定(config/ui.json)の持ち主
+
+
+def _me(request: Request | None) -> str:
+    """いま画面を開いている人の ID。ログインなしなら家の持ち主"""
+    return (_get_username(request) if request is not None else None) or OWNER_USER
+
+
+def _is_limited(request: Request | None) -> bool:
+    """見られる子が決まっている人(auth.json の characters がある人)か。
+
+    そういう人は、アルバムを消す・ボイスメモを録るのは自分の分だけ。ほかの人の分は見るだけ
+    """
+    return request is not None and _get_allowed_characters(request) is not None
+
+
 def _check_char_access(request: Request, character_id: str) -> bool:
     """キャラクターへのアクセス権があるか確認。"""
     allowed = _get_allowed_characters(request)
@@ -538,7 +554,7 @@ async def api_logout():
 @app.get("/api/auth/me")
 async def api_auth_me(request: Request):
     if not _auth_enabled():
-        return {"authenticated": True, "role": "admin", "auth_enabled": False}
+        return {"authenticated": True, "role": "admin", "auth_enabled": False, "username": OWNER_USER, "limited": False}
     token = request.cookies.get(AUTH_COOKIE_NAME)
     if token:
         result = _verify_token(token)
@@ -547,6 +563,7 @@ async def api_auth_me(request: Request):
             allowed = _get_allowed_characters(request)
             if allowed is not None:
                 resp["characters"] = allowed
+            resp["limited"] = allowed is not None   # 見られる子が決まっている人。消す・録るは自分の分だけ
             return resp
     return {"authenticated": False, "auth_enabled": True}
 
@@ -586,10 +603,13 @@ async def auth_middleware(request: Request, call_next):
         parts = path.split("/")
         if len(parts) >= 4:
             candidate = parts[2]
-            non_char_prefixes = ("characters", "group", "trio", "relations", "auth", "avatar", "interact", "mailbox", "me", "my")
-            if candidate not in non_char_prefixes and candidate not in _USER_DISPLAY:
-                if not _check_char_access(request, candidate):
-                    return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
+            # 確かめるのは、本当にいる子の ID のときだけ。前は「決まった言葉以外は全部、子の ID」と見ていたので、
+            # 見られる子が決まっている人は /api/album/… /api/voice_memo/… /api/sounds/… なども開けなかった(2026-11-14)
+            is_char = re.fullmatch(r"[a-zA-Z0-9_]+", candidate) is not None and (CHARACTERS_DIR / candidate / "config").is_dir()
+            # ようす(体につながっているか・電池・体の設定を読む)は、どの子の分も見られる。中身(欲求・記憶)は api_status で外す
+            peek = request.method == "GET" and len(parts) == 4 and parts[3] in ("status", "sensors", "body")
+            if is_char and not peek and not _check_char_access(request, candidate):
+                return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
     return await call_next(request)
 
 
@@ -2730,9 +2750,11 @@ async def api_album_toggle_lock(person_id: str, filename: str):
 
 
 @app.delete("/api/album/{person_id}/{filename}")
-async def api_album_delete(person_id: str, filename: str):
+async def api_album_delete(person_id: str, filename: str, request: Request = None):
     if person_id not in ALBUM_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "消せるのは、自分のアルバムの写真だけです"}, status_code=403)
     path = _album_dir(person_id) / filename
     if not path.exists() or not path.name.endswith(".jpg"):
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -2884,9 +2906,11 @@ async def api_voice_memo_file(person_id: str, filename: str):
 
 
 @app.post("/api/voice_memo/{person_id}/upload")
-async def api_voice_memo_upload(person_id: str, file: UploadFile = File(...), title: str = Form("memo")):
+async def api_voice_memo_upload(person_id: str, request: Request, file: UploadFile = File(...), title: str = Form("memo")):
     if person_id not in VOICE_MEMO_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "録音できるのは、自分のボイスメモだけです"}, status_code=403)
     data = await file.read()
     if len(data) > VOICE_MEMO_MAX_BYTES:
         return JSONResponse({"error": f"ファイルが大きすぎます（最大{VOICE_MEMO_MAX_SEC}秒）"}, status_code=400)
@@ -2968,9 +2992,11 @@ async def api_voice_memo_mark_listen(person_id: str, filename: str, listener: st
 
 
 @app.delete("/api/voice_memo/{person_id}/{filename}")
-async def api_voice_memo_delete(person_id: str, filename: str):
+async def api_voice_memo_delete(person_id: str, filename: str, request: Request = None):
     if person_id not in VOICE_MEMO_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "消せるのは、自分のボイスメモだけです"}, status_code=403)
     path = _voice_memo_dir(person_id) / filename
     if not path.exists() or path.suffix not in _AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -3307,7 +3333,7 @@ async def api_start_conversation_relay(req: ConversationRelayRequest):
 
 
 @app.get("/api/{character_id}/status")
-async def api_status(character_id: str):
+async def api_status(character_id: str, request: Request = None):
     import requests as req
     cfg = get_char_config(character_id)
     host = await resolve_m5_host(cfg)
@@ -3326,7 +3352,10 @@ async def api_status(character_id: str):
         except Exception:
             pass
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
-    return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping,
+    # 見られる子に入っていない子は、つながっているかだけ。欲求と記憶は渡さない
+    mine = request is None or _check_char_access(request, character_id)
+    return {"desires": get_desires(character_id) if mine else {}, "memories": _query_memories(character_id, 100, date_filter=today) if mine else [],
+            "m5_online": m5_online, "m5_sleeping": m5_sleeping,
             "m5_host": host or "", "m5_ip": m5_ip, "m5_tailscale_ip": m5_tailscale_ip, "m5_body": m5_body}
 
 
@@ -4929,16 +4958,33 @@ def api_get_cron(character_id: str):
 UI_SETTINGS_FILE = DATA_DIR / "config" / "ui.json"
 
 
-def _load_ui_settings() -> dict:
+def _ui_settings_file(user: str) -> Path:
+    """画面の設定の置き場所。家の持ち主は config/ui.json、ほかの人は config/ui.<ID>.json(人ごとに別)"""
+    if user == OWNER_USER or not re.fullmatch(r"[a-zA-Z0-9_]+", user or ""):
+        return UI_SETTINGS_FILE
+    return UI_SETTINGS_FILE.with_name(f"ui.{user}.json")
+
+
+def _load_ui_settings(user: str = OWNER_USER) -> dict:
+    """その人の画面の設定。まだ自分の設定が無い人は、家の持ち主の設定から始める(色だけは引き継がない)"""
+    path = _ui_settings_file(user)
     try:
-        return json.loads(UI_SETTINGS_FILE.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    if path == UI_SETTINGS_FILE:
+        return {}
+    try:
+        base = json.loads(UI_SETTINGS_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
+    base.pop("topbar_color", None)
+    return base
 
 
 @app.get("/api/ui")
-def api_ui_get():
-    cur = _load_ui_settings()
+def api_ui_get(request: Request = None):
+    cur = _load_ui_settings(_me(request))
     cur.setdefault("house_title", f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち")
     return cur
 
@@ -4951,9 +4997,9 @@ class UiSettings(BaseModel):
 
 
 @app.post("/api/ui")
-def api_ui_set(req: UiSettings):
-    import re
-    cur = _load_ui_settings()
+def api_ui_set(req: UiSettings, request: Request = None):
+    user = _me(request)
+    cur = _load_ui_settings(user)
     if req.topbar_color and not re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_color):
         return JSONResponse({"error": "color は #rrggbb"}, status_code=400)
     # 送られてきたときだけ変える(null は「ぷちの色に戻す」。道具の列だけ送ったときは色を触らない)
@@ -4966,8 +5012,9 @@ def api_ui_set(req: UiSettings):
     if req.tools is not None:
         cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True)), "off": bool(t.get("off", False))}
                         for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
-    UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
+    path = _ui_settings_file(user)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
     return cur
 
 
@@ -5217,9 +5264,17 @@ def _history_page(log: list, limit: int, skip: int) -> list:
     return log[max(0, end - max(1, min(limit, 5000))):end]
 
 
+def _group_log_for(user: str) -> list[dict]:
+    """その人に見せる、みんなの会話。記録は 1 つで、発言ごとに「だれの会話か」(user)を残してある。
+
+    user が無い古い発言は、家の持ち主の会話。ぷちどうしの会話(interact)は、だれにでも見せる
+    """
+    return [m for m in load_group_log() if m.get("type") == "interact" or (m.get("user") or OWNER_USER) == user]
+
+
 @app.get("/api/group/history")
-def api_group_history(limit: int = 200, skip: int = 0):
-    log = _history_page(load_group_log(), limit, skip)
+def api_group_history(limit: int = 200, skip: int = 0, request: Request = None):
+    log = _history_page(_group_log_for(_me(request)), limit, skip)
     for m in log:   # 写真/声つきの発言(2026-11-10): 送った人の chat_media を指す
         who = m.get("media_user")
         if who and m.get("media"):
@@ -5239,7 +5294,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     chars = _rotate_group([c for c in list_characters() if c["id"] in GROUP_CHAR_IDS])
     now = datetime.now(timezone.utc).isoformat()
     responses = []
-    append_group_log({"type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
+    append_group_log({"user": username, "type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
     for i, char in enumerate(chars):
         context = _group_turn_context(req.message, chars, i, responses, req.separate, rotating=True)
         reply = await call_claude(char["id"], context, username=username)
@@ -5252,7 +5307,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
             "reply": reply,
         }
         responses.append(r)
-        append_group_log({"type": "group", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+        append_group_log({"user": username, "type": "group", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
     return {"responses": responses}
 
 
@@ -5268,7 +5323,7 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
         prep = await _prepare_chat_media(username, message, media, medias)
         if shown is not None:   # 記録と画面には短い言葉を出し、ぷちには message を渡す(返事を並べて見せるとき)
             prep["shown"] = shown
-        user_entry = {"type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": prep["shown"], "timestamp": now}
+        user_entry = {"user": username, "type": log_type, "role": "user", "name": user_info["name"], "color": user_info["color"], "text": prep["shown"], "timestamp": now}
         if separate:
             user_entry["separate"] = True
         if prep["media"]:
@@ -5292,7 +5347,7 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
                 "no_reply": _is_no_reply(reply),
             }
             responses.append(r)
-            append_group_log({"type": log_type, "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+            append_group_log({"user": username, "type": log_type, "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
             entry["messages"].append(r)
         if separate and len(responses) > 1:   # あとで「返事を並べて見せる」ために、直前の 1 回ぶんを覚えておく
             _last_separate[username] = {"question": prep["shown"], "answers": responses,
@@ -5381,7 +5436,7 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
         return {"responses": []}
     now = datetime.now(timezone.utc).isoformat()
     responses = []
-    append_group_log({"type": "select", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
+    append_group_log({"user": username, "type": "select", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
     for i, char in enumerate(chars):
         context = _group_turn_context(req.message, chars, i, responses, req.separate)
         reply = await call_claude(char["id"], context, username=username)
@@ -5394,7 +5449,7 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
             "reply": reply,
         }
         responses.append(r)
-        append_group_log({"type": "select", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
+        append_group_log({"user": username, "type": "select", "role": char["id"], "name": r["name"], "color": r["color"], "text": reply, "timestamp": datetime.now(timezone.utc).isoformat()})
     return {"responses": responses}
 
 
@@ -6389,7 +6444,8 @@ async def api_interact_group(req: InteractGroupRequest, request: Request):
 def api_me(request: Request):
     username = _get_username(request) or "arisan"
     info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
-    return {"username": username, "name": info["name"], "color": info["color"]}
+    # limited: 見られる子が決まっている人。アルバム・ボイスメモで、消す・録るのは自分の分だけ
+    return {"username": username, "name": info["name"], "color": info["color"], "limited": _is_limited(request)}
 
 
 _HTML_GZ: bytes | None = None   # トップページを縮めたもの(1 回だけ作る)
@@ -7078,6 +7134,8 @@ HTML = """<!DOCTYPE html>
     async function loadCharacters() {
       const res = await fetch("/api/characters");
       characters = await res.json();
+      // みんなの一覧(色と名前)。見られる子が決まっている人でも、手紙の差出人の色・ようす に使う
+      try { window._allChars = await (await fetch("/api/characters/all")).json(); } catch (e) { window._allChars = characters; }
       // トップバーの「ぷちを選ぶ」: みんな・ぷちたち・だれか(2026-11-10 ありさん)
       const tabs = document.getElementById("charTabs");
       const opt = (id, dot, name, extra) => `<button class="char-opt${id === currentCharId ? " active" : ""}${extra || ""}" data-char-id="${id}" onclick="switchChar('${id}')">${dot}<span class="name">${name}</span>${id === "group" || id === "select" ? "" : '<span class="m5-dot"></span>'}</button>`;
@@ -7647,7 +7705,8 @@ HTML = """<!DOCTYPE html>
           const ts = m5_tailscale_ip && m5_tailscale_ip !== addr ? ` <span style="opacity:0.7" title="Tailscale のアドレス">/ ${safe(m5_tailscale_ip)}</span>` : "";
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
-          bodyCards[c.id] = m5_online && body.online ? bodySettingsHtml(c, body) : "";
+          const mine = characters.some(x => x.id === c.id);   // 見られる子に入っていない子は、設定を変えられない
+          bodyCards[c.id] = mine && m5_online && body.online ? bodySettingsHtml(c, body) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
@@ -8442,7 +8501,8 @@ HTML = """<!DOCTYPE html>
       const archiveTitle = m.archived ? "受信に戻す" : "アーカイブ";
       const fn = m.filename.replace(/'/g,"\\'");
       // 差出人のぷちの色を背景に(2026-10-16 ありさん)
-      const sc = (characters.find(c => c.id === m.sender_id) || {}).color;
+      // 色は、見られる子に入っていない子の手紙でも、その子の色(みんなの一覧から)
+      const sc = ((window._allChars || characters).find(c => c.id === m.sender_id) || {}).color;
       const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
       const senderStyle = sc ? `color:${readableText(sc)}` : "";
       return `<div class="mail-item${m.read ? "" : " is-unread"}" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
@@ -10422,6 +10482,7 @@ ALBUM_HTML = """<!DOCTYPE html>
     const PERSON_LABELS = Object.fromEntries(PERSONS.map(p => [p.id, p.label]));
     let currentPerson = "arisan";    // 開いたときは自分のアルバム(init でログイン中の人に合わせる)
     let currentViewer = "arisan";    // 見ている人 = ログイン中の人
+    let viewerLimited = false;       // 見られる子が決まっている人は、消せるのは自分のアルバムの写真だけ
     const unread = {};               // ぷちのアルバムごとの、まだ見ていない枚数
     let selectedFile = null;
 
@@ -10509,7 +10570,8 @@ ALBUM_HTML = """<!DOCTYPE html>
           ${readDots ? `<div class="read-by">${readDots}</div>` : ""}`;
         const img = card.querySelector("img");
         img.onclick = (e) => { e.stopPropagation(); openLightbox(currentPerson, p.filename, label, dateStr); };
-        card.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deletePhoto(currentPerson, p.filename, card); };
+        if (viewerLimited && currentPerson !== currentViewer) card.querySelector(".del-btn").remove();   // 人の写真は消せない
+        else card.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deletePhoto(currentPerson, p.filename, card); };
         card.querySelector(".lock-btn").onclick = (e) => { e.stopPropagation(); toggleLock(currentPerson, p.filename, card); };
         // 長押しで削除ボタン表示（モバイル対応）
         let _lpTimer = null;
@@ -10608,6 +10670,7 @@ ALBUM_HTML = """<!DOCTYPE html>
       try {
         const me = await fetch("/api/me").then(r=>r.json());
         if (me.username && PERSONS.some(p => p.id === me.username)) currentViewer = me.username;
+        viewerLimited = !!me.limited;
       } catch(e) {}
       currentPerson = currentViewer;
       buildTabs();
@@ -10761,11 +10824,13 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       document.getElementById("countLabel").textContent = `${n} / ${max} ${unit}`;
     }
 
+    let viewerId = "arisan", viewerLimited = false;   // 見られる子が決まっている人は、録る・消すのは自分のボイスメモだけ
+    function canEdit(id) { return !viewerLimited || id === viewerId; }
     function switchPerson(id) {
       currentPerson = id;
       const isHuman = PERSONS.find(p=>p.id===id)?.human;
-      document.getElementById("recArea").style.display = isHuman ? "" : "none";
-      document.querySelector(".upload-area").style.display = isHuman ? "" : "none";
+      document.getElementById("recArea").style.display = isHuman && canEdit(id) ? "" : "none";
+      document.querySelector(".upload-area").style.display = isHuman && canEdit(id) ? "" : "none";
       loadMemos();
     }
 
@@ -10950,7 +11015,8 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
           if (j.ok) { st.locked = j.locked; showMenu(); }
           closeMemoMenus();
         };
-        q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
+        if (!canEdit(currentPerson)) q(".mi-del").remove();
+        else q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
         q(".rename-cancel").onclick = () => { q(".rename-form").style.display = "none"; };
         q(".rename-save").onclick = async () => {
           const newTitle = q(".rename-input").value.trim();
@@ -10995,6 +11061,8 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
       try {
         const me = await fetch("/api/me").then(r => r.json());
         if (me.username && PERSONS.some(p => p.id === me.username)) currentPerson = me.username;
+        if (me.username) viewerId = me.username;
+        viewerLimited = !!me.limited;
       } catch (e) {}
       buildTabs();
       // ぷちの分を見ているときは録音の欄を出さない
