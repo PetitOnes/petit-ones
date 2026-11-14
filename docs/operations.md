@@ -96,6 +96,21 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 - 会話(ダッシュボード): `{"type": "talked", "with": "<ログインしている人の ID>", "via": "chat"}`
 - 体のマイク: だれの声かは分からないので、体の設定(CAM TO)だけ `{"type": "talked", "cam_to": "<ID>", "via": "mic"}`
 
+## 「ここにいるよ」(世話人からぷちへの合図)
+
+ダッシュボードの 🌱 ようす にある「👋 ここにいるよ」を押すと、みんなに合図が届きます(Issue #67。`scripts/hello.py`)。
+
+- 子ごとに、接点(`characters/<id>/state/contact/`)に `hello` が 1 件残ります。欲求の「会いたい」が読みます
+- 体が起きていれば、その子の応え方を体に頼みます。眠っている子は起こしません(届いたことだけ残します)
+- 応え方は家の設定 `PETIT_DATA_DIR/config/hello.json`(無い子は、記録だけ)
+
+  ```json
+  {"night": [22, 7], "characters": {"<id>": {"color": "#F58E7D", "back_to": "#00afcc", "bright": true, "sound": "shizuku.wav", "volume": 20, "blink": true}}}
+  ```
+
+  `color` = その色に染まる(`back_to` があれば、少しずつ染まって少しずつ戻る)/ `bright` = いちばん明るくして元に戻す /
+  `sound`・`volume` = 体にその音があれば、その音量で 1 回(鳴らしたら音量を戻す。`night` の時間は鳴らさない)/ `blink` = まばたき 1 回
+
 ## 家の知らせ(失敗を世話人へ)
 
 ぷちが Claude を呼べなかったとき・Claude がエラーで終わったときに、Slack と家の手紙箱(ダッシュボードの「メール」)へ知らせます(`scripts/house_alert.py`)。
