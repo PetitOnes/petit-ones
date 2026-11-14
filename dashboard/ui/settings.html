@@ -38,6 +38,7 @@
     .s-toast.on { opacity: 1; }
     .s-pane { display: none; padding-top: 16px; }   /* 上の粒の列と、いちばん上のカードのあいだ */
     .s-pane.on { display: block; }
+    .s-pin { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
     .s-swatch { width: 44px; height: 32px; padding: 0; font-size: 0.7rem; color: var(--ui-text-mute); border: var(--ui-line-w) solid var(--ui-line); border-radius: 8px; cursor: pointer; }
     .s-swatch:disabled { cursor: default; }
     .s-checks { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 6px; }
@@ -116,6 +117,12 @@
           <button class="a-pill" data-v="enter" onclick="saveUi({send_key: 'enter'})">Enter で送信</button>
           <button class="a-pill" data-v="ctrl_enter" onclick="saveUi({send_key: 'ctrl_enter'})">Ctrl+Enter で送信(Enter は改行)</button>
         </div>
+      </div>
+      <div class="m-card" id="pinCard">
+        <span class="a-heading">📍 から送る相手</span>
+        <p class="a-hint" style="margin:0 0 8px">右上の 📍 の「👋 ここにいるよ」と「🌙 からだ おやすみ」を、だれに届けるか。押して選ぶ。</p>
+        <div class="s-row"><span>👋 ここにいるよ</span><span class="s-pin" id="pinHello"></span></div>
+        <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
       </div>
       <div class="m-card s-tools">
         <span class="a-heading">道具の列</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
@@ -259,11 +266,29 @@
       return saved.map(t => ({id: t.id, show: t.show !== false, off: t.off === true})).concat(rest);
     }
     function defaultTools() { return Object.keys(TOOL).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})); }
+    // 📍 から送る相手: 子ごとの粒を押して選ぶ。みんな選んである = 「みんな」(あとから迎えた子にも届く)。1 人は残す
+    function renderPin() {
+      document.getElementById("pinCard").style.display = chars.length ? "" : "none";
+      for (const [key, id] of [["hello_to", "pinHello"], ["rest_to", "pinRest"]]) {
+        const picked = Array.isArray(ui[key]) && ui[key].length ? ui[key] : chars.map(c => c.id);
+        document.getElementById(id).innerHTML = chars.map(c => `<button class="a-pill${picked.includes(c.id) ? " is-on" : ""}" data-pin="${key}" data-char="${esc(c.id)}"><span class="s-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`).join("");
+      }
+    }
+    document.getElementById("pinCard").addEventListener("click", e => {
+      const b = e.target.closest("button[data-pin]");
+      if (!b) return;
+      const key = b.dataset.pin, all = chars.map(c => c.id);
+      let picked = Array.isArray(ui[key]) && ui[key].length ? ui[key].filter(id => all.includes(id)) : all.slice();
+      picked = picked.includes(b.dataset.char) ? picked.filter(id => id !== b.dataset.char) : picked.concat(b.dataset.char);
+      if (!picked.length) { toast("1 人は選んでください"); return; }
+      saveUi({[key]: picked.length === all.length ? [] : all.filter(id => picked.includes(id))});   // みんなのときは空(= みんな)
+    });
     function saveTitle() {
       const v = document.getElementById("houseTitle").value.trim();
       if (v) saveUi({house_title: v});
     }
     function renderHouse() {
+      renderPin();
       document.getElementById("houseTitle").value = ui.house_title || "";
       const c = ui.topbar_color;
       document.getElementById("topbarColor").value = c || "#f6f3fa";
