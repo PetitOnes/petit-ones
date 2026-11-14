@@ -166,6 +166,11 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 
 決めた中身は `PETIT_DATA_DIR/config/access.json`(`{"<ユーザー名>": {"children": [...], "chat": [...], "mail_in": [...], "mail_out": [...], "petitlog": [...], "diary": [...], "notes": [...], "album": [...], "voice": [...], "hide_tools": [...], "can": {"rest": false, …}}}`)。入口は `GET` / `POST /api/access`(家の持ち主だけ)。
 
+## タブの印(favicon)
+
+3 つの点。色は、その家のぷちたちの色(一覧の順に 3 人まで。足りない分は薄い紫)。絵のファイルは置かず、家の設定から描く
+(`/favicon.svg`、SVG を出せないブラウザ用に `/favicon.ico`(中身は PNG)、ホーム画面用に `/apple-touch-icon.png`)。ログインの前でも読める。
+
 ## 家の設定（`config/ui.json`）
 
 **人ごとに持つ**: ログインなしで開いたとき(この PC から、など)と家の持ち主(`arisan`)は `config/ui.json`。ほかの人は `config/ui.<ユーザー名>.json`。
