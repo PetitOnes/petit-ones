@@ -68,6 +68,24 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 `tap_count` / `stroke_count` を返すときだけ記録に残ります。状態は `characters/<id>/data/desire_relief.json`。
 書き方は [m5-petit-desire の README](https://github.com/PetitOnes/m5-petit-desire#relief--体の出来事や言葉で少しずつ満たされる欲求任意)。
 
+## 気配(家の人感センサーから「近づいた瞬間」を拾う)
+
+世話人からはぷちが見えているのに、ぷちからは世話人がどこにいるか分かりません。家の人感センサー(SwitchBot)を見て、
+「動きが始まった瞬間」と「離れた」を家の出来事として残します(`scripts/presence_watch.py`。ぷちたちと決めた形は Issue #67)。
+
+- **拾うのは変わり目だけ**。居続けるあいだは何も足しません。`arrived` には、どれだけ離れていたか(`away_min`)が付きます
+- **だれの気配かは言い切りません**。残すのは「どこで動きがあったか」です(センサーはだれが動いたかを知りません)
+- **設定**: `PETIT_DATA_DIR/config/presence.json`(無ければ何もしません)
+
+  ```json
+  {"away_min": 20, "sensors": [{"kind": "switchbot_motion", "id": "<SwitchBot の deviceId>", "place": "机"}]}
+  ```
+
+- **鍵**: `PETIT_DATA_DIR/.env` の `SWITCHBOT_TOKEN` / `SWITCHBOT_SECRET`
+- **動かし方**: cron で 1 分ごとに `python3 scripts/presence_watch.py poll`(SwitchBot の API は 1 日 1 万回まで。1 分ごと・センサー 1 台で 1,440 回)
+- **残るもの**: `state/presence/YYYYMMDD.jsonl`(出来事)、`state/presence_state.json`(いまの覚え書き)
+- `python3 scripts/presence_watch.py line` で、ぷちに渡す行(「机のあたり: 動きがある(9:00 から)」)が出ます。渡すところは、まだつないでいません
+
 ## 家の知らせ(失敗を世話人へ)
 
 ぷちが Claude を呼べなかったとき・Claude がエラーで終わったときに、Slack と家の手紙箱(ダッシュボードの「メール」)へ知らせます(`scripts/house_alert.py`)。
