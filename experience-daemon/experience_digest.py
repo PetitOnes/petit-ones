@@ -123,7 +123,14 @@ def _format_events(events: list[dict]) -> list[str]:
             lines.append(f"{hhmm} {direction}場所に移った（ambient {before}→{after}）")
         elif etype == "touch":
             count = detail.get("count", 1)
-            lines.append(f"{hhmm} タッチされた（{count}回）")
+            strokes = detail.get("strokes", 0)
+            taps = detail.get("taps", 0)
+            if strokes and taps:
+                lines.append(f"{hhmm} 撫でられた（{strokes}回）、タッチされた（{taps}回）")
+            elif strokes:
+                lines.append(f"{hhmm} 撫でられた（{strokes}回）")
+            else:
+                lines.append(f"{hhmm} タッチされた（{taps or count}回）")
         elif etype == "offline_gap":
             minutes = detail.get("minutes", 0)
             minutes_int = max(1, round(minutes))

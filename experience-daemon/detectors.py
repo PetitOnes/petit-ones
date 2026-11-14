@@ -66,6 +66,9 @@ AMBIENT_JUMP_COOLDOWN_SEC = 60.0
 TOUCH_GROUP_WINDOW_SEC = 30.0
 # /sensors の、最後に触られた時刻の名前(新しい版が先)
 TOUCH_KEYS = ("last_touch", "lastTouchEventTime")
+# タッチの種類ごとの通算(起動してから)。返す体だけ。
+# 記録の detail に taps / strokes として残る(2026-11-14)
+TOUCH_KIND_KEYS = {"taps": "tap_count", "strokes": "stroke_count"}
 
 # --- オフライン検出 ---
 # ポーリング失敗がこの秒数以上続いたら offline_gap イベントとして記録する。
@@ -147,6 +150,10 @@ class _TouchState:
     group_start: datetime | None = None
     group_last: datetime | None = None
     group_count: int = 0
+    # 種類ごとの回数(ファームが tap_count / stroke_count を返すときだけ)。
+    # 起動してからの通算を覚えて、差を数える
+    seen: dict[str, int] | None = None
+    group_kinds: dict[str, int] | None = None
 
 
 @dataclass
@@ -375,6 +382,8 @@ class ExperienceDetector:
         t = self._touch
         events: list[Event] = []
 
+        kinds = self._touch_kind_delta(sensors, first=t.last_seen is None)
+
         if t.last_seen is None:
             # 起動直後：既存の値を初期値として覚えるだけ（過去のタッチとして扱わない）
             t.last_seen = value
@@ -382,6 +391,10 @@ class ExperienceDetector:
 
         if value != t.last_seen and value != 0:
             t.last_seen = value
+            if kinds:
+                t.group_kinds = t.group_kinds or {}
+                for name, n in kinds.items():
+                    t.group_kinds[name] = t.group_kinds.get(name, 0) + n
             if t.group_count > 0 and t.group_last is not None:
                 if (ts - t.group_last).total_seconds() > TOUCH_GROUP_WINDOW_SEC:
                     events.append(self._flush_touch_group())
@@ -397,12 +410,43 @@ class ExperienceDetector:
 
         return events
 
+    def _touch_kind_delta(self, sensors: dict, first: bool) -> dict[str, int]:
+        """前に見たときから増えた、種類ごとの回数({"taps": 1, "strokes": 2} の形)。
+
+        ファームが tap_count / stroke_count(起動してからの通算)を返すときだけ。返さない体では空。
+        通算が減っていたら体が起動し直したと見て、いまの値をそのまま数える
+        """
+        t = self._touch
+        now: dict[str, int] = {}
+        for name, key in TOUCH_KIND_KEYS.items():
+            try:
+                now[name] = int(sensors[key])
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not now:
+            return {}
+        before = t.seen
+        t.seen = now
+        if first or before is None:
+            return {}
+        delta = {}
+        for name, value in now.items():
+            prev = before.get(name, 0)
+            d = value - prev if value >= prev else value
+            if d > 0:
+                delta[name] = d
+        return delta
+
     def _flush_touch_group(self) -> Event:
         t = self._touch
-        event = Event(ts=t.group_start, type="touch", detail={"count": t.group_count})
+        detail: dict = {"count": t.group_count}
+        if t.group_kinds:
+            detail.update(t.group_kinds)
+        event = Event(ts=t.group_start, type="touch", detail=detail)
         t.group_start = None
         t.group_last = None
         t.group_count = 0
+        t.group_kinds = None
         return event
 
     def _process_battery(self, ts: datetime, sensors: dict) -> list[Event]:

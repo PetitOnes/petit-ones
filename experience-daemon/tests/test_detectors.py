@@ -280,3 +280,42 @@ def test_touch_is_detected_with_current_firmware_key():
     touch_events = [e for e in events if e.type == "touch"]
     assert len(touch_events) == 1
     assert touch_events[0].detail == {"count": 2}
+
+
+def test_touch_kinds_are_recorded_when_firmware_counts_them():
+    """体が tap_count / stroke_count(通算)を返すなら、撫でたのか短く触ったのかを detail に残す"""
+
+    def sample(value: int, taps: int, strokes: int) -> dict:
+        s = sensor_sample()
+        s.pop("lastTouchEventTime")
+        s.update({"last_touch": value, "tap_count": taps, "stroke_count": strokes})
+        return s
+
+    d = ExperienceDetector()
+    events = []
+    events += d.process_sensors(ts(0.0), sample(1000, 5, 2))   # 起動直後: いまの値を覚えるだけ
+    events += d.process_sensors(ts(2.0), sample(3000, 5, 3))   # 撫でた
+    # 2 秒のあいだに、タップ 2 回と撫で 1 回
+    events += d.process_sensors(ts(4.0), sample(5000, 7, 4))
+    events += d.process_sensors(ts(40.0), sample(5000, 7, 4))
+    touch_events = [e for e in events if e.type == "touch"]
+    assert len(touch_events) == 1
+    assert touch_events[0].detail == {"count": 2, "strokes": 2, "taps": 2}
+
+
+def test_touch_kinds_survive_body_reboot():
+    """体が起動し直すと通算が 0 に戻る。減っていたら、いまの値をそのまま数える"""
+
+    def sample(value: int, taps: int, strokes: int) -> dict:
+        s = sensor_sample()
+        s.pop("lastTouchEventTime")
+        s.update({"last_touch": value, "tap_count": taps, "stroke_count": strokes})
+        return s
+
+    d = ExperienceDetector()
+    events = []
+    events += d.process_sensors(ts(0.0), sample(900000, 40, 12))
+    events += d.process_sensors(ts(2.0), sample(4000, 0, 1))    # 起動し直したあと、1 回撫でた
+    events += d.process_sensors(ts(40.0), sample(4000, 0, 1))
+    touch_events = [e for e in events if e.type == "touch"]
+    assert touch_events[0].detail == {"count": 1, "strokes": 1}

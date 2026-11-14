@@ -114,3 +114,26 @@ def test_mark_read_advances_cursor(tmp_path, monkeypatch):
 
     lines2, _now2 = ed.build_digest(character)
     assert lines2 == []
+
+
+def test_touch_kinds_are_told_apart(tmp_path, monkeypatch):
+    """撫でられたのか、短く触られたのかを分けて伝える(体が種類を返すときだけ)"""
+    monkeypatch.setattr(ed, "DATA_DIR", tmp_path)
+    character = "testchar"
+    base = datetime.now() - timedelta(minutes=30)
+
+    def at(minute: int) -> str:
+        return (base + timedelta(minutes=minute)).isoformat(timespec="seconds")
+
+    _write_events(_today_path(tmp_path, character), [
+        {"ts": at(1), "type": "touch", "detail": {"count": 2, "strokes": 2}},
+        {"ts": at(2), "type": "touch", "detail": {"count": 3, "strokes": 1, "taps": 2}},
+        {"ts": at(3), "type": "touch", "detail": {"count": 1, "taps": 1}},
+        {"ts": at(4), "type": "touch", "detail": {"count": 4}},
+    ])
+    lines, _now = ed.build_digest(character)
+    text = "\n".join(lines)
+    assert "撫でられた（2回）" in text
+    assert "撫でられた（1回）、タッチされた（2回）" in text
+    assert "タッチされた（1回）" in text
+    assert "タッチされた（4回）" in text
