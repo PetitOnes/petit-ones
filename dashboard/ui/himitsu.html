@@ -38,6 +38,19 @@
     .h-body a { color: var(--ui-accent-text); }
     .h-body table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.9em; }
     .h-body th, .h-body td { padding: 3px 8px; border: 1px solid rgba(58, 50, 45, 0.18); }
+    /* だれと、何通: 1 人 1 枚。相手ごとに「送った → / もらった ←」。数を押すと、その組み合わせで下の手紙を絞る */
+    .h-sum { margin-bottom: 12px; }
+    .h-sum > summary { cursor: pointer; padding: 4px 2px 8px; font-size: var(--ui-fs-s); font-weight: 700; color: var(--ui-accent-text); }
+    .h-people { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+    .h-person { padding: 12px 14px; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-top: 3px solid; border-radius: var(--ui-radius-card); }
+    .h-person h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; font-family: var(--ui-font-head); font-size: 1rem; }
+    .h-total { margin-bottom: 6px; font-size: 0.75rem; color: var(--ui-text-sub); }
+    .h-pair { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; padding: 3px 0; font-size: 0.88rem; }
+    .h-pair .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .h-num { min-width: 4.6em; padding: 2px 8px; font: inherit; font-size: 0.78rem; font-variant-numeric: tabular-nums; text-align: right; color: var(--ui-text); background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
+    .h-num:hover { background: var(--ui-accent-soft); }
+    .h-num[disabled] { color: var(--ui-text-mute); background: none; border-color: transparent; cursor: default; }
+    .h-legend { margin-top: 8px; font-size: 0.72rem; color: var(--ui-text-mute); }
     .h-more { display: block; margin: 12px auto; }
     .h-more[hidden] { display: none; }
   </style>
@@ -46,6 +59,8 @@
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔒 ひみつ</h1></div>
     <div class="h-bar" id="scopes"></div>
+    <details class="h-sum" id="sum" open><summary>📊 だれと、何通</summary><div class="h-people" id="people"></div>
+      <div class="h-legend">「→」は送った数、「←」はもらった数。数を押すと、その組み合わせの手紙だけになります。家のメールボックスの手紙を数えています(ぷちSNS の手紙は入りません)。</div></details>
     <div class="h-bar">
       <label>だれから <select id="from"></select></label>
       <label>だれあて <select id="to"></select></label>
@@ -87,6 +102,30 @@
         <div class="h-body">${md(m.content)}</div>
       </article>`;
     }
+    // だれと、何通: ぷちと家の人を 1 人 1 枚に。相手は、やり取りの多い順
+    function summary(d) {
+      const sent = {}, got = {};   // sent[a][b] = a から b へ / got[a][b] = b から a へ
+      for (const p of d.pairs || []) {
+        (sent[p.from] = sent[p.from] || {})[p.to] = p.count;
+        (got[p.to] = got[p.to] || {})[p.from] = p.count;
+      }
+      const sum = o => Object.values(o || {}).reduce((a, b) => a + b, 0);
+      const order = { petit: 0, human: 1 };
+      const owners = Object.keys(state.people).filter(id => (state.people[id].kind in order) && (sent[id] || got[id]))
+        .sort((a, b) => order[state.people[a].kind] - order[state.people[b].kind] || sum(sent[b]) + sum(got[b]) - sum(sent[a]) - sum(got[a]));
+      const num = (n, from, to, arrow) => `<button class="h-num" data-from="${esc(from)}" data-to="${esc(to)}"${n ? "" : " disabled"}>${arrow} ${(n || 0).toLocaleString()}</button>`;
+      $("people").innerHTML = owners.map(id => {
+        const c = state.people[id].color || "";
+        const partners = [...new Set([...Object.keys(sent[id] || {}), ...Object.keys(got[id] || {})])]
+          .sort((a, b) => ((sent[id] || {})[b] || 0) + ((got[id] || {})[b] || 0) - ((sent[id] || {})[a] || 0) - ((got[id] || {})[a] || 0));
+        return `<section class="h-person" style="border-top-color:${esc(c || "#d9cdbf")}">
+          <h2 style="color:${ink(c)}"><span class="h-dot" style="background:${esc(c || "#d9cdbf")}"></span>${esc(nameOf(id))}</h2>
+          <div class="h-total">送った ${sum(sent[id]).toLocaleString()} 通 ・ もらった ${sum(got[id]).toLocaleString()} 通 ・ 相手 ${partners.length} 人</div>
+          ${partners.map(o => `<div class="h-pair"><span class="n">${esc(nameOf(o))}</span>${num((sent[id] || {})[o], id, o, "→")}${num((got[id] || {})[o], o, id, "←")}</div>`).join("")}
+        </section>`;
+      }).join("");
+      $("sum").hidden = !owners.length;
+    }
     function options(sel, rows, cur, any) {
       sel.innerHTML = `<option value="">${any}</option>` + rows.map(r => `<option value="${esc(r.id)}"${r.id === cur ? " selected" : ""}>${esc(nameOf(r.id))}(${r.count.toLocaleString()})</option>`).join("");
     }
@@ -102,6 +141,7 @@
       state.people = d.people || {}; state.total = d.total; state.scope = d.scope;
       $("scopes").innerHTML = SCOPES.filter(([id]) => id !== "all" || d.can_all).map(([id, label]) =>
         `<button class="a-pill${id === state.scope ? " is-on" : ""}" aria-pressed="${id === state.scope}" data-scope="${id}">${label}</button>`).join("");
+      summary(d);
       options($("from"), d.senders || [], state.from, "だれでも");
       options($("to"), d.recipients || [], state.to, "だれでも");
       $("list").insertAdjacentHTML("beforeend", (d.items || []).map(card).join(""));
@@ -118,6 +158,16 @@
     });
     $("from").addEventListener("change", e => { state.from = e.target.value; load(true); });
     $("to").addEventListener("change", e => { state.to = e.target.value; load(true); });
+    $("people").addEventListener("click", e => {
+      const b = e.target.closest(".h-num:not([disabled])");
+      if (!b) return;
+      state.from = b.dataset.from; state.to = b.dataset.to;
+      load(true).then(() => $("count").scrollIntoView({ behavior: "smooth", block: "start" }));
+    });
+    try {   // 開いているか・閉じているかは、この画面で覚えておく
+      if (localStorage.getItem("himitsuSumClosed") === "1") $("sum").open = false;
+      $("sum").addEventListener("toggle", () => { try { localStorage.setItem("himitsuSumClosed", $("sum").open ? "0" : "1"); } catch (e) {} });
+    } catch (e) {}
     $("more").addEventListener("click", () => load(false));
     load(true);
   </script>
