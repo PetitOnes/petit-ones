@@ -1305,7 +1305,7 @@ DEFAULT_SETTINGS = {
     "autonomous_skip": 0,
     "max_turns": 20,          # 自律行動 1 回の最大ターン数(autonomous-action.sh が読む。環境変数 MAX_TURNS があればそちら)
     # 変わったときの一言を受け取るか(scripts/notices.py。空・家の空気・スマホの部屋。入口はいつもある)
-    "notices": {"temperature": True, "humidity": True, "pressure": True, "sky": True, "phone": True},
+    "notices": {"temperature": True, "humidity": True, "pressure": True, "co2": True, "sky": True, "phone": True},
 }
 
 

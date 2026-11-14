@@ -48,7 +48,7 @@ def test_system_prompt_matches_old_fstring():
         f"- きょうの空(月齢・日の出入り・二十四節気): `python3 {scripts_dir}/sky.py line`\n"
         f"- 家の空気(気温・湿度・明るさ・人の動き・電気。10 分ごとの記録。自分がいる部屋の機体が先): `python3 {scripts_dir}/room_log.py line --character {character_id}`\n"
         f"- 家の人のスマホがどの部屋にあるか(スマホが家の SwitchBot の電波を聞いた結果。部屋まで、ソファか机かは分からない): `python3 {scripts_dir}/phone_place.py line`\n"
-        f"- 変わったときの一言(temperature / humidity / pressure / sky / phone)のどれを受け取るかは、自分で決めてよい: `python3 {scripts_dir}/notices.py set {character_id} pressure off`(いまの決まりは `notices.py show {character_id}`)\n"
+        f"- 変わったときの一言(temperature / humidity / pressure / co2 / sky / phone)のどれを受け取るかは、自分で決めてよい: `python3 {scripts_dir}/notices.py set {character_id} pressure off`(いまの決まりは `notices.py show {character_id}`)\n"
         f"- 自分の体が家の中のどこに置かれているか(人が選んだ場所。「かも」は体のまわりの電波からの見立て): `python3 {scripts_dir}/spots.py where --character {character_id}`\n"
         f"\n## 会話リレー\n"
         f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
