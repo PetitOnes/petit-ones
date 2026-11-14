@@ -97,7 +97,7 @@ def test_latest_uses_presence_when_newer(tmp_path):
     _write(tmp_path, rows)   # latest の last_move は 18:05
     (tmp_path / "state" / "presence_state.json").write_text(json.dumps({"m1": {"place": "机", "last_move": "2026-11-14T20:39:01"}}), encoding="utf-8")
     assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T20:39:01"
-    assert "最後は 20:39" in rl.line(tmp_path)
+    assert "最後は 20:39" in rl.line(tmp_path, datetime(2026, 11, 14, 20, 40))   # いまの時刻に依らないよう、時刻を決める
     # 気配のほうが古ければ、部屋の記録のまま
     (tmp_path / "state" / "presence_state.json").write_text(json.dumps({"m1": {"place": "机", "last_move": "2026-11-14T17:00:00"}}), encoding="utf-8")
     assert rl.latest(tmp_path)["last_move"]["m1"] == "2026-11-14T18:05:00"
