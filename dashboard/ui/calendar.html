@@ -30,7 +30,10 @@
     .c-day .m.hol { color: #d9534f; }
     .c-day .moon { position: absolute; top: 2px; right: 3px; font-size: 0.62rem; line-height: 1; opacity: 0.85; }   /* 新月・上弦・満月・下弦 の日だけ、端に小さく */
     .c-day .m.term { color: var(--ui-text-mute); font-size: 0.56rem; }
-    .c-sky { font-size: 0.8rem; color: var(--ui-text-sub); margin: 2px 0 6px; }
+    .c-sky { font-size: 0.8rem; color: var(--ui-text-sub); margin: 2px 0; }
+    /* その日の空と部屋(月齢・日の出入り・二十四節気・温度)。予定とは別の枠で、予定の下に */
+    .c-env { margin-top: 12px; padding: 8px 10px; border: 1px solid var(--ui-line-soft); border-radius: var(--ui-radius-s); background: var(--ui-surface-soft); }
+    .c-env .a-label { display: block; margin-bottom: 2px; }
     /* 週の見方: 7 日を縦に */
     .c-week { display: flex; flex-direction: column; gap: 4px; }
     .c-wrow { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; }
@@ -217,7 +220,9 @@
       const rm = show.temp ? inf.room : null;
       const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}${"pressure_min" in d ? ` ・ 🌀 ${d.pressure_min}〜${d.pressure_max} hPa` : ""}`).join(" / ")}</div>` : "";
       const hidden = Object.values(show).some(v => !v);
-      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)何もありません。見せるものは ⚙️ 設定 → 家 → 📅 よてい" : "この日はまだ何もありません"}</p>`);
+      // 予定(と記念日)がいちばん上。空と部屋は、その下に別の枠で(2026-11-14 ありさん)
+      const env = skyLine || roomLine ? `<div class="c-env"><span class="a-label">${[skyLine ? "空" : "", roomLine ? "部屋" : ""].filter(Boolean).join("と")}</span>${skyLine}${roomLine}</div>` : "";
+      document.getElementById("dayItems").innerHTML = (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)予定がありません。見せるものは ⚙️ 設定 → 家 → 📅 よてい" : "この日はまだ予定がありません"}</p>`) + env;
     }
 
     // ---- 右下の ＋ ----
