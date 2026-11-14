@@ -9,7 +9,10 @@
 記録する機器は、種類で自動(Hub 2・Meter・Motion Sensor・Color Bulb・Plug・Contact Sensor)。
 家の config/room.json で、機体ごとのオン/オフ(設定ページの「SwitchBot 連携」)と名前の言い換え:
 
-    {"off": ["…id…"], "names": {"…id…": "あり部屋"}}
+    {"off": ["…id…"], "names": {"…id…": "あり部屋"}, "omron": {"port": "/dev/omron-env", "name": "机(OMRON)"}}
+
+PC に差した OMRON 2JCIE-BU01(scripts/omron_env.py)も、ポートがあれば id "omron-env" の 1 台として同じ記録に入る
+(気温・湿度・明るさ・気圧・騒音・eCO2・eTVOC。2026-11-14)。SwitchBot の鍵が無くても OMRON だけで記録できる
 
 使うところ:
 - cron(10 分ごと): `room_log.py record`
@@ -43,6 +46,9 @@ API = "https://api.switch-bot.com/v1.1"
 TYPES = {"Hub 2", "Meter", "MeterPlus", "WoIOSensor", "Motion Sensor", "Color Bulb", "Strip Light", "Ceiling Light",
          "Plug", "Plug Mini (JP)", "Plug Mini (US)", "Contact Sensor"}
 FRESH_MIN = 30        # ぷちに渡すのは、これより新しい読みだけ
+OMRON_ID = "omron-env"            # PC に差した OMRON 2JCIE-BU01 の、機体としての id
+OMRON_PORT = "/dev/omron-env"     # udev の決まり(99-omron-2jcie-bu.rules)が作る名前
+OMRON_TYPE = "OMRON 2JCIE-BU"
 TIMEOUT = 10
 
 
@@ -111,13 +117,21 @@ def load_cfg(base: Path) -> dict:
         cfg = {}
     off = [x for x in (cfg.get("off") or []) if isinstance(x, str)]
     names = {k: str(v) for k, v in (cfg.get("names") or {}).items()} if isinstance(cfg.get("names"), dict) else {}
-    return {"off": off, "names": names}
+    om = cfg.get("omron") if isinstance(cfg.get("omron"), dict) else {}
+    omron = {"port": str(om.get("port") or OMRON_PORT), "name": str(om.get("name") or names.get(OMRON_ID) or "PC の OMRON")}
+    return {"off": off, "names": names, "omron": omron}
 
 
 def set_off(base: Path, off: list[str]) -> dict:
     """記録しない機体の id を決める(設定ページの「SwitchBot 連携」)。名前の言い換えは残す"""
     cfg = load_cfg(base)
     cfg["off"] = sorted({x for x in off if isinstance(x, str) and x})
+    try:   # 書くのは元の形のまま(omron は、元のファイルに書いてあったときだけ)
+        raw = json.loads((base / "config" / "room.json").read_text(encoding="utf-8"))
+        if not (isinstance(raw, dict) and isinstance(raw.get("omron"), dict)):
+            cfg.pop("omron", None)
+    except (OSError, json.JSONDecodeError):
+        cfg.pop("omron", None)
     p = base / "config" / "room.json"
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".json.tmp")
@@ -126,32 +140,57 @@ def set_off(base: Path, off: list[str]) -> dict:
     return cfg
 
 
-def devices(base: Path) -> list[dict] | None:
-    """記録できる機体の一覧 [{id, name, type, on}](SwitchBot に 1 回聞く)。鍵が無い・つながらないときは None"""
+def omron_present(cfg: dict) -> bool:
+    return Path(cfg["omron"]["port"]).exists()
+
+
+def read_omron(cfg: dict) -> dict | None:
+    """PC に差した OMRON を 1 回読む(scripts/omron_env.py)。無い・読めないときは None"""
+    if not omron_present(cfg):
+        return None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import omron_env
+        d = omron_env.read(cfg["omron"]["port"])
+    except Exception:
+        return None
+    return {"name": cfg["omron"]["name"], "type": OMRON_TYPE,
+            **{k: d[k] for k in ("temperature", "humidity", "light", "pressure", "noise", "eco2", "etvoc") if k in d}}
+
+
+def _switchbot_devices(base: Path) -> list[dict] | None:
+    """SwitchBot の機体一覧。鍵が無い・つながらないときは None"""
     token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
     if not token or not secret:
         return None
     try:
-        found = _get("/devices", token, secret).get("body", {}).get("deviceList", [])
+        return _get("/devices", token, secret).get("body", {}).get("deviceList", [])
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
+
+
+def devices(base: Path) -> list[dict] | None:
+    """記録できる機体の一覧 [{id, name, type, on}](SwitchBot に 1 回聞く + PC の OMRON)。どちらも無いときは None"""
     cfg = load_cfg(base)
-    return [{"id": d["deviceId"], "name": cfg["names"].get(d["deviceId"]) or d.get("deviceName") or d["deviceId"], "type": d.get("deviceType", ""),
-             "on": d["deviceId"] not in cfg["off"]} for d in found if d.get("deviceId") and d.get("deviceType") in TYPES]
+    found = _switchbot_devices(base)
+    out = [{"id": d["deviceId"], "name": cfg["names"].get(d["deviceId"]) or d.get("deviceName") or d["deviceId"], "type": d.get("deviceType", ""),
+            "on": d["deviceId"] not in cfg["off"]} for d in (found or []) if d.get("deviceId") and d.get("deviceType") in TYPES]
+    if omron_present(cfg):
+        out.append({"id": OMRON_ID, "name": cfg["omron"]["name"], "type": OMRON_TYPE, "on": OMRON_ID not in cfg["off"]})
+    return out if (found is not None or out) else None
 
 
 def read_all(base: Path) -> dict | None:
-    """いまの読み(オンの機体だけ)。鍵が無い・つながらないときは None"""
-    token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
-    if not token or not secret:
-        return None
+    """いまの読み(オンの機体だけ。SwitchBot + PC の OMRON)。どちらも読めないときは None"""
     cfg = load_cfg(base)
     off, names = set(cfg["off"]), cfg["names"]
-    try:
-        devices_ = _get("/devices", token, secret).get("body", {}).get("deviceList", [])
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-        return None
+    token, secret = _env(base, "SWITCHBOT_TOKEN"), _env(base, "SWITCHBOT_SECRET")
+    devices_ = _switchbot_devices(base) or []
     out = {}
+    if OMRON_ID not in off:
+        om = read_omron(cfg)
+        if om:
+            out[OMRON_ID] = om
     for d in devices_:
         did, typ = d.get("deviceId"), d.get("deviceType")
         if not did or typ not in TYPES or did in off:
@@ -234,14 +273,14 @@ def day_rows(base: Path | None, day: datetime | str) -> list[dict]:
 
 
 def day_summary(base: Path | None, day: str) -> dict:
-    """その日の、機器ごとの 気温・湿度の最低/最高、動いた回数、電気がオンだった回数"""
+    """その日の、機器ごとの 気温・湿度・気圧・eCO2 の最低/最高、動いた回数、電気がオンだった回数"""
     rows = day_rows(base, day)
     per: dict[str, dict] = {}
     for r in rows:
         for did, dev in (r.get("devices") or {}).items():
             p = per.setdefault(did, {"name": dev.get("name", did), "type": dev.get("type", ""), "n": 0})
             p["n"] += 1
-            for k in ("temperature", "humidity"):
+            for k in ("temperature", "humidity", "pressure", "eco2"):
                 if isinstance(dev.get(k), (int, float)):
                     p[k + "_min"] = min(p.get(k + "_min", dev[k]), dev[k])
                     p[k + "_max"] = max(p.get(k + "_max", dev[k]), dev[k])
@@ -291,7 +330,9 @@ def line(base: Path | None = None, now: datetime | None = None, character_id: st
     for did, dev in ordered:
         name = dev.get("name", did) + ("(いる部屋)" if did in mine else "")
         if "temperature" in dev:
-            air.append(f"{name} {dev['temperature']}℃" + (f"・{dev['humidity']}%" if "humidity" in dev else "") + (f"(明るさ {dev['light']})" if "light" in dev else ""))
+            air.append(f"{name} {dev['temperature']}℃" + (f"・{dev['humidity']}%" if "humidity" in dev else "")
+                       + (f"・気圧 {dev['pressure']} hPa" if "pressure" in dev else "") + (f"・CO2 {dev['eco2']} ppm" if "eco2" in dev else "")
+                       + (f"(明るさ {dev['light']})" if "light" in dev else ""))
         if "move" in dev:
             last = (snap.get("last_move") or {}).get(did)
             tail = "" if dev["move"] else (f"(最後は {_hm(last)})" if last else "(記録を始めてから、まだ動きなし)")
@@ -311,10 +352,11 @@ def line(base: Path | None = None, now: datetime | None = None, character_id: st
 
 TEMP_STEP = 2.0    # これ以上動いたら「変わった」(℃)
 HUMID_STEP = 10    # 同(%)
+PRESS_STEP = 3.0   # 同(hPa。低気圧が近づく・離れる目安)
 
 
 def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
-    """前にその子に伝えた値から、気温が TEMP_STEP・湿度が HUMID_STEP 以上動いた機体だけ 1 行(ぷちたちの希望: 変わったときだけ)。
+    """前にその子に伝えた値から、気温が TEMP_STEP・湿度が HUMID_STEP・気圧が PRESS_STEP 以上動いた機体だけ 1 行(ぷちたちの希望: 変わったときだけ)。
     はじめての回は、いまの値を覚えるだけで何も言わない。伝えたことは characters/<id>/state/room_told.json"""
     base = base or data_dir()
     snap = latest(base)
@@ -331,7 +373,7 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
         told = json.loads(told_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         told = None
-    cur = {did: {k: dev[k] for k in ("temperature", "humidity") if k in dev} for did, dev in snap["devices"].items()}
+    cur = {did: {k: dev[k] for k in ("temperature", "humidity", "pressure") if k in dev} for did, dev in snap["devices"].items()}
     cur = {k: v for k, v in cur.items() if v}
     changes = []
     if isinstance(told, dict):
@@ -343,6 +385,8 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
                 bits.append(f"{old['temperature']}℃ → {vals['temperature']}℃")
             if "humidity" in vals and isinstance(old.get("humidity"), (int, float)) and abs(vals["humidity"] - old["humidity"]) >= HUMID_STEP:
                 bits.append(f"湿度 {old['humidity']}% → {vals['humidity']}%")
+            if "pressure" in vals and isinstance(old.get("pressure"), (int, float)) and abs(vals["pressure"] - old["pressure"]) >= PRESS_STEP:
+                bits.append(f"気圧 {old['pressure']} → {vals['pressure']} hPa" + ("(下がってきた)" if vals["pressure"] < old["pressure"] else "(上がってきた)"))
             if bits:
                 changes.append(f"{name} " + "、".join(bits))
     if mark and (changes or told is None):

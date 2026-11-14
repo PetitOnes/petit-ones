@@ -215,7 +215,7 @@
       const sk = show.moon ? inf.sky : null;
       const skyLine = sk ? `<div class="c-sky">${sk.moon_mark_emoji || sk.moon} 月齢 ${sk.moon_age}${sk.moon_mark ? `(${esc(sk.moon_mark)})` : ""}${sk.sunrise ? ` ・ 日の出 ${esc(sk.sunrise)} 日の入 ${esc(sk.sunset)}` : ""}${sk.term ? ` ・ きょうから ${esc(sk.term)}` : sk.current_term ? ` ・ ${esc(sk.current_term)}` : ""}</div>` : "";
       const rm = show.temp ? inf.room : null;
-      const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}`).join(" / ")}</div>` : "";
+      const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}${"pressure_min" in d ? ` ・ 🌀 ${d.pressure_min}〜${d.pressure_max} hPa` : ""}`).join(" / ")}</div>` : "";
       const hidden = Object.values(show).some(v => !v);
       document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)何もありません。見せるものは ⚙️ 設定 → 家 → 📅 よてい" : "この日はまだ何もありません"}</p>`);
     }
