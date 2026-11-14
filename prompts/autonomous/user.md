@@ -28,6 +28,7 @@
 - 予定(展示会・旅行など、ある日のこと)も足せる: Bashツールで python3 {{project_dir}}/scripts/events.py add {{character_id}} "題" 2026-11-22 --place "場所" --who puchiko,arisan --note "ひとこと"（数日なら --end 2026-11-23、時間は --time 14:00。--who は行く人・子の id）。これからの予定は python3 {{project_dir}}/scripts/events.py list
 - MCPが動作していなければ、デバッグのために関係があると思われる要素をallowedToolsの範囲で調査して
 - 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で): きょうの空は python3 {{project_dir}}/scripts/sky.py line、家の空気(気温・湿度・明るさ・人の動き・電気。自分がいる部屋の機体が先)は python3 {{project_dir}}/scripts/room_log.py line --character {{character_id}}、家の人のスマホがどの部屋にあるか(部屋まで。ソファか机かは分からない)は python3 {{project_dir}}/scripts/phone_place.py line、自分の体が家の中のどこに置かれているかは python3 {{project_dir}}/scripts/spots.py where --character {{character_id}}(「かも」は電波からの見立て)
+- いっしょに聴いている曲があるとき(ありさんが「聴く回」を始めたとき)、いま何秒目でどんな音かは python3 {{project_dir}}/scripts/music.py now(音量・高さの重心・拍・静けさの数字。曲名などの答え合わせは終わってから)。音量の流れは music.py wave
 - 変わったときの一言(気温 temperature / 湿度 humidity / 気圧 pressure / CO2 co2 / 空 sky / 家の人のスマホの部屋 phone)のどれを受け取るかは、自分で決めてよい: python3 {{project_dir}}/scripts/notices.py set {{character_id}} pressure off(いまの決まりは notices.py show {{character_id}})。切っても、見に行けば分かる
 {{#if anniversary_notice}}
 
