@@ -2259,10 +2259,13 @@ def api_relations(request: Request):
         except Exception:
             continue
         for target_id, info in rel.items():
-            if target_id == "self":
+            if target_id == "self" or not isinstance(info, dict):
                 continue
             if target_id not in all_node_ids:
-                continue
+                # ぷちが関係に書いた、ほかの相手(家の外のぷち・人など)。図にも出す。呼び名は記録の name、無ければ id のまま
+                nodes.append({"id": target_id, "name": str(info.get("name") or target_id), "color": "#b8ad9f",
+                              "has_avatar": False, "kind": "other", "self_info": {}})
+                all_node_ids.add(target_id)
             edges.append({
                 "from": c["id"],
                 "to": target_id,
@@ -10225,7 +10228,7 @@ KANKEI_HTML = """<!DOCTYPE html>
     const faceSvg = (color, w) => `<svg class="face" viewBox="0 0 320 240" width="${w}" height="${Math.round(w * 0.75)}" aria-hidden="true">${faceInner(color)}</svg>`;
     // 人: その人の色の丸に、名前のはじめの 2 文字
     const personDot = (n, size) => `<span class="person-dot" style="width:${size}px;height:${size}px;background:${esc(n.color)};font-size:${Math.round(size * 0.36)}px">${esc(n.name.slice(0, 2))}</span>`;
-    const isPetit = n => !!n && n.kind !== "human";
+    const isPetit = n => !!n && n.kind === "petit";   // human = 家の人、other = ぷちが関係に書いた、ほかの相手
     const pct = v => Math.round((v || 0) * 100);
     // yyyy-mm-dd → yyyy/m/d(日付でなければ空)
     const dayText = v => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})$/.exec(v || ""); return m ? `${m[1]}/${+m[2]}/${+m[3]}` : ""; };
