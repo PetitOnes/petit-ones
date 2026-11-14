@@ -17,7 +17,7 @@
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔔 音</h1></div>
 
     <!-- 取り込む: 家の音のライブラリに足す。体が鳴らせる形に変換される -->
-    <div class="m-card">
+    <div class="m-card" id="addCard">
       <span class="a-heading">音を取り込む</span>
       <div class="o-sound-form">
         <input class="a-input" id="fFile" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac">
@@ -74,8 +74,8 @@
         <div class="o-sound-main"><b>${esc(it.name)}</b>
           <div class="o-sound-sub">${secs(it.seconds)}${have.length ? "・体にある: " + have.map(dot).join("") : "・まだどの体にもない"}</div></div>
         <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(it.name)}">▶ 聞く</button>
-        <button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>
-        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>
+        ${canEdit ? `<button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>
+        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>` : ""}
         ${sending ? `<div class="o-sound-send"><span class="a-label">だれの体に送る?</span>${targets}
           <button class="a-btn a-btn--s" data-go="${esc(it.name)}">送る</button><span class="o-sound-msg" data-sendmsg></span></div>` : ""}
       </div>`;
@@ -100,8 +100,12 @@
       $("bodies").innerHTML = bodies.length ? bodies.map(bodyBlock).join("") : '<div class="p-empty">ぷちがいません</div>';
     }
 
+    // 家の持ち主が「音を取り込む・消す・体へ送る」を外している人には、聞く・鳴らすだけを出す
+    let canEdit = true;
     async function load() {
       try {
+        if (!load.asked) { load.asked = true; try { const me = await call("GET", "/api/me"); canEdit = !me.can || me.can.sounds !== false; } catch (e) {} }
+        document.getElementById("addCard").style.display = canEdit ? "" : "none";
         const res = await call("GET", "/api/sounds");
         library = res.library || [];
         bodies = res.bodies || [];

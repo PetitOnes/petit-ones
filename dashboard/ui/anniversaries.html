@@ -17,7 +17,7 @@
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎂 記念日</h1></div>
 
     <!-- 足す・直す欄。直すときは、一覧の「直す」でここに入る -->
-    <div class="m-card">
+    <div class="m-card" id="formCard">
       <span class="a-heading" id="formTitle">記念日を足す</span>
       <div class="o-anniv-form">
         <label class="is-wide"><span class="a-label">名前</span><input class="a-input" id="fName" maxlength="40" placeholder="たとえば ぷちるの誕生日"></label>
@@ -55,7 +55,8 @@
     const REPEAT = { yearly: "毎年", monthly: "毎月", once: "その日だけ" };
     let items = [], editing = null;
     let me = {};   // 見られる子が決まっている人は、自分が足した記念日だけ直す・消す
-    function canTouch(it) { return !me.limited || it.by === me.username; }
+    function canEdit() { return !me.can || me.can.anniv !== false; }   // 家の持ち主が外していれば、足す・直す・消すはできない
+    function canTouch(it) { return canEdit() && (!me.limited || it.by === me.username); }
 
     function leftText(it) {
       if (it.days_left === null) return "おわり";
@@ -155,7 +156,7 @@
     });
 
     syncYear();
-    fetch("/api/me").then(r => r.json()).then(m => { me = m || {}; }).catch(() => {})
+    fetch("/api/me").then(r => r.json()).then(m => { me = m || {}; if (!canEdit()) document.getElementById("formCard").style.display = "none"; }).catch(() => {})
       .then(() => fetch("/api/anniversaries")).then(r => r.json()).then(render).catch(() => {
       document.getElementById("empty").style.display = "";
       document.getElementById("empty").textContent = "読み込めませんでした";

@@ -533,6 +533,35 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭
     "notebook": ("/notebook",),
 }
 ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
+# can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
+CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
+    ("rest", "からだ おやすみ を使う"),
+    ("body", "ようす から、体の設定(明るさ・音量・PSAVE・WHO)を変える"),
+    ("album_delete", "自分のアルバムの写真を消す"),
+    ("voice_delete", "自分のボイスメモを消す"),
+    ("notes_delete", "自分のノートを消す"),
+    ("anniv", "記念日を足す・直す・消す(自分が足したもの)"),
+    ("sounds", "音を取り込む・消す・体へ送る"),
+    ("schedule", "設定: アクティブタイムを変える"),
+    ("autonomous", "設定: 自律行動を変える"),
+    ("switches", "設定: からだの使い方を変える"),
+    ("advanced", "設定: くわしい設定を変える"),
+]
+CAN_KEYS = [k for k, _ in CAN_LABELS]
+# 決まりを、入口(メソッドと道)で掛けるもの。設定の保存(/api/<id>/settings)は、中身を見て api_save_settings で掛ける
+CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
+    ("rest", "POST", r"/api/switches/rest|/api/[^/]+/switches/rest"),
+    ("body", "POST", r"/api/[^/]+/body"),
+    ("album_delete", "DELETE", r"/api/album/.+"),
+    ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
+    ("notes_delete", "DELETE", r"/api/my/notes/.+"),
+    ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/[^/]+\.wav"),
+    ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
+]
+# 設定の保存で、どの項目がどの段か
+SETTINGS_SECTIONS = {"schedule": ("active_hours", "day_type_override"), "autonomous": ("autonomous_skip",),
+                     "switches": ("body",), "rest": ("rest",), "advanced": ("max_turns",)}
 
 
 def _access_file() -> Path:
@@ -553,7 +582,21 @@ def _access_of(user: str) -> dict:
     cur = cur if isinstance(cur, dict) else {}
     hide = cur.get("hide_tools") if isinstance(cur.get("hide_tools"), list) else ACCESS_DEFAULT["hide_tools"]
     logs = cur.get("petitlog") if isinstance(cur.get("petitlog"), list) else ACCESS_DEFAULT["petitlog"]
-    return {"hide_tools": [t for t in hide if t in HIDEABLE_TOOLS], "petitlog": [c for c in logs if isinstance(c, str)]}
+    can_raw = cur.get("can") if isinstance(cur.get("can"), dict) else {}
+    return {"hide_tools": [t for t in hide if t in HIDEABLE_TOOLS], "petitlog": [c for c in logs if isinstance(c, str)],
+            "can": {k: can_raw.get(k) is not False for k in CAN_KEYS}}
+
+
+def _cannot(request: Request | None, key: str) -> bool:
+    """見られる子が決まっている人で、家の持ち主がそれを「できない」と決めているか"""
+    if request is None or _get_allowed_characters(request) is None:
+        return False
+    return not _access_of(_get_username(request) or "")["can"].get(key, True)
+
+
+def _cannot_response(key: str) -> JSONResponse:
+    label = dict(CAN_LABELS).get(key, key)
+    return JSONResponse({"error": f"いまは、できないことになっています({label})。設定からお願いを送れます", "cannot": key}, status_code=403)
 
 
 def _limited_users() -> dict[str, list[str]]:
@@ -656,6 +699,10 @@ async def auth_middleware(request: Request, call_next):
                 if path.startswith("/api/"):
                     return JSONResponse({"error": "この道具は使えません"}, status_code=403)
                 return HTMLResponse("<meta charset='utf-8'><p style='font-family:sans-serif;padding:24px'>このページは開けません。<a href='/'>もどる</a></p>", status_code=403)
+        can = _access_of(_get_username(request) or "")["can"]
+        for key, methods, pattern in CAN_ROUTES:
+            if not can.get(key, True) and request.method in methods.split("|") and re.fullmatch(pattern, path):
+                return _cannot_response(key)
     # キャラクターアクセスチェック: /api/{character_id}/... パス
     if path.startswith("/api/"):
         parts = path.split("/")
@@ -5112,8 +5159,36 @@ def api_ui_set(req: UiSettings, request: Request = None):
 
 
 @app.post("/api/{character_id}/settings")
-def api_save_settings(character_id: str, data: dict):
+def api_save_settings(character_id: str, data: dict, request: Request = None):
+    # 見られる子が決まっている人: 家の持ち主が「できない」と決めた段の項目が変わっていたら、保存しない
+    if request is not None and _get_allowed_characters(request) is not None:
+        now = get_settings(character_id)
+        for key, fields in SETTINGS_SECTIONS.items():
+            if _cannot(request, key) and any(f in data and data[f] != now.get(f) for f in fields):
+                return _cannot_response(key)
     save_settings(character_id, data)
+    return {"ok": True}
+
+
+class RequestBody(BaseModel):
+    text: str
+
+
+@app.post("/api/request")
+def api_request_to_owner(body: RequestBody, request: Request):
+    """家の持ち主へのお願い。家の手紙箱に、その人から持ち主への手紙として入る(持ち主の「メール」に未読で出る)"""
+    user, text = _me(request), (body.text or "").strip()
+    if not text:
+        return JSONResponse({"error": "お願いの中身を書いてください"}, status_code=400)
+    if user == OWNER_USER or not re.fullmatch(r"[a-zA-Z0-9]+", user):
+        return JSONResponse({"error": "家の持ち主は、自分にお願いを送れません"}, status_code=400)
+    box = DATA_DIR / "mailbox"
+    box.mkdir(parents=True, exist_ok=True)
+    stem = f"from_{user}_to_{OWNER_USER}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+    path, n = box / f"{stem}.md", 2
+    while path.exists():
+        path, n = box / f"{stem}_{n}.md", n + 1
+    path.write_text(f"【お願い】\n{text[:2000]}\n\n{_user_label(user, user)}\n", encoding="utf-8")
     return {"ok": True}
 
 
@@ -6187,7 +6262,8 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
     if parts[0] == "from" and "to" in parts:
         ti = parts.index("to")
         sender_id = "_".join(parts[1:ti])
-        sender = _char_display_name(sender_id)
+        # 人(世話人)からの手紙は人の呼び名で、ぷちからの手紙はぷちの名前で
+        sender = _user_label(sender_id, sender_id) if sender_id in _USER_DISPLAY else _char_display_name(sender_id)
         rest = parts[ti + 2:]
         if len(rest) >= 2 and len(rest[0]) == 8 and len(rest[1]) >= 4:
             date_str = f"{rest[0][:4]}-{rest[0][4:6]}-{rest[0][6:8]} {rest[1][:2]}:{rest[1][2:4]}"
@@ -6542,8 +6618,9 @@ def api_me(request: Request):
     if out["limited"]:   # 見られる子、出さない道具、ぷちログを見られる子(自分の子が先)
         acc = _access_of(username)
         mine = _get_allowed_characters(request) or []
-        out.update({"characters": mine, "hide_tools": acc["hide_tools"],
-                    "petitlog": mine + [c for c in acc["petitlog"] if c not in mine]})
+        out.update({"characters": mine, "hide_tools": acc["hide_tools"], "can": acc["can"],
+                    "petitlog": mine + [c for c in acc["petitlog"] if c not in mine],
+                    "owner_name": _user_label(OWNER_USER, OWNER_USER)})
     return out
 
 
@@ -6551,6 +6628,7 @@ class AccessBody(BaseModel):
     user: str
     hide_tools: list[str] | None = None
     petitlog: list[str] | None = None
+    can: dict[str, bool] | None = None   # できること(CAN_KEYS)。送った項目だけ変える
 
 
 @app.get("/api/petitlog/characters")
@@ -6577,7 +6655,8 @@ def api_access_get(request: Request):
             continue
         acc = _access_of(user)
         users.append({"id": user, "name": _user_label(user, user), "characters": mine, **acc})
-    return {"users": users, "tools": sorted(HIDEABLE_TOOLS), "characters": [{"id": k, "name": v} for k, v in chars.items()]}
+    return {"users": users, "tools": sorted(HIDEABLE_TOOLS), "characters": [{"id": k, "name": v} for k, v in chars.items()],
+            "can_labels": [{"id": k, "label": v} for k, v in CAN_LABELS]}
 
 
 @app.post("/api/access")
@@ -6593,6 +6672,8 @@ def api_access_set(body: AccessBody, request: Request):
     if body.petitlog is not None:
         known = {c["id"] for c in list_characters()}
         cur["petitlog"] = [c for c in body.petitlog if c in known]
+    if body.can is not None:
+        cur["can"] = {**cur["can"], **{k: bool(v) for k, v in body.can.items() if k in CAN_KEYS}}
     data[body.user] = cur
     path = _access_file()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -7556,11 +7637,14 @@ HTML = """<!DOCTYPE html>
         `<div class="others" id="meNowHelloMsg"></div>` +
         // からだ おやすみ(2026-11-14 ありさん): 3 人まとめて、いまから n 分 カメラ・声・効果音を止める。考える・書くはいつも通り
         `<div class="others" style="margin-top:8px">🌙 からだ おやすみ(カメラ・声・音を止める): ${restWords()}</div>` +
-        `<div class="chips small">${[[30, "30 分"], [60, "1 時間"], [180, "3 時間"]].map(([m, l]) => `<button class="chip" onclick="setRestAll(${m})">${l}</button>`).join("")}` +
-        (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>`;
+        // からだ おやすみ を使えないことになっている人には、様子だけを出して、押すところは出さない
+        (canDo("rest") ? `<div class="chips small">${[[30, "30 分"], [60, "1 時間"], [180, "3 時間"]].map(([m, l]) => `<button class="chip" onclick="setRestAll(${m})">${l}</button>`).join("")}` +
+        (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>` : "");
       const inp = document.getElementById("meNowInput");
       inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
     }
+    // 家の持ち主が「できない」と決めたことか(見られる子が決まっている人だけ。ほかの人は、いつでもできる)
+    function canDo(key) { const can = (window._meInfo || {}).can; return !can || can[key] !== false; }
     function pickMeNowHours(h) { _meNowHours = h; renderMeNow(); }
     function restWords() {
       const on = Object.values(_restAll).filter(r => r.on);
@@ -7866,7 +7950,7 @@ HTML = """<!DOCTYPE html>
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
           const mine = characters.some(x => x.id === c.id);   // 見られる子に入っていない子は、設定を変えられない
-          bodyCards[c.id] = mine && m5_online && body.online ? bodySettingsHtml(c, body) : "";
+          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, body) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
@@ -9976,7 +10060,7 @@ NOTES_HTML = """<!DOCTYPE html>
         const disp = n.title || n.name.replace(/\\.md$/,"");
         const esc = disp.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
         const nameEsc = n.name.replace(/\\\\/g,"\\\\\\\\").replace(/'/g,"\\\\'");
-        const del = editable ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button></div>` : "";
+        const del = editable && window._canDeleteNotes !== false ? `<div class="note-actions"><button onclick="event.stopPropagation();deleteNote('${nameEsc}','${esc}')">🗑</button></div>` : "";
         return `<div class="note-item${currentNote===n.name?" active":""}" onclick="loadNote('${nameEsc}')">
           <div class="note-info"><div class="note-name">${disp}</div><div class="note-meta">${dateStr} · ${sizeStr}</div></div>${del}
         </div>`;
@@ -10020,6 +10104,7 @@ NOTES_HTML = """<!DOCTYPE html>
       const charList = await charsRes.json(), me = await meRes.json();
       chars = charList.map(c => ({ id: c.id, name: c.name||c.id }));
       chars.push({ id: me.username, name: me.name, editable: true });
+      window._canDeleteNotes = !me.can || me.can.notes_delete !== false;   // 家の持ち主が外していれば、消すボタンを出さない
       if (!currentChar) currentChar = me.username || chars[0].id;   // 開いたときは自分のノート
       renderCharTabs(); loadNotes();
     }
@@ -10643,6 +10728,7 @@ ALBUM_HTML = """<!DOCTYPE html>
     let currentPerson = "arisan";    // 開いたときは自分のアルバム(init でログイン中の人に合わせる)
     let currentViewer = "arisan";    // 見ている人 = ログイン中の人
     let viewerLimited = false;       // 見られる子が決まっている人は、消せるのは自分のアルバムの写真だけ
+    let viewerCanDelete = true;      // 家の持ち主が「自分の写真を消す」を外していれば false
     const unread = {};               // ぷちのアルバムごとの、まだ見ていない枚数
     let selectedFile = null;
 
@@ -10730,7 +10816,7 @@ ALBUM_HTML = """<!DOCTYPE html>
           ${readDots ? `<div class="read-by">${readDots}</div>` : ""}`;
         const img = card.querySelector("img");
         img.onclick = (e) => { e.stopPropagation(); openLightbox(currentPerson, p.filename, label, dateStr); };
-        if (viewerLimited && currentPerson !== currentViewer) card.querySelector(".del-btn").remove();   // 人の写真は消せない
+        if (viewerLimited && (currentPerson !== currentViewer || !viewerCanDelete)) card.querySelector(".del-btn").remove();   // 人の写真は消せない。自分の写真も、できないことになっていれば消せない
         else card.querySelector(".del-btn").onclick = (e) => { e.stopPropagation(); deletePhoto(currentPerson, p.filename, card); };
         card.querySelector(".lock-btn").onclick = (e) => { e.stopPropagation(); toggleLock(currentPerson, p.filename, card); };
         // 長押しで削除ボタン表示（モバイル対応）
@@ -10831,6 +10917,7 @@ ALBUM_HTML = """<!DOCTYPE html>
         const me = await fetch("/api/me").then(r=>r.json());
         if (me.username && PERSONS.some(p => p.id === me.username)) currentViewer = me.username;
         viewerLimited = !!me.limited;
+        viewerCanDelete = !me.can || me.can.album_delete !== false;
       } catch(e) {}
       currentPerson = currentViewer;
       buildTabs();
@@ -10985,6 +11072,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
     }
 
     let viewerId = "arisan", viewerLimited = false;   // 見られる子が決まっている人は、録る・消すのは自分のボイスメモだけ
+    let viewerCanDelete = true;                       // 家の持ち主が「自分のボイスメモを消す」を外していれば false
     function canEdit(id) { return !viewerLimited || id === viewerId; }
     function switchPerson(id) {
       currentPerson = id;
@@ -11176,7 +11264,8 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
           closeMemoMenus();
         };
         if (!canEdit(currentPerson)) q(".more-btn").remove();   // 人のボイスメモは、聞くだけ(名前を変える・鍵・消すは出さない)
-        q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
+        if (!viewerCanDelete) q(".mi-del").remove();
+        else q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
         q(".rename-cancel").onclick = () => { q(".rename-form").style.display = "none"; };
         q(".rename-save").onclick = async () => {
           const newTitle = q(".rename-input").value.trim();
@@ -11223,6 +11312,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
         if (me.username && PERSONS.some(p => p.id === me.username)) currentPerson = me.username;
         if (me.username) viewerId = me.username;
         viewerLimited = !!me.limited;
+        viewerCanDelete = !me.can || me.can.voice_delete !== false;
       } catch (e) {}
       buildTabs();
       // ぷちの分を見ているときは録音の欄を出さない
