@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>設定</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 設定のページ(2026-11-14 ありさん: 下から出る窓ではなく、アルバムと同じ 1 ページに)。上の粒で 家 / 各ぷち を切り替える */
+    .s-tabs { flex-wrap: wrap; }
+    .s-tabs .a-pill { display: inline-flex; align-items: center; gap: 6px; }
+    .s-dot { width: 9px; height: 9px; border-radius: 50%; background: #ccc; }
+    .s-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--ui-line-soft); font-size: var(--ui-fs-l); color: var(--ui-text); }
+    .s-row:last-child { border-bottom: none; }
+    .s-row .a-input { width: auto; min-height: 36px; font-size: 0.9rem; }
+    .s-sub { font-size: 0.85rem; color: var(--ui-text-sub); text-align: right; }
+    .s-days { display: flex; gap: 6px; margin: 8px 0; }
+    .s-days .a-pill { flex: 1; justify-content: center; }
+    .s-hours { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+    .s-hour { display: flex; align-items: center; gap: 6px; font-size: 0.9rem; }
+    .s-hour select { min-height: 34px; padding: 0 4px; border: 1px solid var(--ui-line); border-radius: var(--ui-radius-s); background: var(--ui-surface); color: var(--ui-text); font: inherit; font-size: 0.9rem; text-align: center; }
+    .s-hour .x { margin-left: auto; }
+    .s-tools .s-row { gap: 6px; }
+    .s-move { display: flex; gap: 2px; }
+    .s-place { display: flex; gap: 3px; flex-shrink: 0; }
+    .s-place .a-pill { min-height: 30px; padding: 0 9px; font-size: 0.78rem; }
+    .s-name { flex: 1; min-width: 0; }
+    .s-host { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+    .s-host .a-input { flex: 1; width: 0; min-height: 36px; font-size: 0.9rem; }
+    .s-save { width: 100%; margin-top: 14px; min-height: 48px; font-size: 1rem; }
+    .s-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: var(--ui-radius-pill); background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; }
+    .s-toast.on { opacity: 1; }
+    .s-pane { display: none; }
+    .s-pane.on { display: block; }
+    details.m-card > summary { cursor: pointer; }
+    .s-num { width: 72px !important; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>⚙️ 設定</h1></div>
+
+    <div class="o-bar"><div class="m-pills s-tabs" id="tabs"></div></div>
+
+    <!-- 🏠 家 -->
+    <section class="s-pane" id="paneHouse">
+      <div class="m-card">
+        <span class="a-heading">トップバーの色</span>
+        <div class="s-row">
+          <span>🎨 色</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveUi({topbar_color: this.value})" style="width:44px;height:32px;border:none;background:none;padding:0;cursor:pointer;">
+            <button class="a-btn a-btn--sub a-btn--s" onclick="saveUi({topbar_color: null})">ぷちの色に戻す</button>
+          </span>
+        </div>
+      </div>
+      <div class="m-card">
+        <span class="a-heading">送信のしかた</span>
+        <p class="a-hint" style="margin:0 0 8px">話しかける欄でのキーの使い方。送信ボタンはどちらでも使える。</p>
+        <div class="m-pills" style="flex-wrap:wrap" id="sendKey">
+          <button class="a-pill" data-v="enter" onclick="saveUi({send_key: 'enter'})">Enter で送信</button>
+          <button class="a-pill" data-v="ctrl_enter" onclick="saveUi({send_key: 'ctrl_enter'})">Ctrl+Enter で送信(Enter は改行)</button>
+        </div>
+      </div>
+      <div class="m-card s-tools">
+        <span class="a-heading">道具の列</span>
+        <p class="a-hint" style="margin:0 0 6px">▲▼ で並びを変える。出し方は 3 つ: <b>最初</b>(列に出す)/ <b>ほか</b>(「ほか」を押したら出る)/ <b>なし</b>(出さない)。</p>
+        <div id="tools"></div>
+        <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="saveUi({tools: defaultTools()})">はじめの並びに戻す</button>
+      </div>
+    </section>
+
+    <!-- ぷち 1 人 -->
+    <section class="s-pane" id="paneChar">
+      <div class="m-card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="a-heading">アクティブタイム（毎回動く時間帯）</span>
+          <span class="a-pill is-on" id="dayType" style="pointer-events:none"></span>
+        </div>
+        <div class="s-days">
+          <button class="a-pill is-on" id="tabWeekday" onclick="switchDay('weekday')">平日</button>
+          <button class="a-pill" id="tabWeekend" onclick="switchDay('weekend')">休日</button>
+        </div>
+        <div class="s-hours" id="hours"></div>
+        <button class="a-btn a-btn--ghost a-btn--s" onclick="schedule[dayTab].push([8,0,12,0]); renderHours()">＋ 追加</button>
+      </div>
+      <div class="m-card">
+        <span class="a-heading">自律行動（ひとりの時間）</span>
+        <div class="s-row"><span>⏰ cron で動き出す時刻</span><span class="s-sub" id="cronInfo"></span></div>
+        <div class="s-row"><span>🕺 今日のスケジュール</span>
+          <select class="a-input" id="dayTypeOverride" onchange="renderDayType()">
+            <option value="">自動（曜日通り）</option><option value="weekday">平日扱い</option><option value="weekend">休日扱い</option>
+          </select></div>
+        <div class="s-row"><span>⏱️ 自律行動の頻度</span>
+          <select class="a-input" id="autonomousSkip">
+            <option value="0">30分に1回（毎回）</option><option value="1">60分に1回（1回スキップ）</option><option value="2">90分に1回（2回スキップ）</option>
+          </select></div>
+        <div class="s-row"><span>🔁 1 回の最大ターン数（MAX_TURNS）</span>
+          <span style="display:flex;align-items:center;gap:6px"><input type="number" class="a-input s-num" id="maxTurns" min="1" max="200" step="1"><span class="s-sub" id="maxTurnsNote"></span></span></div>
+      </div>
+      <div class="m-card">
+        <span class="a-heading">体の道具の許可</span>
+        <div class="s-row"><span>📷 カメラ</span><label class="a-toggle"><input type="checkbox" id="allowCamera"><span></span></label></div>
+        <div class="s-row"><span>🔊 音</span><label class="a-toggle"><input type="checkbox" id="allowSound"><span></span></label></div>
+        <div class="s-row"><span>🎤 マイク</span><label class="a-toggle"><input type="checkbox" id="allowMic"><span></span></label></div>
+      </div>
+      <details class="m-card">
+        <summary class="a-heading">くわしい設定</summary>
+        <p class="a-hint" style="margin:8px 0">体のアドレス（M5 接続先）。上から順に試す。ふだんは触らなくてよい（家の Wi-Fi・Tailnet の両方を入れてある）</p>
+        <div id="hosts"></div>
+        <button class="a-btn a-btn--ghost a-btn--s" onclick="addHost('')">＋ 追加</button>
+      </details>
+      <button class="a-btn s-save" onclick="saveChar()">保存</button>
+    </section>
+  </div>
+  <div class="s-toast" id="toast"></div>
+
+  <script>
+    const { esc } = PetitPage;
+    const q = new URLSearchParams(location.search);
+    // 道具の一覧(id・絵・名前)。トップページ(dashboard/main.py の TOOLS)と同じ並び。scripts/tests/test_ui_settings_page.py が同じか確かめる
+    const TOOL_LABELS = [
+      ["yousu", "🌱", "ようす"], ["settings", "⚙️", "設定"], ["petitlog", "📜", "ぷちログ"], ["diary", "📔", "日記"], ["anniv", "🎂", "記念日"],
+      ["desires", "🫧", "欲求"], ["sounds", "🔔", "音"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["notes", "📓", "ノート"],
+      ["notebook", "📖", "交換日記"], ["kairanban", "📋", "回覧板"], ["library", "📚", "ライブラリ"], ["kankei", "🔒", "ひみつ"], ["monitor", "📡", "モニタ"],
+      ["terminal", "🖥️", "ターミナル"], ["logs", "🔍", "行動ログ"], ["costs", "💰", "おかね"],
+    ];
+    const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];
+    const TOOL = Object.fromEntries(TOOL_LABELS.map(([id, icon, name]) => [id, {icon, name}]));
+    let chars = [], ui = {}, active = null;   // active: "house" か ぷちの id
+    let schedule = {weekday: [], weekend: []}, dayTab = "weekday";
+
+    function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1600); }
+    function tellParent() { try { if (window.parent !== window) window.parent.postMessage({type: "petit-ui-changed"}, location.origin); } catch (e) {} }
+
+    // ---- 上の粒: 家 | 各ぷち ----
+    function renderTabs() {
+      const el = document.getElementById("tabs");
+      el.innerHTML = [`<button class="a-pill${active === "house" ? " is-on" : ""}" onclick="show('house')">🏠 家</button>`]
+        .concat(chars.map(c => `<button class="a-pill${active === c.id ? " is-on" : ""}" onclick="show(${JSON.stringify(c.id).replace(/"/g, "&quot;")})"><span class="s-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`)).join("");
+    }
+    async function show(id) {
+      active = id;
+      if (id === "house") q.delete("char"); else q.set("char", id);
+      history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q.toString() : ""));
+      renderTabs();
+      document.getElementById("paneHouse").classList.toggle("on", id === "house");
+      document.getElementById("paneChar").classList.toggle("on", id !== "house");
+      if (id === "house") await loadHouse(); else await loadChar(id);
+      window.scrollTo(0, 0);
+    }
+
+    // ---- 家 ----
+    function toolOrder() {
+      const saved = Array.isArray(ui.tools) ? ui.tools.filter(t => t && TOOL[t.id]) : [];
+      const seen = new Set(saved.map(t => t.id));
+      const rest = Object.keys(TOOL).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? false : TOOLS_DEFAULT_SHOWN.includes(id)}));
+      return saved.map(t => ({id: t.id, show: t.show !== false, off: t.off === true})).concat(rest);
+    }
+    function defaultTools() { return Object.keys(TOOL).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})); }
+    function renderHouse() {
+      const c = ui.topbar_color;
+      document.getElementById("topbarColor").value = c || "#f6f3fa";
+      const key = ui.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
+      document.querySelectorAll("#sendKey [data-v]").forEach(b => b.classList.toggle("is-on", b.dataset.v === key));
+      const order = toolOrder();
+      document.getElementById("tools").innerHTML = order.map((t, i) => `<div class="s-row">
+        <span class="s-move"><button class="a-icon-btn" title="上へ" ${i === 0 ? "disabled" : ""} onclick="moveTool(${i}, -1)">▲</button><button class="a-icon-btn" title="下へ" ${i === order.length - 1 ? "disabled" : ""} onclick="moveTool(${i}, 1)">▼</button></span>
+        <span class="s-name">${TOOL[t.id].icon} ${esc(TOOL[t.id].name)}</span>
+        <span class="s-place">${[["row", "最初"], ["more", "ほか"], ["off", "なし"]].map(([v, l]) => `<button class="a-pill${placeOf(t) === v ? " is-on" : ""}" onclick="placeTool(${i}, '${v}')">${l}</button>`).join("")}</span>
+      </div>`).join("");
+    }
+    async function loadHouse() {
+      try { ui = await (await fetch("/api/ui")).json(); } catch (e) { ui = {}; }
+      renderHouse();
+    }
+    async function saveUi(patch) {
+      try {
+        const r = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(patch)});
+        if (!r.ok) { toast("保存できなかった"); return; }
+        ui = await r.json();
+      } catch (e) { toast("保存できなかった"); return; }
+      renderHouse(); tellParent();
+    }
+    function moveTool(i, d) { const o = toolOrder(), j = i + d; if (j < 0 || j >= o.length) return; [o[i], o[j]] = [o[j], o[i]]; saveUi({tools: o}); }
+    const placeOf = t => t.off ? "off" : (t.show ? "row" : "more");   // 3 段階: 最初に表示 / ほかを押したら表示 / 表示しない
+    function placeTool(i, v) { const o = toolOrder(); o[i].show = v === "row"; o[i].off = v === "off"; saveUi({tools: o}); }
+
+    // ---- ぷち 1 人 ----
+    const hourOpts = (sel, max) => Array.from({length: max + 1}, (_, h) => `<option value="${h}"${h === sel ? " selected" : ""}>${String(h).padStart(2, "0")}</option>`).join("");
+    const minOpts = sel => [0, 10, 20, 30, 40, 50].map(m => `<option value="${m}"${m === sel ? " selected" : ""}>${String(m).padStart(2, "0")}</option>`).join("");
+    function renderHours() {
+      document.getElementById("hours").innerHTML = schedule[dayTab].map((h, i) => `<div class="s-hour">
+        <select onchange="schedule[dayTab][${i}][0]=+this.value">${hourOpts(h[0], 23)}</select>:<select onchange="schedule[dayTab][${i}][1]=+this.value">${minOpts(h[1])}</select>
+        <span>〜</span>
+        <select onchange="schedule[dayTab][${i}][2]=+this.value">${hourOpts(h[2], 24)}</select>:<select onchange="schedule[dayTab][${i}][3]=+this.value">${minOpts(h[3])}</select>
+        <button class="a-icon-btn x" title="消す" onclick="schedule[dayTab].splice(${i}, 1); renderHours()">✕</button>
+      </div>`).join("") || `<p class="a-hint" style="margin:0">この日は動かない（時間帯なし）</p>`;
+    }
+    function switchDay(t) { dayTab = t; document.getElementById("tabWeekday").classList.toggle("is-on", t === "weekday"); document.getElementById("tabWeekend").classList.toggle("is-on", t === "weekend"); renderHours(); }
+    function renderDayType() {
+      const ov = document.getElementById("dayTypeOverride").value, dow = new Date().getDay();
+      const weekend = ov === "weekend" || (ov === "" && (dow === 0 || dow === 6));
+      document.getElementById("dayType").textContent = weekend ? "🏖 今日: 休日" : "📅 今日: 平日";
+    }
+    // crontab の行(分・時 …)を言葉に。「毎時 5 分・35 分」。それ以外の形はそのまま見せる
+    function cronWords(entries) {
+      if (!entries.length) return "cron に登録なし";
+      return entries.map(e => {
+        if (e.hour === "*" && e.dom === "*" && e.month === "*" && e.dow === "*" && /^[0-9,]+$/.test(e.minute)) return "毎時 " + e.minute.split(",").map(m => `${parseInt(m)} 分`).join("・");
+        if (/^\*\/\d+$/.test(e.minute) && e.hour === "*") return `${e.minute.slice(2)} 分ごと`;
+        return `${e.minute} ${e.hour} ${e.dom} ${e.month} ${e.dow}（分 時 日 月 曜日）`;
+      }).join(" / ");
+    }
+    function hostRow(v) { return `<div class="s-host"><input type="text" class="a-input host" value="${esc(v)}" placeholder="IP か ホスト名"><button class="a-icon-btn" title="消す" onclick="this.parentElement.remove()">✕</button></div>`; }
+    function addHost(v) { document.getElementById("hosts").insertAdjacentHTML("beforeend", hostRow(v)); const ins = document.querySelectorAll("#hosts .host"); ins[ins.length - 1].focus(); }
+    async function loadChar(id) {
+      const [s, m5, cron] = await Promise.all([
+        fetch(`/api/${id}/settings`).then(r => r.json()).catch(() => ({})),
+        fetch(`/api/${id}/config/m5_hosts`).then(r => r.json()).catch(() => ({})),
+        fetch(`/api/${id}/cron`).then(r => r.json()).catch(() => ({entries: []})),
+      ]);
+      const ah = s.active_hours || {};
+      schedule = {weekday: JSON.parse(JSON.stringify(ah.weekday || [])), weekend: JSON.parse(JSON.stringify(ah.weekend || []))};
+      switchDay("weekday");
+      document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
+      document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
+      document.getElementById("maxTurns").value = s.max_turns ?? 20;
+      document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
+      document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
+      document.getElementById("allowCamera").checked = s.allow_camera ?? true;
+      document.getElementById("allowSound").checked = s.allow_sound ?? true;
+      document.getElementById("allowMic").checked = s.allow_microphone ?? false;
+      document.getElementById("hosts").innerHTML = (m5.m5_hosts || []).map(hostRow).join("");
+      renderDayType();
+    }
+    async function saveChar() {
+      const id = active;
+      const data = {
+        active_hours: schedule,
+        day_type_override: document.getElementById("dayTypeOverride").value || null,
+        autonomous_skip: parseInt(document.getElementById("autonomousSkip").value) || 0,
+        allow_camera: document.getElementById("allowCamera").checked,
+        allow_sound: document.getElementById("allowSound").checked,
+        allow_microphone: document.getElementById("allowMic").checked,
+        max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
+      };
+      const hosts = [...document.querySelectorAll("#hosts .host")].map(el => el.value.trim()).filter(Boolean);
+      try {
+        const [a, b] = await Promise.all([
+          fetch(`/api/${id}/settings`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)}),
+          fetch(`/api/${id}/config/m5_hosts`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({m5_hosts: hosts})}),
+        ]);
+        toast(a.ok && b.ok ? "保存しました" : "保存できなかった");
+      } catch (e) { toast("保存できなかった"); }
+    }
+
+    // ---- はじめ: ?char=<id> があればその子、無ければ家 ----
+    (async () => {
+      try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) { chars = []; }
+      const want = q.get("char");
+      await show(chars.some(c => c.id === want) ? want : "house");
+    })();
+  </script>
+</body>
+</html>

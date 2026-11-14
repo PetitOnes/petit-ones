@@ -2096,7 +2096,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html"}
+             "sounds": "sounds.html", "settings": "settings.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
@@ -2422,6 +2422,12 @@ def api_desire_history(character_id: str, days: int = 7):
 @app.get("/anniversaries", response_class=HTMLResponse)
 def anniversaries_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page():
+    """設定(家・各ぷち)。道具の列の「⚙️ 設定」で会話の場所に出す。中身は dashboard/ui/settings.html"""
+    return HTMLResponse((UI_DIR / _UI_PAGES["settings"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/petitlog", response_class=HTMLResponse)
@@ -4867,7 +4873,7 @@ class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
-    tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true}, …] の順。show=false は「ほか」の中
+    tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
 
 
 @app.post("/api/ui")
@@ -4884,7 +4890,7 @@ def api_ui_set(req: UiSettings):
     if req.send_key in ("enter", "ctrl_enter"):
         cur["send_key"] = req.send_key
     if req.tools is not None:
-        cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True))}
+        cur["tools"] = [{"id": str(t["id"])[:30], "show": bool(t.get("show", True)), "off": bool(t.get("off", False))}
                         for t in req.tools[:40] if isinstance(t, dict) and re.fullmatch(r"[a-z_]+", str(t.get("id", "")))]
     UI_SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     UI_SETTINGS_FILE.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -6611,9 +6617,6 @@ HTML = """<!DOCTYPE html>
     .day-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
     .day-tab { flex: 1; padding: 6px 0; font-size: 0.8rem; border: 1px solid var(--char-border); border-radius: 8px; background: white; cursor: pointer; text-align: center; color: var(--char-mid); }
     .day-tab.active { background: var(--char); color: var(--char-btn-text); border-color: var(--char); }
-    .settings-tabs { margin-bottom: 14px; }   /* 設定画面の上: 家 | ぷちてゃ | ぷちこ | ぷちる */
-    .settings-tabs .day-tab { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 7px 4px; }
-    .settings-tabs .char-pick-dot { width: 9px; height: 9px; }
 
     /* ポップアップ */
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
@@ -6872,109 +6875,7 @@ HTML = """<!DOCTYPE html>
   </div>
 
   <!-- 設定ポップアップ -->
-  <div class="overlay" id="settingsOverlay" onclick="closeIfOverlay(event,'settingsOverlay')">
-    <div class="popup">
-      <div class="popup-header">
-        <span class="popup-title" id="settingsTitle">設定</span>
-        <button class="popup-close" onclick="closePopup('settingsOverlay')">✕</button>
-      </div>
-      <div class="popup-body">
-        <!-- 2026-11-14 ありさん: 題を「○○の設定画面」に、cron で動き出す分と MAX_TURNS を見せる、項目に見出し、M5 接続先は「くわしい設定」へ -->
-        <div class="day-tabs settings-tabs" id="settingsTabsChar"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span class="a-heading" id="activeTimeLabel">アクティブタイム（毎回動く時間帯）</span>
-          <span id="dayTypeLabel" style="font-size:0.75rem;padding:2px 8px;border-radius:8px;font-weight:600;"></span>
-        </div>
-        <div class="day-tabs">
-          <button class="day-tab active" id="tabWeekday" onclick="switchDayTab('weekday')">平日</button>
-          <button class="day-tab" id="tabWeekend" onclick="switchDayTab('weekend')">休日</button>
-        </div>
-        <div class="hours-list" id="hoursList"></div>
-        <button class="add-hour-btn" onclick="addHourRow()">＋ 追加</button>
-        <div style="margin-top:16px;">
-          <span class="a-heading" style="display:block;margin-top:6px">自律行動（ひとりの時間）</span>
-          <div class="setting-row">
-            <span class="setting-label">⏰ cron で動き出す時刻</span>
-            <span id="cronInfo" style="font-size:0.85rem;color:#666;text-align:right"></span>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">🕺 今日のスケジュール</span>
-            <select id="dayTypeOverride" onchange="updateDayTypeLabel()" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-              <option value="">自動（曜日通り）</option>
-              <option value="weekday">平日扱い</option>
-              <option value="weekend">休日扱い</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">⏱️ 自律行動の頻度</span>
-            <select id="autonomousSkip" style="font-size:0.8rem;padding:4px 8px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-              <option value="0">30分に1回（毎回）</option>
-              <option value="1">60分に1回（1回スキップ）</option>
-              <option value="2">90分に1回（2回スキップ）</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">🔁 1 回の最大ターン数（MAX_TURNS）</span>
-            <span style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#888">
-              <input type="number" id="maxTurns" min="1" max="200" step="1" style="width:64px;font-size:0.9rem;padding:4px 6px;border-radius:8px;border:1px solid #ccc;text-align:right">
-              <span id="maxTurnsNote"></span>
-            </span>
-          </div>
-          <span class="a-heading" style="display:block;margin-top:18px">体の道具の許可</span>
-          <div class="setting-row">
-            <span class="setting-label">📷 カメラ</span>
-            <label class="toggle"><input type="checkbox" id="allowCamera"><span class="toggle-slider"></span></label>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">🔊 音</span>
-            <label class="toggle"><input type="checkbox" id="allowSound"><span class="toggle-slider"></span></label>
-          </div>
-          <div class="setting-row">
-            <span class="setting-label">🎤 マイク</span>
-            <label class="toggle"><input type="checkbox" id="allowMic"><span class="toggle-slider"></span></label>
-          </div>
-        </div>
-        <details style="margin-top:16px;">
-          <summary class="a-heading" style="cursor:pointer">くわしい設定</summary>
-          <div style="margin-top:8px;font-size:0.8rem;color:#888">体のアドレス（M5 接続先）。上から順に試す。ふだんは触らなくてよい（家の Wi-Fi・Tailnet の両方を入れてある）</div>
-          <div id="m5HostsList" style="margin-top:8px;"></div>
-          <button class="add-hour-btn" onclick="addM5HostRow('')">＋ 追加</button>
-        </details>
-        <button class="save-settings-btn" onclick="saveSettings()">保存</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- 家の設定(2026-11-10 ありさん): みんな・だれかのときの ⚙️。部品は ui/atoms.css・molecules.css -->
-  <div class="overlay" id="houseSettingsOverlay" onclick="closeIfOverlay(event,'houseSettingsOverlay')">
-    <div class="popup house-settings">
-      <div class="popup-header">
-        <span class="popup-title">家の設定</span>
-        <button class="popup-close" onclick="closePopup('houseSettingsOverlay')">✕</button>
-      </div>
-      <div class="popup-body">
-        <div class="day-tabs settings-tabs" id="settingsTabsHouse"></div>
-        <span class="a-heading">トップバーの色</span>
-        <div class="m-row">
-          <span>🎨 色</span>
-          <span style="display:flex;align-items:center;gap:8px;">
-            <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveTopbarColor(this.value)" style="width:44px;height:32px;border:none;background:none;padding:0;cursor:pointer;">
-            <button class="a-btn a-btn--sub a-btn--s" onclick="saveTopbarColor(null)">ぷちの色に戻す</button>
-          </span>
-        </div>
-        <span class="a-heading" style="display:block;margin-top:18px">送信のしかた</span>
-        <p class="a-hint" style="margin:4px 0 8px">話しかける欄でのキーの使い方。送信ボタンはどちらでも使える。</p>
-        <div class="m-pills" id="sendKeyPills" style="flex-wrap:wrap">
-          <button class="a-pill" data-send-key="enter" onclick="saveSendKey('enter')">Enter で送信</button>
-          <button class="a-pill" data-send-key="ctrl_enter" onclick="saveSendKey('ctrl_enter')">Ctrl+Enter で送信(Enter は改行)</button>
-        </div>
-        <span class="a-heading" style="display:block;margin-top:18px">道具の列</span>
-        <p class="a-hint" style="margin:4px 0 6px">▲▼ で並びを変える。スイッチを切った道具は「ほか」の中に入る。</p>
-        <div id="toolSettings"></div>
-        <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="resetTools()">はじめの並びに戻す</button>
-      </div>
-    </div>
-  </div>
+  <!-- 設定(家・各ぷち)は /settings のページ(dashboard/ui/settings.html)。道具の列の「⚙️ 設定」で会話の場所に出す(2026-11-14 ありさん) -->
 
   <!-- メールボックスポップアップ -->
   <div class="overlay" id="mailboxOverlay" onclick="closeIfOverlay(event,'mailboxOverlay')">
@@ -7081,6 +6982,11 @@ HTML = """<!DOCTYPE html>
       applyTopbarColor();
     }
     fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); renderSendKey(); if (document.getElementById("toolRow").children.length) renderToolRow(); }).catch(() => {});
+    // 設定のページ(/settings、会話の場所に埋めて出す)で家の設定が変わったら、こちらの色・列・送り方も新しくする
+    window.addEventListener("message", e => {
+      if (e.origin !== location.origin || !e.data || e.data.type !== "petit-ui-changed") return;
+      fetch("/api/ui").then(r => r.json()).then(d => { _uiSettings = d || {}; applyTopbarColor(); renderSendKey(); renderToolRow(); }).catch(() => {});
+    });
 
     function applyTheme(color) {
       const r = document.documentElement;
@@ -7262,7 +7168,7 @@ HTML = """<!DOCTYPE html>
     // 道具の一覧。並びと、列に出すか「ほか」に入れるかは家の設定(⚙️ → 道具の列)で変えられる
     const TOOLS = {
       yousu:     {icon: "🌱", name: "ようす",     attr: 'onclick="openYousu()"'},
-      settings:  {icon: "⚙️", name: "設定",       attr: 'onclick="openSettingsHub()"'},   // 家 / 各ぷち のタブ(2026-11-14 ありさん。トップバーから移した)
+      settings:  {icon: "⚙️", name: "設定",       pane: "settings"},   // 家 / 各ぷち(2026-11-14 ありさん。トップバーから移し、はじめは「ほか」の中)
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       anniv:     {icon: "🎂", name: "記念日",     pane: "anniv"},
@@ -7280,14 +7186,13 @@ HTML = """<!DOCTYPE html>
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
       costs:     {icon: "💰", name: "おかね",     attr: 'href="/costs"'},
     };
-    const TOOLS_DEFAULT_SHOWN = ["yousu", "settings", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // 回覧板からあとは「ほか」
-    const TOOLS_NEW_SHOWN = ["settings"];   // 家の設定に並びが保存されたあとに増えた道具でも、はじめから見える側に出すもの
+    const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // それ以外(設定・回覧板…)は「ほか」
     // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す
     function toolOrder() {
       const saved = Array.isArray(_uiSettings.tools) ? _uiSettings.tools.filter(t => t && TOOLS[t.id]) : [];
       const seen = new Set(saved.map(t => t.id));
-      const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? TOOLS_NEW_SHOWN.includes(id) : TOOLS_DEFAULT_SHOWN.includes(id)}));
-      return saved.map(t => ({id: t.id, show: t.show !== false})).concat(rest);
+      const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? false : TOOLS_DEFAULT_SHOWN.includes(id)}));
+      return saved.map(t => ({id: t.id, show: t.show !== false, off: t.off === true})).concat(rest);
     }
     function renderToolRow() {
       const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
@@ -7297,82 +7202,19 @@ HTML = """<!DOCTYPE html>
         return tool(d.icon, d.name, attr);
       };
       const order = toolOrder();
-      const shown = order.filter(t => t.show), more = order.filter(t => !t.show);
+      // 3 段階(2026-11-14 ありさん): 最初に表示(show) / ほかを押したら表示(!show) / 表示しない(off)
+      const shown = order.filter(t => t.show && !t.off), more = order.filter(t => !t.show && !t.off);
       const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
       document.getElementById("toolRow").innerHTML = shown.map(one).join("")
         + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
             + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">` + more.map(one).join("") + `</span>` : "");
     }
 
-    // ---- 家の設定(みんな・だれかのときの ⚙️): トップバーの色、道具の列の並びと出す/「ほか」 ----
+    // ---- 送り方(家の設定 /settings で決める。ここは欄の説明文だけ) ----
     function renderSendKey() {
       const cur = _uiSettings.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
       document.querySelectorAll("#sendKeyPills [data-send-key]").forEach(b => b.classList.toggle("is-on", b.dataset.sendKey === cur));
       document.getElementById("input").placeholder = cur === "ctrl_enter" ? "話しかける…(Ctrl+Enter で送信)" : "話しかける...";
-    }
-    async function saveSendKey(mode) {
-      _uiSettings.send_key = mode;   // 先に画面へ
-      renderSendKey();
-      try {
-        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({send_key: mode})});
-        if (res.ok) _uiSettings = await res.json();
-      } catch {}
-    }
-    // 道具の列の「⚙️ 設定」。いま 1 人を選んでいればその子、みんな・だれかなら家を最初に出す
-    function openSettingsHub() {
-      if (currentCharId === "select" || currentCharId === "group") openHouseSettings();
-      else openSettings(currentCharId);
-    }
-    // 設定画面の上のタブ: 家 | 各ぷち。押すと、いまの画面を閉じてそちらを開く
-    function renderSettingsTabs(elId, active) {
-      const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-      const tabs = [`<button class="day-tab${active === "house" ? " active" : ""}" onclick="closePopup('settingsOverlay'); openHouseSettings()">🏠 家</button>`]
-        .concat(characters.filter(c => c.id).map(c => `<button class="day-tab${active === c.id ? " active" : ""}" onclick="closePopup('houseSettingsOverlay'); closePopup('settingsOverlay'); openSettings(${JSON.stringify(c.id).replace(/"/g, "&quot;")})"><span class="char-pick-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`));
-      document.getElementById(elId).innerHTML = tabs.join("");
-    }
-    function openHouseSettings() {
-      renderSendKey();
-      renderToolSettings();
-      applyTopbarColor();
-      renderSettingsTabs("settingsTabsHouse", "house");
-      document.getElementById("houseSettingsOverlay").classList.add("open");
-    }
-    function renderToolSettings() {
-      const order = toolOrder();
-      document.getElementById("toolSettings").innerHTML = order.map((t, i) => {
-        const d = TOOLS[t.id];
-        return `<div class="m-row tool-set-row">
-          <span class="tool-set-move">
-            <button class="a-icon-btn" title="上へ" ${i === 0 ? "disabled" : ""} onclick="moveTool(${i}, -1)">▲</button>
-            <button class="a-icon-btn" title="下へ" ${i === order.length - 1 ? "disabled" : ""} onclick="moveTool(${i}, 1)">▼</button>
-          </span>
-          <span class="tool-set-name">${d.icon} ${d.name}</span>
-          <label class="a-toggle" title="列に出す"><input type="checkbox" ${t.show ? "checked" : ""} onchange="showTool(${i}, this.checked)"><span></span></label>
-        </div>`;
-      }).join("");
-    }
-    async function saveTools(order) {
-      _uiSettings.tools = order;   // 先に画面へ
-      renderToolRow();
-      renderToolSettings();
-      try {
-        const res = await fetch("/api/ui", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tools: order})});
-        if (res.ok) _uiSettings = await res.json();
-      } catch {}
-    }
-    function moveTool(i, d) {
-      const order = toolOrder(), j = i + d;
-      if (j < 0 || j >= order.length) return;
-      [order[i], order[j]] = [order[j], order[i]];
-      saveTools(order);
-    }
-    function showTool(i, on) {
-      const order = toolOrder();
-      order[i].show = on;
-      saveTools(order);
-    }
-    function resetTools() {
-      saveTools(Object.keys(TOOLS).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})));
     }
 
     function toggleMoreTools() {
@@ -7486,7 +7328,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library", settings: "/settings"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
@@ -8466,74 +8308,13 @@ HTML = """<!DOCTYPE html>
     }
     function closeIfOverlay(e, id) { if (e.target === e.currentTarget) closePopup(id); }
 
-    let currentSchedule = { weekday: [], weekend: [] };
-    let currentDayTab = "weekday";
-
-    function updateDayTypeLabel() {
-      const dow = new Date().getDay(); // 0=日,6=土
-      const override = document.getElementById("dayTypeOverride").value;
-      let isWeekend;
-      if (override === "weekday") isWeekend = false;
-      else if (override === "weekend") isWeekend = true;
-      else isWeekend = (dow === 0 || dow === 6);
-      const lbl = document.getElementById("dayTypeLabel");
-      if (isWeekend) {
-        lbl.textContent = "🏖 今日: 休日スケジュール";
-        lbl.style.background = "#2d1f4e"; lbl.style.color = "#c4a8ff";
-      } else {
-        lbl.textContent = "📅 今日: 平日スケジュール";
-        lbl.style.background = "#1f2d4e"; lbl.style.color = "#a8c4ff";
-      }
-    }
-
-    function switchDayTab(tab) {
-      currentDayTab = tab;
-      document.getElementById("tabWeekday").classList.toggle("active", tab === "weekday");
-      document.getElementById("tabWeekend").classList.toggle("active", tab === "weekend");
-      renderHours();
-    }
-
-    function makeHourOpts(sel, max) {
-      let o = "";
-      for (let h = 0; h <= max; h++) o += `<option value="${h}" ${h===sel?"selected":""}>${String(h).padStart(2,"0")}</option>`;
-      return o;
-    }
-    function makeMinOpts(sel) {
-      let o = "";
-      for (let m = 0; m < 60; m += 10) o += `<option value="${m}" ${m===sel?"selected":""}>${String(m).padStart(2,"0")}</option>`;
-      return o;
-    }
-    function renderHours() {
-      const hours = currentSchedule[currentDayTab];
-      const list = document.getElementById("hoursList");
-      list.innerHTML = hours.map((h, i) => {
-        const sh = h[0], sm = h[1], eh = h[2], em = h[3];
-        return `<div class="hour-row">
-          <div class="time-group">
-            <select onchange="currentSchedule[currentDayTab][${i}][0]=+this.value">${makeHourOpts(sh,23)}</select>
-            <span>:</span>
-            <select onchange="currentSchedule[currentDayTab][${i}][1]=+this.value">${makeMinOpts(sm)}</select>
-          </div>
-          <span>〜</span>
-          <div class="time-group">
-            <select onchange="currentSchedule[currentDayTab][${i}][2]=+this.value">${makeHourOpts(eh,24)}</select>
-            <span>:</span>
-            <select onchange="currentSchedule[currentDayTab][${i}][3]=+this.value">${makeMinOpts(em)}</select>
-          </div>
-          <button class="hour-del" onclick="removeHour(${i})">✕</button>
-        </div>`;
-      }).join("");
-    }
-
-    function addHourRow() { currentSchedule[currentDayTab].push([8, 0, 12, 0]); renderHours(); }
-    function removeHour(i) { currentSchedule[currentDayTab].splice(i, 1); renderHours(); }
 
     let currentMailTab = "inbox";
 
     window.addEventListener("load", () => {
       // #mailbox / #settings で開く(スマホのブックマーク用。2026-10-16)
       if (location.hash === "#mailbox") openMailbox();
-      else if (location.hash === "#settings") openSettingsHub();
+      else if (location.hash === "#settings") showPane("settings");
     });
     function openMailbox() {
       currentMailTab = "inbox";
@@ -8765,93 +8546,7 @@ HTML = """<!DOCTYPE html>
       } catch(e) {}
     }
 
-    function renderM5Hosts(hosts) {
-      const el = document.getElementById("m5HostsList");
-      el.innerHTML = hosts.map((h, i) => `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
-        <input type="text" class="m5-host-input" value="${h}" placeholder="IP or hostname" style="flex:1;font-size:0.85rem;padding:6px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#f44336;font-size:1rem;cursor:pointer;">✕</button>
-      </div>`).join("");
-    }
-    function addM5HostRow(val) {
-      const el = document.getElementById("m5HostsList");
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;gap:6px;align-items:center;margin-bottom:6px;";
-      row.innerHTML = `<input type="text" class="m5-host-input" value="${val||''}" placeholder="IP or hostname" style="flex:1;font-size:0.85rem;padding:6px 10px;border-radius:8px;border:1px solid #555;background:#2a2a3e;color:#ddd;">
-        <button onclick="this.parentElement.remove()" style="background:none;border:none;color:#f44336;font-size:1rem;cursor:pointer;">✕</button>`;
-      el.appendChild(row);
-      row.querySelector("input").focus();
-    }
-    function getM5Hosts() {
-      return [...document.querySelectorAll(".m5-host-input")].map(el => el.value.trim()).filter(Boolean);
-    }
 
-    // crontab の行(分・時 …)を言葉に。「毎時 5 分・35 分」。それ以外の形はそのまま見せる
-    function cronWords(entries) {
-      if (!entries.length) return "cron に登録なし";
-      return entries.map(e => {
-        if (e.hour === "*" && e.dom === "*" && e.month === "*" && e.dow === "*" && /^[0-9,]+$/.test(e.minute)) {
-          return "毎時 " + e.minute.split(",").map(m => `${parseInt(m)} 分`).join("・");
-        }
-        if (/^\\*\\/\\d+$/.test(e.minute) && e.hour === "*") return `${e.minute.slice(2)} 分ごと`;
-        return `${e.minute} ${e.hour} ${e.dom} ${e.month} ${e.dow}（分 時 日 月 曜日）`;
-      }).join(" / ");
-    }
-
-    let _settingsCharId = null;   // 設定画面に出している子(タブで切り替えられるので、見ている子とは別に持つ)
-    async function openSettings(charId) {
-      _settingsCharId = charId || _settingsCharId;
-      if (_settingsCharId === "select" || _settingsCharId === "group") return openHouseSettings();   // みんな・だれかのときは家の設定
-      const [res, m5Res, cronRes] = await Promise.all([
-        fetch(`/api/${_settingsCharId}/settings`),
-        fetch(`/api/${_settingsCharId}/config/m5_hosts`),
-        fetch(`/api/${_settingsCharId}/cron`),
-      ]);
-      const s = await res.json();
-      const m5 = await m5Res.json();
-      const cron = await cronRes.json().catch(() => ({entries: []}));
-      const ah = s.active_hours || {};
-      currentSchedule = {
-        weekday: JSON.parse(JSON.stringify(ah.weekday || [])),
-        weekend: JSON.parse(JSON.stringify(ah.weekend || [])),
-      };
-      currentDayTab = "weekday";
-      document.getElementById("tabWeekday").classList.add("active");
-      document.getElementById("tabWeekend").classList.remove("active");
-      const cur = characters.find(c=>c.id===_settingsCharId);
-      const charName = cur ? (cur.name||cur.id) : _settingsCharId;
-      document.getElementById("settingsTitle").textContent = `${charName}の設定画面`;
-      renderSettingsTabs("settingsTabsChar", _settingsCharId);
-      document.getElementById("activeTimeLabel").textContent = "アクティブタイム（毎回動く時間帯）";
-      document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
-      document.getElementById("maxTurns").value = s.max_turns ?? 20;
-      document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
-      renderHours();
-      document.getElementById("dayTypeOverride").value = s.day_type_override ?? "";
-      document.getElementById("autonomousSkip").value = s.autonomous_skip ?? 0;
-      document.getElementById("allowCamera").checked = s.allow_camera ?? true;
-      document.getElementById("allowSound").checked = s.allow_sound ?? true;
-      document.getElementById("allowMic").checked = s.allow_microphone ?? false;
-      renderM5Hosts(m5.m5_hosts || []);
-      updateDayTypeLabel();
-      document.getElementById("settingsOverlay").classList.add("open");
-    }
-
-    async function saveSettings() {
-      const data = {
-        active_hours: currentSchedule,
-        day_type_override: document.getElementById("dayTypeOverride").value || null,
-        autonomous_skip: parseInt(document.getElementById("autonomousSkip").value) || 0,
-        allow_camera: document.getElementById("allowCamera").checked,
-        allow_sound: document.getElementById("allowSound").checked,
-        allow_microphone: document.getElementById("allowMic").checked,
-        max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
-      };
-      await Promise.all([
-        fetch(`/api/${_settingsCharId}/settings`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(data) }),
-        fetch(`/api/${_settingsCharId}/config/m5_hosts`, { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({m5_hosts: getM5Hosts()}) }),
-      ]);
-      closePopup("settingsOverlay");
-    }
 
     async function doLogout() {
       await fetch("/api/auth/logout", {method:"POST"});
