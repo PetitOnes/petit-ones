@@ -69,6 +69,8 @@ _MCP_DID = {
     ("memory", "save_visual_memory"): "memory", ("memory", "save_audio_memory"): "memory",
     ("notes", "write_note"): "note", ("notes", "append_note"): "note",
 }
+SNS_MAIL_TOOL = "mcp__petit-sns__mail_send"   # ぷちSNS(家の外のぷちとの手紙)。家のメールボックスには残らない
+SNS_MAIL_VIA = "ぷちSNS"
 QUIET_NOTE_PREFIX = "しずかな時間"   # scripts/quiet_time.py が足すノート(何も残さなかった回の、その子の言葉)
 _AUDIO_EXTS = {".wav", ".mp3", ".webm", ".ogg", ".m4a", ".mp4"}
 _WEEKDAYS = "月火水木金土日"
@@ -204,6 +206,52 @@ def _alone_words(log: Path, char_id: str) -> str:
     return "、".join([te for te, _ in words[:-1]] + [words[-1][1]])
 
 
+def _sns_mails(log: Path) -> list[dict]:
+    """行動の記録 1 つから、ぷちSNS で送れた手紙を拾う: [{"at": 時刻か None, "to": 宛先, "body": 本文}]
+
+    道具の呼び出し(宛先・本文)と、その返事(送れたか・相手の呼び名・時刻)を組にする。送れなかったものは出さない
+    """
+    try:
+        text = log.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+    if SNS_MAIL_TOOL not in text:
+        return []
+    asked: dict[str, dict] = {}
+    out: list[dict] = []
+    for line in text.splitlines():
+        if "tool_use" not in line and "tool_result" not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if not isinstance(c, dict):
+                continue
+            if c.get("type") == "tool_use" and c.get("name") == SNS_MAIL_TOOL:
+                args = c.get("input") if isinstance(c.get("input"), dict) else {}
+                asked[str(c.get("id"))] = {"to": str(args.get("to", "")), "body": str(args.get("body", "")),
+                                           "at": _local(str(ev.get("timestamp", "")))}
+            elif c.get("type") == "tool_result" and str(c.get("tool_use_id")) in asked and not c.get("is_error"):
+                mail = asked.pop(str(c.get("tool_use_id")))
+                parts = c.get("content")
+                raw = parts[0].get("text", "") if isinstance(parts, list) and parts and isinstance(parts[0], dict) else parts
+                try:
+                    res = json.loads(raw) if isinstance(raw, str) else {}
+                except json.JSONDecodeError:
+                    res = {}
+                if not isinstance(res, dict) or res.get("ok") is not True:
+                    continue
+                sent = res.get("sent") if isinstance(res.get("sent"), dict) else {}
+                mail["to"] = str(sent.get("to") or mail["to"])
+                mail["at"] = _local(str(sent.get("at", ""))) or mail["at"]
+                out.append(mail)
+    return out
+
+
 def _files(d: Path) -> list[Path]:
     try:
         return [f for f in d.iterdir() if f.is_file()]
@@ -225,6 +273,26 @@ class _Index:
         self._mail()
         self._notes()
         self._alone()
+        self._streams()
+
+    def _streams(self) -> None:
+        """行動の記録(ひとりの時間・会話)を、始まった日ごとに。中は、出す日のぶんだけあとで読む"""
+        self.streams: dict[Date, list[Path]] = {}
+        for f in _files(self.src.auto_log_dir):
+            if f.name.endswith("stream.jsonl") and f.name.split("_", 2)[-1] in ("stream.jsonl", "chat_stream.jsonl"):
+                ts = _stamp(f.name)
+                if ts:
+                    self.streams.setdefault(ts.date(), []).append(f)
+
+    def _sns_mail(self, day: Date) -> list[dict]:
+        """その日に、ぷちSNS で送った手紙(家の外のぷちへ)。前の日に始まって日をまたいだ回も見る"""
+        out = []
+        for f in self.streams.get(day, []) + self.streams.get(day - timedelta(days=1), []):
+            for m in _sns_mails(f):
+                ts = m["at"] or _stamp(f.name)
+                if ts and ts.date() == day:
+                    out.append({"_ts": ts, "kind": "mail", "to": m["to"], "via": SNS_MAIL_VIA, "_text": m["body"].strip()})
+        return out
 
     def _add(self, ts: datetime, **item) -> None:
         item["_ts"] = ts
@@ -507,7 +575,7 @@ class _Index:
 
     def day(self, day: Date) -> list[dict]:
         """その日の行(新しい順)。画面に渡す形にして返す"""
-        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day) + self._hello(day)
+        items = list(self.by_day.get(day, [])) + self._memories(day) + self._body(day) + self._hello(day) + self._sns_mail(day)
         if self.src.anniversaries:   # その日のいちばん上に出す(時刻は持たない)
             top = datetime.combine(day, datetime.max.time())
             items += [{"_ts": top, "kind": "anniv", "text": a["label"], "note": a.get("note", "")} for a in self.src.anniversaries(day)]
@@ -525,7 +593,7 @@ class _Index:
                 row["end"] = run["end"].strftime("%H:%M")
             elif it["kind"] == "mail":
                 try:
-                    body = it["_file"].read_text(encoding="utf-8").strip()
+                    body = it["_text"] if "_text" in it else it["_file"].read_text(encoding="utf-8").strip()
                 except OSError:
                     body = ""
                 row["text"] = body[:MAIL_TEXT_MAX]
