@@ -594,42 +594,69 @@ async def auth_middleware(request: Request, call_next):
 
 
 def _login_html() -> str:
+    # ログインの前は /ui/ の見た目の部品(tokens.css など)を読めないので、同じ色と形をここに書く
+    # (dashboard/ui/tokens.css の data-ui="foster": クリーム + 丸ゴシック)
     return """<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ログイン - Petit Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
 <style>
-body { font-family: -apple-system, sans-serif; background: #f5f0fa; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-.login-box { background: white; border-radius: 16px; padding: 32px; box-shadow: 0 4px 24px rgba(0,0,0,0.08); width: 300px; }
-h2 { margin: 0 0 20px; color: #333; font-size: 1.2rem; text-align: center; }
-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 0.9rem; margin-bottom: 12px; box-sizing: border-box; }
-button { width: 100%; padding: 10px; background: #cab8d9; border: none; border-radius: 8px; font-size: 0.9rem; font-weight: 600; cursor: pointer; color: #333; }
-button:hover { background: #b8a3cc; }
-.remember { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; font-size: 0.8rem; color: #666; }
-.error { color: #e74c3c; font-size: 0.8rem; margin-bottom: 12px; display: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; justify-content: center; align-items: center; padding: 20px;
+  font-family: "M PLUS Rounded 1c", -apple-system, "Hiragino Maru Gothic ProN", sans-serif; color: #3A322D; background: #FBF4E8; }
+.login-box { width: 100%; max-width: 340px; padding: 28px 24px 24px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
+.dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 14px; }
+.dots span { width: 12px; height: 12px; border-radius: 50%; }
+h1 { margin: 0 0 4px; font-family: "Zen Maru Gothic", "M PLUS Rounded 1c", sans-serif; font-size: 1.3rem; text-align: center; color: #3A322D; }
+.sub { margin: 0 0 20px; font-size: 0.8rem; text-align: center; color: #6E625A; }
+label.field { display: block; margin-bottom: 12px; font-size: 0.8rem; color: #6E625A; }
+label.field input { display: block; width: 100%; min-height: 48px; margin-top: 4px; padding: 0 14px; font: inherit; font-size: 1rem; color: #3A322D;
+  background: #FFFDF8; border: 1.5px solid #E3D6C2; border-radius: 12px; outline: none; }
+label.field input:focus { border-color: #9b8ec4; box-shadow: 0 0 0 3px #f0eaf8; }
+.remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 18px; font-size: 0.85rem; color: #6E625A; cursor: pointer; }
+.remember input { width: 18px; height: 18px; accent-color: #9b8ec4; }
+button { width: 100%; min-height: 48px; font: inherit; font-size: 1rem; font-weight: 700; color: #fff; background: #9b8ec4; border: none; border-radius: 12px; cursor: pointer; }
+button:hover { opacity: 0.9; }
+button:disabled { opacity: 0.5; cursor: default; }
+.error { display: none; margin: 0 0 12px; padding: 10px 12px; font-size: 0.85rem; color: #B84E33; background: #fbe2dc; border-radius: 10px; }
 </style></head><body>
-<div class="login-box">
-<h2>Petit Dashboard</h2>
-<div class="error" id="error">ユーザー名またはパスワードが違います</div>
-<input id="username" placeholder="ユーザー名" autocomplete="username">
-<input id="password" type="password" placeholder="パスワード" autocomplete="current-password">
-<label class="remember"><input type="checkbox" id="remember" checked> 7日間ログインを維持</label>
-<button onclick="doLogin()">ログイン</button>
-</div>
+<form class="login-box" onsubmit="doLogin(event)">
+<div class="dots" aria-hidden="true"><span style="background:#e0d8f0"></span><span style="background:#cab8d9"></span><span style="background:#9b8ec4"></span></div>
+<h1>Petit Dashboard</h1>
+<p class="sub">ぷちたちのおうち</p>
+<div class="error" id="error" role="alert">ユーザー名かパスワードが違います</div>
+<label class="field">ユーザー名<input id="username" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
+<label class="field">パスワード<input id="password" type="password" autocomplete="current-password" required></label>
+<label class="remember"><input type="checkbox" id="remember" checked>7 日間ログインしたままにする</label>
+<button id="loginBtn" type="submit">ログイン</button>
+</form>
 <script>
-async function doLogin() {
-  const res = await fetch("/api/auth/login", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      username: document.getElementById("username").value,
-      password: document.getElementById("password").value,
-      remember: document.getElementById("remember").checked
-    })
-  });
-  if (res.ok) { location.href = "/"; }
-  else { document.getElementById("error").style.display = "block"; }
+async function doLogin(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById("loginBtn"), err = document.getElementById("error");
+  err.style.display = "none";
+  btn.disabled = true;
+  let ok = false;
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+        remember: document.getElementById("remember").checked
+      })
+    });
+    ok = res.ok;
+    if (!ok) err.textContent = "ユーザー名かパスワードが違います";
+  } catch (e) { err.textContent = "つながりませんでした。少し待って、もう一度ためしてください"; }
+  if (ok) { location.href = "/"; return; }
+  err.style.display = "block";
+  btn.disabled = false;
+  document.getElementById("password").select();
 }
-document.getElementById("password").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+document.getElementById("username").focus();
 </script></body></html>"""
 
 PROJECT_DIR = Path(os.getenv("PROJECT_DIR", Path(__file__).parent.parent))
