@@ -54,6 +54,8 @@
     const { esc, dayLabel } = PetitPage;
     const REPEAT = { yearly: "毎年", monthly: "毎月", once: "その日だけ" };
     let items = [], editing = null;
+    let me = {};   // 見られる子が決まっている人は、自分が足した記念日だけ直す・消す
+    function canTouch(it) { return !me.limited || it.by === me.username; }
 
     function leftText(it) {
       if (it.days_left === null) return "おわり";
@@ -71,8 +73,8 @@
           ${it.note ? `<div class="o-anniv-sub">${esc(it.note)}</div>` : ""}
           ${it.by_name ? `<div class="o-anniv-sub">${esc(it.by_name)}が足した</div>` : ""}</div>
         <span class="o-anniv-left">${leftText(it)}</span>
-        <button class="a-btn a-btn--sub a-btn--s" data-edit="${esc(it.id)}">直す</button>
-        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.id)}">消す</button>
+        ${canTouch(it) ? `<button class="a-btn a-btn--sub a-btn--s" data-edit="${esc(it.id)}">直す</button>
+        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.id)}">消す</button>` : ""}
       </div>`;
     }
 
@@ -153,7 +155,8 @@
     });
 
     syncYear();
-    fetch("/api/anniversaries").then(r => r.json()).then(render).catch(() => {
+    fetch("/api/me").then(r => r.json()).then(m => { me = m || {}; }).catch(() => {})
+      .then(() => fetch("/api/anniversaries")).then(r => r.json()).then(render).catch(() => {
       document.getElementById("empty").style.display = "";
       document.getElementById("empty").textContent = "読み込めませんでした";
     });

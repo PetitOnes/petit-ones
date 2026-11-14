@@ -520,6 +520,57 @@ def _is_limited(request: Request | None) -> bool:
     return request is not None and _get_allowed_characters(request) is not None
 
 
+# ---- 見られる子が決まっている人に、何を見せるか(家の持ち主が ⚙️ 設定 → 👪 ひと で決める。config/access.json)----
+# hide_tools: 道具の列に出さない道具(ページも開けない)。petitlog: 自分の子のほかに、ぷちログを見られる子
+HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭
+    "monitor": ("/display",),
+    "terminal": ("/terminal", "/api/terminal"),
+    "logs": ("/stream-logs", "/api/stream-logs"),
+    "costs": ("/costs", "/api/costs"),
+    "kankei": ("/kankei",),
+    "kairanban": ("/kairanban",),
+    "library": ("/library",),
+    "notebook": ("/notebook",),
+}
+ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
+
+
+def _access_file() -> Path:
+    return Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude")) / "config" / "access.json"
+
+
+def _load_access() -> dict:
+    try:
+        raw = json.loads(_access_file().read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _access_of(user: str) -> dict:
+    """その人に見せるものの決まり。家の持ち主がまだ決めていなければ、はじめの決まり(ACCESS_DEFAULT)"""
+    cur = _load_access().get(user)
+    cur = cur if isinstance(cur, dict) else {}
+    hide = cur.get("hide_tools") if isinstance(cur.get("hide_tools"), list) else ACCESS_DEFAULT["hide_tools"]
+    logs = cur.get("petitlog") if isinstance(cur.get("petitlog"), list) else ACCESS_DEFAULT["petitlog"]
+    return {"hide_tools": [t for t in hide if t in HIDEABLE_TOOLS], "petitlog": [c for c in logs if isinstance(c, str)]}
+
+
+def _limited_users() -> dict[str, list[str]]:
+    """見られる子が決まっている人と、その子たち(auth.json)"""
+    users = _load_auth().get("users", {})
+    return {u: list(v["characters"]) for u, v in users.items() if isinstance(v, dict) and v.get("characters")}
+
+
+def _is_owner(request: Request | None) -> bool:
+    """家の持ち主(見られる子が決まっていない admin、またはログインの要らない家)。見せるものを決められる人"""
+    if request is None or not _auth_enabled():
+        return True
+    if _get_username(request) is None:   # 信頼する場所(この PC など)から、ログインなしで
+        return True
+    return _get_allowed_characters(request) is None and _has_role(request, "admin")
+
+
 def _check_char_access(request: Request, character_id: str) -> bool:
     """キャラクターへのアクセス権があるか確認。"""
     allowed = _get_allowed_characters(request)
@@ -598,6 +649,13 @@ async def auth_middleware(request: Request, call_next):
     if request.method == "DELETE":
         if not _has_role(request, "operator"):
             return JSONResponse({"error": "operator権限が必要です"}, status_code=403)
+    # 見られる子が決まっている人: 家の持ち主が「見せない」と決めた道具は、ページも入口も開けない
+    if _get_allowed_characters(request) is not None:
+        for tool in _access_of(_get_username(request) or "")["hide_tools"]:
+            if any(path == pre or path.startswith(pre + "/") or path.startswith(pre + "?") for pre in HIDEABLE_TOOLS[tool]):
+                if path.startswith("/api/"):
+                    return JSONResponse({"error": "この道具は使えません"}, status_code=403)
+                return HTMLResponse("<meta charset='utf-8'><p style='font-family:sans-serif;padding:24px'>このページは開けません。<a href='/'>もどる</a></p>", status_code=403)
     # キャラクターアクセスチェック: /api/{character_id}/... パス
     if path.startswith("/api/"):
         parts = path.split("/")
@@ -608,6 +666,10 @@ async def auth_middleware(request: Request, call_next):
             is_char = re.fullmatch(r"[a-zA-Z0-9_]+", candidate) is not None and (CHARACTERS_DIR / candidate / "config").is_dir()
             # ようす(体につながっているか・電池・体の設定を読む)は、どの子の分も見られる。中身(欲求・記憶)は api_status で外す
             peek = request.method == "GET" and len(parts) == 4 and parts[3] in ("status", "sensors", "body")
+            # ぷちログは、家の持ち主が「見てよい」と決めた子の分も読める
+            if (is_char and request.method == "GET" and len(parts) == 4 and parts[3] == "petit_log"
+                    and candidate in _access_of(_get_username(request) or "")["petitlog"]):
+                peek = True
             if is_char and not peek and not _check_char_access(request, candidate):
                 return JSONResponse({"error": "このキャラクターへのアクセス権がありません"}, status_code=403)
     return await call_next(request)
@@ -2031,12 +2093,21 @@ def api_anniversaries_add(body: AnniversaryBody, request: Request):
     return _anniv_view(an.load(DATA_DIR))
 
 
+def _anniv_not_mine(items: list[dict], item_id: str, request: Request | None) -> bool:
+    """見られる子が決まっている人が、人の足した記念日を触ろうとしているか"""
+    if not _is_limited(request):
+        return False
+    return any(it["id"] == item_id and it.get("by") != _me(request) for it in items)
+
+
 @app.put("/api/anniversaries/{item_id}")
-def api_anniversaries_update(item_id: str, body: AnniversaryBody):
+def api_anniversaries_update(item_id: str, body: AnniversaryBody, request: Request = None):
     an = _anniv()
     items = an.load(DATA_DIR)
     if not any(it["id"] == item_id for it in items):
         return JSONResponse({"error": "not found"}, status_code=404)
+    if _anniv_not_mine(items, item_id, request):
+        return JSONResponse({"error": "直せるのは、自分が足した記念日だけです"}, status_code=403)
     try:
         keep_by = next(it.get("by", "") for it in items if it["id"] == item_id)   # 直しても、足した人はそのまま
         item = an.clean({**body.model_dump(), "id": item_id, "by": keep_by})
@@ -2048,9 +2119,11 @@ def api_anniversaries_update(item_id: str, body: AnniversaryBody):
 
 
 @app.delete("/api/anniversaries/{item_id}")
-def api_anniversaries_delete(item_id: str):
+def api_anniversaries_delete(item_id: str, request: Request = None):
     an = _anniv()
     items = an.load(DATA_DIR)
+    if _anniv_not_mine(items, item_id, request):
+        return JSONResponse({"error": "消せるのは、自分が足した記念日だけです"}, status_code=403)
     rest = [it for it in items if it["id"] != item_id]
     if len(rest) == len(items):
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -2374,7 +2447,7 @@ async def api_hello(request: Request):
     username = _get_username(request) or "arisan"
     config = hello.load_config(DATA_DIR)
     night = hello.is_night(config, datetime.now())
-    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    chars = [c for c in _my_chars(request) if c["id"] in GROUP_CHAR_IDS]   # 見られる子が決まっている人は、その子にだけ届ける
     results = await asyncio.gather(*[_hello_one(c, username, config, night) for c in chars])
     return {"ok": True, "night": night, "results": list(results)}
 
@@ -2385,9 +2458,9 @@ def sounds_page():
 
 
 @app.get("/api/sounds")
-async def api_sounds():
-    """家の音の一覧と、ぷちそれぞれの体にある音の一覧"""
-    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+async def api_sounds(request: Request = None):
+    """家の音の一覧と、ぷちそれぞれの体にある音の一覧(見られる子が決まっている人には、その子の体だけ)"""
+    chars = [c for c in _my_chars(request) if c["id"] in GROUP_CHAR_IDS]
     bodies = await asyncio.gather(*[_body_sounds(c) for c in chars])
     return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "max_seconds": _sounds().MAX_SECONDS}
 
@@ -2422,9 +2495,11 @@ def api_sounds_delete(name: str):
 
 
 @app.post("/api/sounds/send")
-async def api_sounds_send(req_body: SoundSendRequest):
+async def api_sounds_send(req_body: SoundSendRequest, request: Request = None):
     """家の音を、選んだ子の体(SD)へ送る。同じ名前が体にあれば置き換わる"""
     import requests as req
+    mine = {c["id"] for c in _my_chars(request)}
+    req_body.char_ids = [cid for cid in req_body.char_ids if cid in mine]   # 見られる子が決まっている人は、その子にだけ
     path = _sounds().path_of(DATA_DIR, req_body.name)
     if path is None:
         return JSONResponse({"error": "その音は家にありません"}, status_code=404)
@@ -2448,9 +2523,11 @@ async def api_sounds_send(req_body: SoundSendRequest):
 
 
 @app.post("/api/sounds/play")
-async def api_sounds_play(req_body: SoundPlayRequest):
+async def api_sounds_play(req_body: SoundPlayRequest, request: Request = None):
     """その子の体で、音を 1 回鳴らす"""
     import requests as req
+    if req_body.char_id not in {c["id"] for c in _my_chars(request)}:
+        return JSONResponse({"error": "この子の体は鳴らせません"}, status_code=403)
     # 体にだけある音(家のライブラリの名前の決まりに合わないもの)も鳴らせるよう、ここはゆるく見る
     if req_body.char_id not in GROUP_CHAR_IDS or not re.fullmatch(r"[A-Za-z0-9_.-]{1,60}", req_body.name or ""):
         return JSONResponse({"error": "鳴らせません"}, status_code=400)
@@ -2927,6 +3004,8 @@ async def api_voice_memo_upload(person_id: str, request: Request, file: UploadFi
 async def api_voice_memo_rename(person_id: str, filename: str, request: Request):
     if person_id not in VOICE_MEMO_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "人のボイスメモは、聞くだけです"}, status_code=403)
     body = await request.json()
     new_title = body.get("new_title", "").strip()
     if not new_title:
@@ -2961,9 +3040,11 @@ async def api_voice_memo_rename(person_id: str, filename: str, request: Request)
 
 
 @app.post("/api/voice_memo/{person_id}/{filename}/lock")
-async def api_voice_memo_toggle_lock(person_id: str, filename: str):
+async def api_voice_memo_toggle_lock(person_id: str, filename: str, request: Request = None):
     if person_id not in VOICE_MEMO_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "人のボイスメモは、聞くだけです"}, status_code=403)
     path = _voice_memo_dir(person_id) / filename
     if not path.exists() or path.suffix not in _AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -3013,9 +3094,11 @@ async def api_voice_memo_delete(person_id: str, filename: str, request: Request 
 
 
 @app.post("/api/voice_memo/{person_id}/{filename}/register_speaker")
-async def api_voice_memo_register_speaker(person_id: str, filename: str):
+async def api_voice_memo_register_speaker(person_id: str, filename: str, request: Request = None):
     if person_id not in VOICE_MEMO_PERSONS:
         return JSONResponse({"error": "unknown person"}, status_code=400)
+    if _is_limited(request) and person_id != _me(request):
+        return JSONResponse({"error": "人のボイスメモは、聞くだけです"}, status_code=403)
     path = _voice_memo_dir(person_id) / filename
     if not path.exists() or path.suffix not in _AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -4907,25 +4990,31 @@ class RestBody(BaseModel):
     minutes: int | None = None   # いまから何分 からだ おやすみ(None・0 でやめる)
 
 
+def _my_chars(request: Request | None) -> list[dict]:
+    """その人が動かしてよい子(見られる子が決まっている人は、その子だけ)"""
+    allowed = _get_allowed_characters(request) if request is not None else None
+    return [c for c in list_characters() if allowed is None or c["id"] in allowed]
+
+
 @app.get("/api/switches/rest")
-def api_switches_rest_all_get():
-    """みんなの からだ おやすみ の様子(📍 のメニュー用)"""
+def api_switches_rest_all_get(request: Request = None):
+    """みんなの からだ おやすみ の様子(📍 のメニュー用)。見られる子が決まっている人には、その子だけ"""
     out = {}
-    for c in list_characters():
+    for c in _my_chars(request):
         v = _body().view(get_settings(c["id"]))["rest"]
         out[c["id"]] = {"name": c.get("name", c["id"]), "on": v["on"], "until": v["until"], "why": v["why"]}
     return {"chars": out}
 
 
 @app.post("/api/switches/rest")
-def api_switches_rest_all(body: RestBody):
-    """みんな一度に、いまから n 分 からだ おやすみ(0 でやめる)"""
+def api_switches_rest_all(body: RestBody, request: Request = None):
+    """みんな一度に、いまから n 分 からだ おやすみ(0 でやめる)。見られる子が決まっている人は、その子だけ"""
     try:
-        for c in list_characters():
+        for c in _my_chars(request):
             _body().set_rest(c["id"], body.minutes, DATA_DIR)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    return api_switches_rest_all_get()
+    return api_switches_rest_all_get(request)
 
 
 @app.get("/api/{character_id}/switches")
@@ -4979,13 +5068,17 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
     except (OSError, json.JSONDecodeError):
         return {}
     base.pop("topbar_color", None)
+    base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
     return base
 
 
 @app.get("/api/ui")
 def api_ui_get(request: Request = None):
-    cur = _load_ui_settings(_me(request))
-    cur.setdefault("house_title", f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち")
+    user = _me(request)
+    cur = _load_ui_settings(user)
+    # 題のはじめの値: 家の持ち主は「<COMPANION_NAME>ち」、ほかの人は「<その人の呼び名>ち」。人ごとに変えられる
+    owner_title = f"{os.environ.get('COMPANION_NAME', 'ありさん')}ち"
+    cur.setdefault("house_title", owner_title if user == OWNER_USER else f"{_user_label(user, user)}ち")
     return cur
 
 
@@ -5015,7 +5108,7 @@ def api_ui_set(req: UiSettings, request: Request = None):
     path = _ui_settings_file(user)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding="utf-8")
-    return cur
+    return api_ui_get(request)   # 題のはじめの値も入った形で返す
 
 
 @app.post("/api/{character_id}/settings")
@@ -6445,7 +6538,66 @@ def api_me(request: Request):
     username = _get_username(request) or "arisan"
     info = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])
     # limited: 見られる子が決まっている人。アルバム・ボイスメモで、消す・録るのは自分の分だけ
-    return {"username": username, "name": info["name"], "color": info["color"], "limited": _is_limited(request)}
+    out = {"username": username, "name": info["name"], "color": info["color"], "limited": _is_limited(request), "owner": _is_owner(request)}
+    if out["limited"]:   # 見られる子、出さない道具、ぷちログを見られる子(自分の子が先)
+        acc = _access_of(username)
+        mine = _get_allowed_characters(request) or []
+        out.update({"characters": mine, "hide_tools": acc["hide_tools"],
+                    "petitlog": mine + [c for c in acc["petitlog"] if c not in mine]})
+    return out
+
+
+class AccessBody(BaseModel):
+    user: str
+    hide_tools: list[str] | None = None
+    petitlog: list[str] | None = None
+
+
+@app.get("/api/petitlog/characters")
+def api_petitlog_characters(request: Request):
+    """ぷちログを見られる子(自分の子が先。見られる子が決まっている人は、家の持ち主が決めた子も)"""
+    chars = list_characters()
+    allowed = _get_allowed_characters(request)
+    if allowed is None:
+        return chars
+    order = allowed + [c for c in _access_of(_get_username(request) or "")["petitlog"] if c not in allowed]
+    by_id = {c["id"]: c for c in chars}
+    return [by_id[i] for i in order if i in by_id]
+
+
+@app.get("/api/access")
+def api_access_get(request: Request):
+    """見られる子が決まっている人それぞれに、何を見せるか(家の持ち主だけが読める)"""
+    if not _is_owner(request):
+        return JSONResponse({"error": "家の持ち主だけが見られます"}, status_code=403)
+    chars = {c["id"]: c.get("name", c["id"]) for c in list_characters()}
+    users = []
+    for user, mine in _limited_users().items():
+        if user in chars:   # ぷち自身のログインは、ここでは扱わない
+            continue
+        acc = _access_of(user)
+        users.append({"id": user, "name": _user_label(user, user), "characters": mine, **acc})
+    return {"users": users, "tools": sorted(HIDEABLE_TOOLS), "characters": [{"id": k, "name": v} for k, v in chars.items()]}
+
+
+@app.post("/api/access")
+def api_access_set(body: AccessBody, request: Request):
+    if not _is_owner(request):
+        return JSONResponse({"error": "家の持ち主だけが決められます"}, status_code=403)
+    if body.user not in _limited_users():
+        return JSONResponse({"error": "その人はいません"}, status_code=404)
+    data = _load_access()
+    cur = _access_of(body.user)
+    if body.hide_tools is not None:
+        cur["hide_tools"] = [t for t in body.hide_tools if t in HIDEABLE_TOOLS]
+    if body.petitlog is not None:
+        known = {c["id"] for c in list_characters()}
+        cur["petitlog"] = [c for c in body.petitlog if c in known]
+    data[body.user] = cur
+    path = _access_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return api_access_get(request)
 
 
 _HTML_GZ: bytes | None = None   # トップページを縮めたもの(1 回だけ作る)
@@ -7136,13 +7288,21 @@ HTML = """<!DOCTYPE html>
       characters = await res.json();
       // みんなの一覧(色と名前)。見られる子が決まっている人でも、手紙の差出人の色・ようす に使う
       try { window._allChars = await (await fetch("/api/characters/all")).json(); } catch (e) { window._allChars = characters; }
+      // 見られる子が決まっている人: 家の持ち主が「見せない」と決めた道具を外す。子が 1 人だけなら、その子から始める
+      if (!window._meInfo) {
+        try { window._meInfo = await (await fetch("/api/me")).json(); } catch (e) { window._meInfo = {}; }
+        for (const t of (window._meInfo.hide_tools || [])) delete TOOLS[t];
+      }
+      const solo = !!window._meInfo.limited && characters.length === 1;
+      if (solo && currentCharId !== characters[0].id) { switchChar(characters[0].id); return; }
       // トップバーの「ぷちを選ぶ」: みんな・ぷちたち・だれか(2026-11-10 ありさん)
       const tabs = document.getElementById("charTabs");
       const opt = (id, dot, name, extra) => `<button class="char-opt${id === currentCharId ? " active" : ""}${extra || ""}" data-char-id="${id}" onclick="switchChar('${id}')">${dot}<span class="name">${name}</span>${id === "group" || id === "select" ? "" : '<span class="m5-dot"></span>'}</button>`;
       const allDot = '<span class="char-pick-dot all"></span>';
-      tabs.innerHTML = opt("group", allDot, "みんな")
+      // 子が 1 人だけの人には、「みんな」「だれか」を出さない
+      tabs.innerHTML = (solo ? "" : opt("group", allDot, "みんな"))
         + characters.map(c => opt(c.id, `<span class="char-pick-dot" style="background:${c.color || "#cab8d9"}"></span>`, c.name || c.id)).join("")
-        + opt("select", allDot, "だれか", " sep");
+        + (solo ? "" : opt("select", allDot, "だれか", " sep"));
       const curChar = characters.find(c => c.id === currentCharId);
       const btn = document.getElementById("charPickBtn");
       const label = curChar ? (curChar.name || curChar.id) : (currentCharId === "select" ? "だれか" : "みんな");
@@ -11015,8 +11175,8 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
           if (j.ok) { st.locked = j.locked; showMenu(); }
           closeMemoMenus();
         };
-        if (!canEdit(currentPerson)) q(".mi-del").remove();
-        else q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
+        if (!canEdit(currentPerson)) q(".more-btn").remove();   // 人のボイスメモは、聞くだけ(名前を変える・鍵・消すは出さない)
+        q(".mi-del").onclick = () => { closeMemoMenus(); deleteMemo(st.filename, card); };
         q(".rename-cancel").onclick = () => { q(".rename-form").style.display = "none"; };
         q(".rename-save").onclick = async () => {
           const newTitle = q(".rename-input").value.trim();

@@ -38,6 +38,9 @@
     .s-toast.on { opacity: 1; }
     .s-pane { display: none; padding-top: 16px; }   /* 上の粒の列と、いちばん上のカードのあいだ */
     .s-pane.on { display: block; }
+    .s-checks { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 6px; }
+    .s-check { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; font-size: 0.9rem; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
+    .s-check input { width: 18px; height: 18px; accent-color: var(--ui-accent-text); }
     /* くわしい設定: 開けることが分かるように、右に「ひらく ▾」。開いたら「とじる ▴」 */
     details.m-card > summary.a-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; cursor: pointer; list-style: none; }
     details.m-card > summary::-webkit-details-marker { display: none; }
@@ -58,7 +61,14 @@
     <!-- 🏠 家 -->
     <section class="s-pane" id="paneHouse">
       <div class="m-card">
-        <span class="a-heading">トップバーの色</span>
+        <span class="a-heading">トップバー</span>
+        <div class="s-row">
+          <span>🏷️ 題</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <input class="a-input a-input--s" id="houseTitle" maxlength="30" style="width:11em" onkeydown="if (event.key === 'Enter' && !event.isComposing) saveTitle()">
+            <button class="a-btn a-btn--sub a-btn--s" onclick="saveTitle()">決める</button>
+          </span>
+        </div>
         <div class="s-row">
           <span>🎨 色</span>
           <span style="display:flex;align-items:center;gap:8px;">
@@ -87,6 +97,12 @@
         <p class="a-hint" style="margin:0 0 8px"><b id="logoutWho"></b> でログインしています。</p>
         <button class="a-btn a-btn--sub" onclick="doLogout()">ログアウトする</button>
       </div>
+    </section>
+
+    <!-- 👪 ひと: 見られる子が決まっている人に、何を見せるか(家の持ち主だけ) -->
+    <section class="s-pane" id="panePeople">
+      <div id="people"></div>
+      <p class="a-hint">ここで決められるのは、道具の列に出すものと、ぷちログを見られる子です。会話・記憶・体の設定は、その人の子だけのままです。</p>
     </section>
 
     <!-- ぷち 1 人 -->
@@ -167,7 +183,9 @@
     ];
     const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];
     const TOOL = Object.fromEntries(TOOL_LABELS.map(([id, icon, name]) => [id, {icon, name}]));
-    let chars = [], ui = {}, active = null;   // active: "house" か ぷちの id
+    const TOOL_ALL = {...TOOL};   // 👪 ひと 用(TOOL からは、見せない道具を外すことがある)
+    let chars = [], ui = {}, active = null;   // active: "house" か "people" か ぷちの id
+    let access = {users: [], tools: [], characters: []};   // 👪 ひと の中身(家の持ち主にだけ届く)
     let schedule = {weekday: [], weekend: []}, dayTab = "weekday";
 
     function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1600); }
@@ -176,17 +194,20 @@
     // ---- 上の粒: 家 | 各ぷち ----
     function renderTabs() {
       const el = document.getElementById("tabs");
-      el.innerHTML = [`<button class="a-pill${active === "house" ? " is-on" : ""}" onclick="show('house')">🏠 家</button>`]
+      // 👪 ひと: 見られる子が決まっている人に、何を見せるか。家の持ち主にだけ、そういう人がいるときに出す
+      const people = access.users.length ? [`<button class="a-pill${active === "people" ? " is-on" : ""}" onclick="show('people')">👪 ひと</button>`] : [];
+      el.innerHTML = [`<button class="a-pill${active === "house" ? " is-on" : ""}" onclick="show('house')">🏠 家</button>`].concat(people)
         .concat(chars.map(c => `<button class="a-pill${active === c.id ? " is-on" : ""}" onclick="show(${JSON.stringify(c.id).replace(/"/g, "&quot;")})"><span class="s-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`)).join("");
     }
     async function show(id) {
       active = id;
-      if (id === "house") q.delete("char"); else q.set("char", id);
+      if (id === "house" || id === "people") q.delete("char"); else q.set("char", id);
       history.replaceState(null, "", location.pathname + (q.toString() ? "?" + q.toString() : ""));
       renderTabs();
       document.getElementById("paneHouse").classList.toggle("on", id === "house");
-      document.getElementById("paneChar").classList.toggle("on", id !== "house");
-      if (id === "house") await loadHouse(); else await loadChar(id);
+      document.getElementById("panePeople").classList.toggle("on", id === "people");
+      document.getElementById("paneChar").classList.toggle("on", id !== "house" && id !== "people");
+      if (id === "house") await loadHouse(); else if (id === "people") renderPeople(); else await loadChar(id);
       window.scrollTo(0, 0);
     }
 
@@ -198,7 +219,12 @@
       return saved.map(t => ({id: t.id, show: t.show !== false, off: t.off === true})).concat(rest);
     }
     function defaultTools() { return Object.keys(TOOL).map(id => ({id, show: TOOLS_DEFAULT_SHOWN.includes(id)})); }
+    function saveTitle() {
+      const v = document.getElementById("houseTitle").value.trim();
+      if (v) saveUi({house_title: v});
+    }
     function renderHouse() {
+      document.getElementById("houseTitle").value = ui.house_title || "";
       const c = ui.topbar_color;
       document.getElementById("topbarColor").value = c || "#f6f3fa";
       const key = ui.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
@@ -356,10 +382,44 @@
     // ---- はじめ: ?char=<id> があればその子、無ければ家 ----
     (async () => {
       try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) { chars = []; }
+      // 見られる子が決まっている人: 見せない道具は、並べる一覧にも出さない。家の持ち主: 👪 ひと の中身を読む
+      try {
+        const me = await (await fetch("/api/me")).json();
+        for (const t of (me.hide_tools || [])) delete TOOL[t];
+        if (me.owner) { const r = await fetch("/api/access"); if (r.ok) access = await r.json(); }
+      } catch (e) {}
       const want = q.get("char");
       await show(chars.some(c => c.id === want) ? want : "house");
     })();
   
+    // ---- 👪 ひと ----
+    function renderPeople() {
+      const el = document.getElementById("people");
+      el.innerHTML = access.users.map(u => {
+        const mine = u.characters.map(id => (access.characters.find(c => c.id === id) || {}).name || id).join("・");
+        const tools = access.tools.filter(t => TOOL_ALL[t]).map(t => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-tool="${esc(t)}" ${u.hide_tools.includes(t) ? "" : "checked"}> ${TOOL_ALL[t].icon} ${esc(TOOL_ALL[t].name)}</label>`).join("");
+        const logs = access.characters.filter(c => !u.characters.includes(c.id)).map(c => `<label class="s-check"><input type="checkbox" data-user="${esc(u.id)}" data-log="${esc(c.id)}" ${u.petitlog.includes(c.id) ? "checked" : ""}> ${esc(c.name)}</label>`).join("");
+        return `<div class="m-card"><span class="a-heading">${esc(u.name)}</span>
+          <p class="a-hint" style="margin:0 0 10px">${esc(u.name)}の子: ${esc(mine)}</p>
+          <div class="a-label">見せる道具(外すと、道具の列に出ず、ページも開けません)</div>
+          <div class="s-checks">${tools}</div>
+          ${logs ? `<div class="a-label" style="margin-top:12px">ぷちログを見られる子(自分の子のほかに)</div><div class="s-checks">${logs}</div>` : ""}
+        </div>`;
+      }).join("") || '<div class="p-empty">見られる子が決まっている人は、いません</div>';
+    }
+    document.getElementById("people").addEventListener("change", async e => {
+      const box = e.target.closest("input[data-user]");
+      if (!box) return;
+      const user = box.dataset.user, all = sel => [...document.querySelectorAll(`#people input[data-user="${CSS.escape(user)}"]${sel}`)];
+      const body = {user, hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool), petitlog: all("[data-log]").filter(x => x.checked).map(x => x.dataset.log)};
+      try {
+        const r = await fetch("/api/access", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+        if (!r.ok) throw new Error();
+        access = await r.json();
+        toast("決めました");
+      } catch (err) { toast("決められませんでした"); box.checked = !box.checked; }
+    });
+
     // ログアウト: ログインしているときだけ、🏠 家 のいちばん下に出す
     async function doLogout() {
       if (!confirm("ログアウトします")) return;
