@@ -2139,6 +2139,73 @@ async def _body_sounds(char: dict) -> dict:
     return out
 
 
+# ---- 「ここにいるよ」: 世話人からぷちへの合図(Issue #67)。応え方の決まりは scripts/hello.py、家の設定は config/hello.json ----
+
+async def _hello_one(char: dict, username: str, config: dict, night: bool) -> dict:
+    """1 人に合図を届ける: 接点に残し、体が起きていれば、その子の応え方を体に頼む(頼むのは裏で進める)"""
+    import hello
+    import requests as req
+    cid = char["id"]
+    _record_contact(cid, "hello", who=username, via="dashboard")
+    out = {"id": cid, "name": char.get("name") or cid, "state": "recorded"}
+    spec = (config.get("characters") or {}).get(cid)
+    host = await resolve_m5_host(get_char_config(cid))
+    if not host:
+        out["state"] = "offline"
+        return out
+
+    def _get(path: str, params: dict | None = None, timeout: float = 4):
+        return req.get(f"http://{host}{path}", params=params, timeout=timeout)
+
+    def _number(path: str) -> int | None:
+        try:
+            return int(float(_get(path).text.strip()))
+        except Exception:
+            return None
+
+    try:
+        if (await asyncio.to_thread(lambda: _get("/status").json())).get("is_sleeping"):
+            out["state"] = "sleeping"   # 眠っている子は起こさない。記録だけ
+            return out
+    except Exception:
+        out["state"] = "offline"
+        return out
+    if not isinstance(spec, dict):
+        return out
+    try:
+        body_sounds = await asyncio.to_thread(lambda: _get("/se_list").json())
+    except Exception:
+        body_sounds = []
+    brightness, volume = await asyncio.to_thread(_number, "/getbrightness"), await asyncio.to_thread(_number, "/getvolume")
+    steps = hello.plan(spec, night, body_sounds if isinstance(body_sounds, list) else [], brightness, volume)
+    if not steps:
+        return out
+
+    async def _run() -> None:
+        start = time.monotonic()
+        for at, path, params in steps:
+            await asyncio.sleep(max(0.0, at - (time.monotonic() - start)))
+            try:
+                await asyncio.to_thread(lambda p=path, a=params: _get(p, a, 10))
+            except Exception:
+                pass
+    asyncio.create_task(_run())
+    out["state"] = "answered"
+    return out
+
+
+@app.post("/api/hello")
+async def api_hello(request: Request):
+    """「ここにいるよ」を、みんなに届ける。だれが押したかは、ログインしている人"""
+    import hello
+    username = _get_username(request) or "arisan"
+    config = hello.load_config(DATA_DIR)
+    night = hello.is_night(config, datetime.now())
+    chars = [c for c in list_characters() if c["id"] in GROUP_CHAR_IDS]
+    results = await asyncio.gather(*[_hello_one(c, username, config, night) for c in chars])
+    return {"ok": True, "night": night, "results": list(results)}
+
+
 @app.get("/sounds", response_class=HTMLResponse)
 def sounds_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["sounds"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
@@ -6634,6 +6701,12 @@ HTML = """<!DOCTYPE html>
             <h2>ぷちたちの状態</h2>
             <div id="groupCharStatus"></div>
           </section>
+          <section>
+            <h2>ここにいるよ</h2>
+            <button id="helloBtn" onclick="sendHello()" style="padding:10px 18px;font-size:1rem;font-weight:700;border:none;border-radius:999px;background:var(--char-color,#cab8d9);color:var(--char-ink,#444);cursor:pointer;">👋 ここにいるよ</button>
+            <div id="helloMsg" style="margin-top:8px;font-size:0.8rem;color:#666;line-height:1.7;"></div>
+            <p style="font-size:0.75rem;color:#999;margin:6px 0 0;">押すと、みんなに「ここにいるよ」が届きます。起きている子は、体でそれぞれ小さく応えます。眠っている子は起こさず、届いたことだけ残します。</p>
+          </section>
         </div>
       </div>
     </div>
@@ -7405,6 +7478,18 @@ HTML = """<!DOCTYPE html>
     function openYousu() {
       document.getElementById("yousuOverlay").classList.add("open");
       updateGroupStatus();   // 開いたそのときに、体へ確かめにいく
+    }
+    async function sendHello() {
+      const btn = document.getElementById("helloBtn"), msg = document.getElementById("helloMsg");
+      btn.disabled = true;
+      msg.textContent = "届けています…";
+      const WORD = {answered: "体で応えた", recorded: "届いた", sleeping: "眠っているので、届いたことだけ残した", offline: "体につながっていないので、届いたことだけ残した"};
+      try {
+        const res = await (await fetch("/api/hello", {method: "POST"})).json();
+        msg.innerHTML = (res.results || []).map(r => `${String(r.name).replace(/&/g, "&amp;").replace(/</g, "&lt;")}: ${WORD[r.state] || r.state}`).join("<br>")
+          + (res.night ? "<br>(夜なので、音は鳴らしていません)" : "");
+      } catch (e) { msg.textContent = "届けられませんでした"; }
+      setTimeout(() => { btn.disabled = false; }, 6000);   // 応えが終わるまで、続けて押せないように
     }
     async function updateGroupStatus() {
       const panel = document.getElementById("groupCharStatus");
