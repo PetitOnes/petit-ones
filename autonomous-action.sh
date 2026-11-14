@@ -329,15 +329,20 @@ else
   echo "通常回 (RAND=$ROUTINE_RAND >= 20, model=$CLAUDE_MODEL)" >> "$LOG_FILE"
 fi
 
-# --- settings.json から制限を読む ---
+# --- からだの使い方(見る・話す・鳴らす・聞く)と からだ おやすみ(2026-11-14) ---
+# 決まりは scripts/body_switches.py(会話・体のイベントと同じ)。文は prompts/autonomous/permission_rules.md、
+# 止める道具は --disallowedTools で本当に使えなくする。スクリプトが無ければ何も足さない
 PERMISSION_RULES=""
-if [ -f "$SETTINGS_FILE" ] && command -v jq &>/dev/null; then
-  # jq の「//」は false も「無い」扱いにして既定に戻してしまうので、has() で見る(allow_camera: false が効いていなかった)
-  ALLOW_CAMERA=$(jq -r 'if has("allow_camera") then .allow_camera else true end' "$SETTINGS_FILE" 2>/dev/null)
-  ALLOW_SOUND=$(jq -r 'if has("allow_sound") then .allow_sound else true end' "$SETTINGS_FILE" 2>/dev/null)
-  ALLOW_MIC=$(jq -r 'if has("allow_microphone") then .allow_microphone else false end' "$SETTINGS_FILE" 2>/dev/null)
-  # 文面は prompts/autonomous/permission_rules.md(false のものだけ行が残る)
-  PERMISSION_RULES="$(render autonomous/permission_rules --var allow_camera="$ALLOW_CAMERA" --var allow_sound="$ALLOW_SOUND" --var allow_mic="$ALLOW_MIC")"
+DISALLOWED_TOOLS=""
+BODY_SCRIPT="${PROJECT_DIR}/scripts/body_switches.py"
+if [ -f "$BODY_SCRIPT" ]; then
+  PERMISSION_RULES=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$BODY_SCRIPT" rules --character "$CHARACTER_ID" 2>/dev/null || true)
+  DISALLOWED_TOOLS=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$BODY_SCRIPT" disallowed --character "$CHARACTER_ID" 2>/dev/null || true)
+fi
+DISALLOW_ARGS=()
+if [ -n "$DISALLOWED_TOOLS" ]; then
+  DISALLOW_ARGS=(--disallowedTools "$DISALLOWED_TOOLS")
+  echo "[body] 止める道具: $DISALLOWED_TOOLS" >> "$LOG_FILE"
 fi
 
 # --- プロンプト組み立て ---
@@ -687,6 +692,7 @@ else
       --mcp-config "$MCP_CONFIG" \
       --strict-mcp-config \
       --add-dir "$ALLOWED_DATA_DIR" \
+      "${DISALLOW_ARGS[@]}" \
       --allowedTools "$ALLOWED_TOOLS" > "$STREAM_FILE" 2>&1
     process_stream "new"
   }
@@ -704,6 +710,7 @@ else
       --mcp-config "$MCP_CONFIG" \
       --strict-mcp-config \
       --add-dir "$ALLOWED_DATA_DIR" \
+      "${DISALLOW_ARGS[@]}" \
       --allowedTools "$ALLOWED_TOOLS" > "$STREAM_FILE" 2>&1
 
     # セッション継続失敗時（"No conversation found" など）は新規作成
