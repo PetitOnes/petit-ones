@@ -2912,14 +2912,19 @@ async def api_status(character_id: str):
     host = await resolve_m5_host(cfg)
     m5_online = host is not None
     m5_sleeping = False
+    m5_ip = m5_tailscale_ip = ""   # 体が自分で言うアドレス(Wi-Fi と、あれば Tailscale)。「ぷちたちの状態」に出す
     if m5_online:
         try:
             r = await asyncio.to_thread(lambda: req.get(f"http://{host}/status", timeout=2))
-            m5_sleeping = r.json().get("is_sleeping", False)
+            body = r.json()
+            m5_sleeping = body.get("is_sleeping", False)
+            m5_ip = str(body.get("ip") or "")
+            m5_tailscale_ip = str(body.get("tailscale_ip") or "")
         except Exception:
             pass
     today = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
-    return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping}
+    return {"desires": get_desires(character_id), "memories": _query_memories(character_id, 100, date_filter=today), "m5_online": m5_online, "m5_sleeping": m5_sleeping,
+            "m5_host": host or "", "m5_ip": m5_ip, "m5_tailscale_ip": m5_tailscale_ip}
 
 
 @app.get("/api/{character_id}/sensors")
@@ -7200,22 +7205,28 @@ HTML = """<!DOCTYPE html>
             fetch(`/api/${c.id}/status`),
             fetch(`/api/${c.id}/sensors`).then(r => r.json()).catch(() => ({})),
           ]);
-          const { m5_online, m5_sleeping } = await res.json();
+          const { m5_online, m5_sleeping, m5_host, m5_ip, m5_tailscale_ip } = await res.json();
           const color = c.color || "#cab8d9";
+          // 2 段目は 3 つの列(起きているか・電池・アドレス)。列の幅を決めておくと、子が違っても電池の印が縦にそろう
           // 起きているか寝ているか(体がつながっているときだけ分かる)
-          const awake = m5_online ? `<span style="font-size:0.75rem;color:#888;white-space:nowrap;" title="${m5_sleeping ? "体はスリープ中" : "体は起きている"}">${m5_sleeping ? "😴 ねてる" : "☀️ おきてる"}</span>` : "";
-          let batt = "";
+          const awake = m5_online ? `<span style="white-space:nowrap;" title="${m5_sleeping ? "体はスリープ中" : "体は起きている"}">${m5_sleeping ? "🌙 ねてる" : "☀️ おきてる"}</span>` : "<span></span>";
+          let batt = "<span></span>";
           if (m5_online && typeof sens.battery === "number") {
             const pct = Math.round(sens.battery);
             const volt = typeof sens.voltage === "number" ? ` <span style="opacity:0.7">${(sens.voltage / 1000).toFixed(2)}V</span>` : "";
-            batt = `<span style="font-size:0.75rem;color:${pct <= 20 ? "#f44336" : "#888"};white-space:nowrap;font-variant-numeric:tabular-nums;" title="電池">${pct <= 20 ? "🪫" : "🔋"} ${pct}%${volt}</span>`;
+            batt = `<span style="color:${pct <= 20 ? "#f44336" : "#888"};white-space:nowrap;" title="電池"><span style="display:inline-block;width:1.5em;text-align:center;">${pct <= 20 ? "🪫" : "🔋"}</span><span style="display:inline-block;min-width:2.8em;text-align:right;">${pct}%</span>${volt}</span>`;
           }
-          // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池(スマホ幅で名前が折れないように)
+          // アドレス: 体が自分で言う Wi-Fi のもの。言わない体は、ダッシュボードがつないでいる宛先。Tailscale があれば並べる
+          const safe = t => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+          const addr = safe(m5_ip || m5_host || "");
+          const ts = m5_tailscale_ip && m5_tailscale_ip !== addr ? ` <span style="opacity:0.7" title="Tailscale のアドレス">/ ${safe(m5_tailscale_ip)}</span>` : "";
+          const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
+          // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
             <span style="font-weight:700;flex:1;white-space:nowrap;color:${readableText(color)};">${c.name||c.id}</span>
             <span style="font-size:0.75rem;color:${m5_online?'#4caf50':'#f44336'};white-space:nowrap;">${m5_online?'● M5 接続済':'● M5 未接続'}</span>
-            ${awake || batt ? `<div style="flex:0 0 100%;display:flex;align-items:center;gap:14px;padding-left:20px;">${awake}${batt}</div>` : ""}
+            ${m5_online ? `<div style="flex:0 0 100%;display:flex;flex-wrap:wrap;align-items:center;gap:2px 8px;padding-left:20px;font-size:0.75rem;color:#888;font-variant-numeric:tabular-nums;"><span style="flex:0 0 6.5em;">${awake}</span><span style="flex:0 0 9em;">${batt}</span>${ip}</div>` : ""}
           </div>`;
         } catch {
           return `<div style="padding:8px 0;">${c.name||c.id} — 確認失敗</div>`;
