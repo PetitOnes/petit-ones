@@ -638,6 +638,38 @@ async def api_login(request: Request):
     return resp
 
 
+class AccountRequestBody(BaseModel):
+    kind: str            # "signup"(新規登録)か "reset"(パスワードの出し直し)
+    username: str
+    name: str = ""
+    note: str = ""
+
+
+_account_limiter = None
+
+
+@app.post("/api/public/account_request")
+async def api_account_request(body: AccountRequestBody, request: Request):
+    """ログイン画面からのお願い(新規登録・パスワードの出し直し)。ログインの前でも送れる。
+
+    アカウントは作らない・パスワードは受け取らない。家の持ち主への手紙になるだけ(scripts/account_request.py)
+    """
+    import account_request as ar
+    global _account_limiter
+    if _account_limiter is None:
+        _account_limiter = ar.Limiter()
+    try:
+        req = ar.clean(body.kind, body.username, body.name, body.note)
+    except ar.RequestError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    ip = request.client.host if request.client else ""
+    if not _account_limiter.allow(ip):
+        return JSONResponse({"error": "お願いが続いています。少し時間をおいて、もう一度ためしてください"}, status_code=429)
+    exists = req["username"] in _load_auth().get("users", {})
+    ar.write(DATA_DIR / "mailbox", OWNER_USER, ar.letter(req, ip, exists))
+    return {"ok": True}   # そのユーザー名がいるかどうかは、返事では教えない
+
+
 @app.post("/api/auth/logout")
 async def api_logout():
     resp = JSONResponse({"ok": True})
@@ -732,7 +764,7 @@ def _login_html() -> str:
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
 <style>
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; justify-content: center; align-items: center; padding: 20px;
+body { margin: 0; min-height: 100vh; min-height: 100dvh; display: flex; padding: 20px;   /* まんなかに置くのは .wrap の margin: auto(中身が画面より長くても、上が切れない) */
   font-family: "M PLUS Rounded 1c", -apple-system, "Hiragino Maru Gothic ProN", sans-serif; color: #3A322D; background: #FBF4E8; }
 .login-box { width: 100%; max-width: 340px; padding: 28px 24px 24px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
 .dots { display: flex; justify-content: center; gap: 8px; margin-bottom: 14px; }
@@ -749,7 +781,18 @@ button { width: 100%; min-height: 48px; font: inherit; font-size: 1rem; font-wei
 button:hover { opacity: 0.9; }
 button:disabled { opacity: 0.5; cursor: default; }
 .error { display: none; margin: 0 0 12px; padding: 10px 12px; font-size: 0.85rem; color: #B84E33; background: #fbe2dc; border-radius: 10px; }
+.wrap { width: 100%; max-width: 340px; margin: auto; }
+.asks { display: flex; justify-content: center; gap: 18px; margin-top: 14px; }
+.asks button { width: auto; min-height: 40px; padding: 0 6px; font-size: 0.85rem; font-weight: 400; color: #6E625A; background: none; text-decoration: underline; }
+.ask-box { display: none; margin-top: 12px; padding: 20px 24px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
+.ask-box h2 { margin: 0 0 4px; font-family: "Zen Maru Gothic", "M PLUS Rounded 1c", sans-serif; font-size: 1.05rem; }
+.ask-box p { margin: 0 0 14px; font-size: 0.8rem; line-height: 1.7; color: #6E625A; }
+.ask-box textarea { display: block; width: 100%; margin-top: 4px; padding: 10px 14px; font: inherit; font-size: 1rem; color: #3A322D; background: #FFFDF8;
+  border: 1.5px solid #E3D6C2; border-radius: 12px; outline: none; resize: vertical; }
+.ask-box textarea:focus { border-color: #9b8ec4; box-shadow: 0 0 0 3px #f0eaf8; }
+.ok { display: none; margin: 0 0 12px; padding: 10px 12px; font-size: 0.85rem; color: #3A322D; background: #f0eaf8; border-radius: 10px; }
 </style></head><body>
+<div class="wrap">
 <form class="login-box" onsubmit="doLogin(event)">
 <div class="dots" aria-hidden="true"><span style="background:#e0d8f0"></span><span style="background:#cab8d9"></span><span style="background:#9b8ec4"></span></div>
 <h1>Petit Dashboard</h1>
@@ -760,7 +803,57 @@ button:disabled { opacity: 0.5; cursor: default; }
 <label class="remember"><input type="checkbox" id="remember" checked>7 日間ログインしたままにする</label>
 <button id="loginBtn" type="submit">ログイン</button>
 </form>
+<div class="asks">
+<button type="button" onclick="openAsk('signup')">新規登録をお願いする</button>
+<button type="button" onclick="openAsk('reset')">パスワードを忘れた</button>
+</div>
+<form class="ask-box" id="askBox" onsubmit="sendAsk(event)">
+<h2 id="askTitle"></h2>
+<p id="askLead"></p>
+<div class="error" id="askError" role="alert"></div>
+<div class="ok" id="askOk" role="status"></div>
+<label class="field">ユーザー名(英数字)<input id="askUser" autocapitalize="off" spellcheck="false" maxlength="30" required></label>
+<label class="field" id="askNameField">呼び名<input id="askName" maxlength="30"></label>
+<label class="field">ひとこと(だれか分かるように)<textarea id="askNote" rows="2" maxlength="300" required></textarea></label>
+<button id="askBtn" type="submit">お願いを送る</button>
+</form>
+</div>
 <script>
+// 新規登録・パスワードの出し直しは「お願い」を送るだけ。アカウントを作る・パスワードを決めるのは、家の人
+let askKind = "signup";
+function openAsk(kind) {
+  const box = document.getElementById("askBox"), same = box.style.display === "block" && askKind === kind;
+  askKind = kind;
+  box.style.display = same ? "none" : "block";
+  document.getElementById("askTitle").textContent = kind === "signup" ? "新規登録をお願いする" : "パスワードを忘れた";
+  document.getElementById("askLead").textContent = kind === "signup"
+    ? "家の人にお願いが届きます。アカウントができたら、家の人からパスワードを教えてもらってください。"
+    : "家の人にお願いが届きます。新しいパスワードは、家の人から教えてもらってください。";
+  document.getElementById("askNameField").style.display = kind === "signup" ? "" : "none";
+  document.getElementById("askError").style.display = "none";
+  document.getElementById("askOk").style.display = "none";
+  if (!same) { document.getElementById("askUser").value = document.getElementById("username").value; document.getElementById("askUser").focus(); }
+}
+async function sendAsk(ev) {
+  ev.preventDefault();
+  const btn = document.getElementById("askBtn"), err = document.getElementById("askError"), ok = document.getElementById("askOk");
+  err.style.display = "none"; ok.style.display = "none";
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/public/account_request", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({kind: askKind, username: document.getElementById("askUser").value,
+        name: document.getElementById("askName").value, note: document.getElementById("askNote").value})
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || "送れませんでした");
+    ok.textContent = "お願いを送りました。家の人からの連絡を待ってください。";
+    ok.style.display = "block";
+    document.getElementById("askNote").value = "";
+  } catch (e) { err.textContent = e.message; err.style.display = "block"; }
+  btn.disabled = false;
+}
 async function doLogin(ev) {
   ev.preventDefault();
   const btn = document.getElementById("loginBtn"), err = document.getElementById("error");
@@ -6233,6 +6326,8 @@ def _char_display_name(char_id: str) -> str:
     """キャラクターIDから表示名を取得する(config.json の mtime で cache。メール 9,000 通で毎回読んでいた)。"""
     if char_id == "house":
         return "家の知らせ"   # scripts/house_alert.py が書く手紙(Claude を呼べなかった、など)
+    if char_id == "login":
+        return "ログイン画面"   # scripts/account_request.py が書く手紙(新規登録・パスワードの出し直しのお願い)
     config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
     try:
         mtime = config_path.stat().st_mtime
