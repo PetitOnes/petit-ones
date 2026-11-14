@@ -18,7 +18,8 @@
 
 Usage:
     python3 room_log.py record            # 読んで 1 行足す(失敗しても静かに終わる。cron 用)
-    python3 room_log.py line              # ぷちに渡す 1 行(無ければ何も出さない)
+    python3 room_log.py line              # いまの 1 行(ぷちが見に行くとき。30 分以内の読みだけ)
+    python3 room_log.py changes --character <id> [--mark]   # 前に伝えた値から大きく動いたときだけ 1 行(ぷちに渡すのはこちら)
     python3 room_log.py day --date YYYY-MM-DD   # その日のまとめ(JSON)
 """
 
@@ -269,11 +270,61 @@ def line(base: Path | None = None, now: datetime | None = None) -> str:
     return "家の空気: " + "。".join(parts) + f"({_hm(snap['ts'])} の読み)" if parts else ""
 
 
+TEMP_STEP = 2.0    # これ以上動いたら「変わった」(℃)
+HUMID_STEP = 10    # 同(%)
+
+
+def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
+    """前にその子に伝えた値から、気温が TEMP_STEP・湿度が HUMID_STEP 以上動いた機体だけ 1 行(ぷちたちの希望: 変わったときだけ)。
+    はじめての回は、いまの値を覚えるだけで何も言わない。伝えたことは characters/<id>/state/room_told.json"""
+    base = base or data_dir()
+    snap = latest(base)
+    if not snap:
+        return ""
+    now = now or datetime.now()
+    try:
+        if (now - datetime.fromisoformat(snap["ts"])).total_seconds() / 60 > FRESH_MIN:
+            return ""
+    except (TypeError, ValueError):
+        return ""
+    told_path = base / "characters" / character_id / "state" / "room_told.json"
+    try:
+        told = json.loads(told_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        told = None
+    cur = {did: {k: dev[k] for k in ("temperature", "humidity") if k in dev} for did, dev in snap["devices"].items()}
+    cur = {k: v for k, v in cur.items() if v}
+    changes = []
+    if isinstance(told, dict):
+        for did, vals in cur.items():
+            old = told.get(did) or {}
+            name = snap["devices"][did].get("name", did)
+            bits = []
+            if "temperature" in vals and isinstance(old.get("temperature"), (int, float)) and abs(vals["temperature"] - old["temperature"]) >= TEMP_STEP:
+                bits.append(f"{old['temperature']}℃ → {vals['temperature']}℃")
+            if "humidity" in vals and isinstance(old.get("humidity"), (int, float)) and abs(vals["humidity"] - old["humidity"]) >= HUMID_STEP:
+                bits.append(f"湿度 {old['humidity']}% → {vals['humidity']}%")
+            if bits:
+                changes.append(f"{name} " + "、".join(bits))
+    if mark and (changes or told is None):
+        # 伝えた(か、はじめて覚えた)値だけ更新。変わっていない機体は前の値のまま(小さな動きの積み重ねも、いつか「変わった」になる)
+        new_told = dict(told) if isinstance(told, dict) else {}
+        for did, vals in cur.items():
+            if told is None or any(c.startswith(snap["devices"][did].get("name", did) + " ") for c in changes):
+                new_told[did] = vals
+        told_path.parent.mkdir(parents=True, exist_ok=True)
+        told_path.write_text(json.dumps(new_told, ensure_ascii=False) + "\n", encoding="utf-8")
+    return ("家の空気が変わった: " + "。".join(changes) + f"({_hm(snap['ts'])} の読み)") if changes else ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("record")
     sub.add_parser("line")
+    p = sub.add_parser("changes")
+    p.add_argument("--character", required=True)
+    p.add_argument("--mark", action="store_true")
     p = sub.add_parser("day")
     p.add_argument("--date", required=True)
     a = ap.parse_args()
@@ -283,6 +334,10 @@ def main() -> int:
         print(f"[room] {len(snap['devices'])} 台を記録" if snap else "[room] 読めなかった(鍵が無い・つながらない)")
     elif a.cmd == "line":
         text = line(base)
+        if text:
+            print(text)
+    elif a.cmd == "changes":
+        text = change_line(base, a.character, mark=a.mark)
         if text:
             print(text)
     else:

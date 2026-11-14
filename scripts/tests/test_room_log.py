@@ -60,3 +60,20 @@ def test_line_without_last_move(tmp_path):
     rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
     (rd / "latest.json").write_text(json.dumps(rows[-1], ensure_ascii=False), encoding="utf-8")
     assert rl.line(tmp_path, T) == "家の空気: ありさん机の動き: なし(記録を始めてから、まだ動きなし)(18:20 の読み)"
+
+
+def test_change_line(tmp_path):
+    rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
+    def snap(temp, hum, ts="2026-11-14T18:20:00"):
+        (rd / "latest.json").write_text(json.dumps({"ts": ts, "devices": {"h2": {"name": "あり部屋", "type": "Hub 2", "temperature": temp, "humidity": hum}}}), encoding="utf-8")
+    snap(23.9, 43)
+    assert rl.change_line(tmp_path, "puchiko", mark=True, now=T) == ""          # はじめては覚えるだけ
+    snap(24.5, 45)
+    assert rl.change_line(tmp_path, "puchiko", mark=True, now=T) == ""          # 小さな動きは言わない
+    snap(21.0, 46)
+    assert rl.change_line(tmp_path, "puchiko", mark=True, now=T) == "家の空気が変わった: あり部屋 23.9℃ → 21.0℃(18:20 の読み)"
+    assert rl.change_line(tmp_path, "puchiko", mark=True, now=T) == ""          # 伝えたら、次は言わない
+    snap(21.5, 58)
+    assert rl.change_line(tmp_path, "puchiru", now=T) == ""                     # 別の子は、まだ覚えていない(mark 無しでは覚えもしない)
+    assert rl.change_line(tmp_path, "puchiko", now=T) == "家の空気が変わった: あり部屋 湿度 46% → 58%(18:20 の読み)"
+    assert rl.change_line(tmp_path, "puchiko", now=datetime(2026, 11, 14, 19, 30)) == ""   # 古い読みでは言わない

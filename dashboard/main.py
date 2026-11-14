@@ -1836,8 +1836,8 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         restriction_text=restriction_text,
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
-        sky=_sky_text(),
-        room=_room_text(),
+        sky_change=_sky_change_text(),
+        room_change=_room_change_text(character_id),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2352,10 +2352,10 @@ def _room():
     return room_log
 
 
-def _room_text() -> str:
-    """家の空気(SwitchBot の記録)の 1 行。30 分以内の読みが無ければ空"""
+def _room_change_text(character_id: str) -> str:
+    """家の空気が大きく変わったときだけの 1 行(その子に前に伝えた値と比べる。伝えたら覚える)。無ければ空"""
     try:
-        return _room().line(DATA_DIR)
+        return _room().change_line(DATA_DIR, character_id, mark=True)
     except Exception:
         return ""
 
@@ -2368,11 +2368,11 @@ def _sky():
     return sky
 
 
-def _sky_text() -> str:
-    """きょうの空(月齢・日の出入り・二十四節気)の 1 行。読めなければ空"""
+def _sky_change_text() -> str:
+    """きょうの空の、変わった日(満月・新月・節気の境目)だけの 1 行。読めなければ空"""
     try:
         sk = _sky()
-        return sk.line(datetime.now(sk.JST).date(), sk.load_place(DATA_DIR))
+        return sk.change_line(datetime.now(sk.JST).date(), sk.load_place(DATA_DIR))
     except Exception:
         return ""
 

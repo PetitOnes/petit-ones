@@ -14,7 +14,8 @@
 
 Usage:
     python3 sky.py day [--date YYYY-MM-DD]     # その日の空(JSON)
-    python3 sky.py line [--date YYYY-MM-DD]    # ぷちに渡す 1 行
+    python3 sky.py line [--date YYYY-MM-DD]    # きょうの空の 1 行(ぷちが見に行くとき)
+    python3 sky.py changes [--date YYYY-MM-DD] # 満月・新月・節気の境目の日だけ 1 行(ぷちに渡すのはこちら。ぷちたちの希望)
 """
 
 from __future__ import annotations
@@ -221,10 +222,24 @@ def line(day: Date, place: dict | None) -> str:
     return f"きょうの空: {moon}{sun}{term}"
 
 
+def change_line(day: Date, place: dict | None) -> str:
+    """「変わった日」だけの 1 行(ぷちたちの希望: 毎回でなく、節気の境目・満月・新月のときだけ)。それ以外は空"""
+    d = day_info(day, place)
+    parts = []
+    if d["moon_mark"] in ("満月", "新月"):
+        parts.append(f"きょうは{d['moon_mark']}({d['moon_mark_emoji']} 月齢 {d['moon_age']})")
+    if d["term"]:
+        parts.append(f"きょうから二十四節気の {d['term']}")
+    if not parts:
+        return ""
+    sun = f"。日の出 {d['sunrise']}・日の入 {d['sunset']}" if d["sunrise"] else ""
+    return "きょうの空: " + "。".join(parts) + sun
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    for name in ("day", "line"):
+    for name in ("day", "line", "changes"):
         p = sub.add_parser(name)
         p.add_argument("--date", default=None)
     a = ap.parse_args()
@@ -232,6 +247,10 @@ def main() -> int:
     place = load_place()
     if a.cmd == "day":
         print(json.dumps(day_info(day, place), ensure_ascii=False, indent=2))
+    elif a.cmd == "changes":
+        text = change_line(day, place)
+        if text:
+            print(text)
     else:
         print(line(day, place))
     return 0
