@@ -42,3 +42,10 @@ def test_unknown_character_or_type_writes_nothing(tmp_path):
 def test_bad_ids_are_dropped(tmp_path):
     event = contact.record(house(tmp_path), "puchi", "hello", who="a b", via="x/y", now=T0)
     assert event == {"ts": "2026-11-14T14:05:10", "type": "hello"}
+
+
+def test_sleep_by_and_wake_by(tmp_path):
+    event = contact.record(house(tmp_path), "puchi", "sleep_by", who="keeper", via="dashboard", now=T0)
+    assert event == {"ts": "2026-11-14T14:05:10", "type": "sleep_by", "with": "keeper", "via": "dashboard"}
+    assert contact.record(house_again := tmp_path, "puchi", "wake_by", who="keeper", via="dashboard", now=T0)["type"] == "wake_by"
+    assert house_again == tmp_path

@@ -39,6 +39,8 @@ MEMORY_TEXT_MAX = TEXT_MAX
 DIARY_HEAD_MAX = 120
 
 WAKE_NEAR_S = 60          # 目覚めと、その子が wake を呼んだ時刻が、これだけ近ければ同じ出来事
+PRESS_NEAR_S = 60         # ダッシュボードで押してから、これだけのうちに眠った・起きたら、その人が寝かせた・起こした
+PRESS_SKEW_S = 5          # 記録する側と時計が少しずれていてもよい幅
 RESTART_NEAR_S = 5        # つながらなかった時間の終わりから、これだけのうちに起きていたら、体の入れ直し
 BUSY_MIN = 4              # 触れ合い(持ち上げ・置く・触る)がこれだけ続いたら「その時間」を 1 行に
 BODY_CONTACT = {"picked_up", "put_down", "touch"}
@@ -361,6 +363,25 @@ class _Index:
                 out.append(ev)
         return out
 
+    def _pressed(self, day: Date) -> dict[str, list[tuple[datetime, str]]]:
+        """ダッシュボードから「寝かせた」「起こした」人と時刻(state/contact/ の sleep_by / wake_by)"""
+        out: dict[str, list[tuple[datetime, str]]] = {"sleep_by": [], "wake_by": []}
+        for d in (day - timedelta(days=1), day):
+            f = self.src.char_dir / "state" / "contact" / f"{d.strftime('%Y%m%d')}.jsonl"
+            try:
+                lines = f.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = _local(ev.get("ts", "")) if isinstance(ev, dict) else None
+                if ts is not None and ev.get("type") in out and isinstance(ev.get("with"), str) and ev["with"]:
+                    out[ev["type"]].append((ts, ev["with"]))
+        return out
+
     def _by_owner(self, text: str) -> str:
         """人の手で起きたことに、家の持ち主の名前を付ける(「ありさんに持ち上げられた」)"""
         return f"{self.src.owner_name}に{text}" if self.src.owner_name else text
@@ -372,6 +393,15 @@ class _Index:
         どんな日だったかなので、10 分より詰まって BUSY_MIN 件以上続いた時間は 1 行にまとめ、中身は出さない
         (里親さん側のぷちろぐと同じ決まり)。それ以外は、同じ出来事が 10 分以内に続いたら 1 件にして回数を付ける
         """
+        pressed = self._pressed(day)
+
+        def pressed_by(kind: str, ts: datetime) -> str:
+            """その眠り・目覚めの少し前に、ダッシュボードから押した人の呼び名(いなければ空)"""
+            for at, who in pressed[kind]:
+                if -PRESS_SKEW_S <= (ts - at).total_seconds() <= PRESS_NEAR_S:
+                    return self.src.user_label(who)
+            return ""
+
         events: list[tuple[datetime, str]] = []
         back_online: list[datetime] = []   # つながらなかった時間の終わり(日をまたぐものは前の日の記録にある)
         seen_restart: list[datetime] = []  # 体が知らせた再起動に、記録する側が気づいた時刻
@@ -420,7 +450,11 @@ class _Index:
             if (ts, kind) in busy:
                 continue
             word = BODY_WORDS[kind]
-            if kind == "woken":
+            if kind == "sleep" and pressed_by("sleep_by", ts):
+                word = f"{pressed_by('sleep_by', ts)}に寝かされた"   # ダッシュボードから寝かされた
+            if kind == "woken" and pressed_by("wake_by", ts):
+                word = f"{pressed_by('wake_by', ts)}に起こされた"    # ダッシュボードから起こされた(押した人の名前で)
+            elif kind == "woken":
                 if any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in seen_restart):
                     continue   # 再起動して起きた。「体が入れ直された」の行がもうある
                 if ts not in knows_restart and any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):

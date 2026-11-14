@@ -6382,23 +6382,26 @@ def reset_session(character_id: str, request: Request):
 
 
 @app.post("/api/{character_id}/m5/sleep")
-async def api_m5_sleep(character_id: str):
+async def api_m5_sleep(character_id: str, request: Request = None):
     cfg = get_char_config(character_id)
     host = await resolve_m5_host(cfg)
     if not host:
         return {"ok": False, "error": "no m5_host"}
     import requests as req
+    # だれが寝かせたかを残す(ぷちログが「○○に寝かされた」と書くため。体の記録には、眠ったことしか残らない)
+    _record_contact(character_id, "sleep_by", who=_me(request), via="dashboard")
     await asyncio.to_thread(lambda: req.get(f"http://{host}/sleep", timeout=5))
     return {"ok": True}
 
 
 @app.post("/api/{character_id}/m5/wake")
-async def api_m5_wake(character_id: str):
+async def api_m5_wake(character_id: str, request: Request = None):
     cfg = get_char_config(character_id)
     host = await resolve_m5_host(cfg)
     if not host:
         return {"ok": False, "error": "no m5_host"}
     import requests as req
+    _record_contact(character_id, "wake_by", who=_me(request), via="dashboard")   # だれが起こしたかを残す(ぷちログ用)
     await asyncio.to_thread(lambda: req.get(f"http://{host}/wake", timeout=5))
     return {"ok": True}
 

@@ -108,3 +108,22 @@ def test_gap_then_wake_is_not_called_restart_when_the_body_can_tell(tmp_path):
     _body_events(src, [{"ts": "2026-11-13T12:00:00", "type": "sleep", "detail": {}}, gap,
                        {"ts": "2026-11-13T14:08:07", "type": "woken", "detail": {"source": "unknown"}}])
     assert "14:08 体が入れ直された" in pl.day_lines(src, DAY)
+
+
+def test_put_to_sleep_and_woken_from_the_dashboard_name_who_pressed(tmp_path):
+    """ダッシュボードから寝かせた・起こしたときは、押した人の名前で出す。押していない眠りは「眠った」のまま"""
+    src = _house(tmp_path)
+    _body_events(src, [
+        {"ts": "2026-11-13T13:00:05", "type": "sleep", "detail": {}},     # 押してから 5 秒後に眠った
+        {"ts": "2026-11-13T15:00:04", "type": "woken", "detail": {"source": "unknown"}},
+        {"ts": "2026-11-13T22:00:10", "type": "sleep", "detail": {}},     # だれも押していない
+    ])
+    contact = src.char_dir / "state" / "contact"
+    contact.mkdir()
+    (contact / "20261113.jsonl").write_text("".join(json.dumps(e) + "\n" for e in [
+        {"ts": "2026-11-13T13:00:00", "type": "sleep_by", "with": "keeper", "via": "dashboard"},
+        {"ts": "2026-11-13T15:00:00", "type": "wake_by", "with": "keeper", "via": "dashboard"},
+        {"ts": "2026-11-13T18:00:00", "type": "sleep_by", "with": "keeper", "via": "dashboard"},   # 押したが、眠らなかった
+    ]), encoding="utf-8")
+    lines = [line for line in pl.day_lines(src, DAY) if "寝かされた" in line or "起こされた" in line or "眠った" in line]
+    assert lines == ["13:00 ありさんに寝かされた", "15:00 ありさんに起こされた", "22:00 眠った"]

@@ -10,6 +10,7 @@
     {"ts": "2026-11-14T14:05:10", "type": "talked", "with": "<世話人の ID>", "via": "chat"}
     {"ts": "2026-11-14T14:06:00", "type": "talked", "cam_to": "<世話人の ID>", "via": "mic"}
     {"ts": "2026-11-14T14:07:30", "type": "hello",  "with": "<世話人の ID>", "via": "dashboard"}
+    {"ts": "2026-11-14T22:00:05", "type": "sleep_by", "with": "<世話人の ID>", "via": "dashboard"}   # 寝かせた(wake_by は起こした)
 
 - with: だれがしたか、が確かなとき(ダッシュボードにログインしている人)
 - cam_to: 体のマイクのように、だれの声かは分からないとき。体の設定(CAM TO)がだれだったか、だけを残す
@@ -30,7 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 _ID = re.compile(r"^[a-zA-Z0-9_]+$")
-TYPES = ("talked", "hello")
+TYPES = ("talked", "hello", "sleep_by", "wake_by")   # sleep_by / wake_by: ダッシュボードから、その人が寝かせた・起こした
 
 
 def data_dir() -> Path:
