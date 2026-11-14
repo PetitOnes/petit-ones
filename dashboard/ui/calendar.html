@@ -17,6 +17,9 @@
     .c-head h2 { margin: 0; font-family: var(--ui-font-head); font-size: 1.02rem; color: var(--ui-heading); white-space: nowrap; }
     .c-bar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
     .c-bar .m-pills { flex: 0 0 auto; }
+    .c-show { flex-wrap: wrap; gap: 4px; }
+    .c-show .a-pill { opacity: 0.55; }
+    .c-show .a-pill.is-on { opacity: 1; }
     .c-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 3px; }   /* 列の幅は固定(長い祝日名で伸びない) */
     .c-wd { text-align: center; font-size: 0.72rem; color: var(--ui-text-sub); padding: 2px 0; }
     .c-wd.sun { color: #d9534f; } .c-wd.sat { color: #4a7abf; }
@@ -83,6 +86,13 @@
       <span style="flex:1"></span>
       <button class="a-btn a-btn--ghost a-btn--s" id="todayBtn" onclick="goToday()">きょう</button>
     </div>
+    <!-- 見せるもの(押して消す・出す。次に開いても覚えている。2026-11-14 ありさん) -->
+    <div class="c-bar c-show" id="showPills">
+      <button class="a-pill" data-show="events" onclick="toggleShow('events')">📅 予定</button>
+      <button class="a-pill" data-show="moon" onclick="toggleShow('moon')">🌙 月齢</button>
+      <button class="a-pill" data-show="temp" onclick="toggleShow('temp')">🌡 温度</button>
+      <button class="a-pill" data-show="other" onclick="toggleShow('other')">🎂🎌 ほか</button>
+    </div>
     <div class="c-head">
       <button class="a-btn a-btn--sub a-btn--s" onclick="move(-1)">‹</button>
       <h2 id="title"></h2>
@@ -118,7 +128,14 @@
     const parse = k => new Date(k + "T00:00:00");
     const addDays = (k, n) => { const d = parse(k); d.setDate(d.getDate() + n); return iso(d); };
     const today = iso(new Date());
-    let view = ["month", "week", "day"].includes(q.get("view")) ? q.get("view") : "month";
+    // 覚え(この端末のブラウザに。読めない・書けないときは気にしない)
+    const remember = (k, v) => { try { localStorage.setItem("cal." + k, JSON.stringify(v)); } catch (e) {} };
+    const recall = (k, fallback) => { try { const v = JSON.parse(localStorage.getItem("cal." + k)); return v === null || v === undefined ? fallback : v; } catch (e) { return fallback; } };
+    // 月 / 週 / 日 は、最後に押したものが次に開いたときも出る(2026-11-14 ありさん)。URL に書いてあればそちら
+    let view = ["month", "week", "day"].includes(q.get("view")) ? q.get("view") : (["month", "week", "day"].includes(recall("view", "")) ? recall("view", "") : "month");
+    // 見せるもの: 予定 / 月齢(月・二十四節気・日の出入) / 温度(部屋の最低〜最高) / ほか(記念日・祝日)
+    const show = Object.assign({events: true, moon: true, temp: true, other: true}, recall("show", {}));
+    function toggleShow(k) { show[k] = !show[k]; remember("show", show); refresh(); }
     let sel = q.get("date") || today;   // 選んでいる日(月の見方では、その月を見る)
     const cache = {};                   // "YYYY-MM" → その月(6 週ぶん)の日ごとの中身
     let people = [], chars = [], me = {};
@@ -147,6 +164,7 @@
     }
     function render() {
       document.querySelectorAll("#viewPills [data-view]").forEach(b => b.classList.toggle("is-on", b.dataset.view === view));
+      document.querySelectorAll("#showPills [data-show]").forEach(b => b.classList.toggle("is-on", !!show[b.dataset.show]));
       document.getElementById("grid").style.display = view === "month" ? "" : "none";
       document.getElementById("week").style.display = view === "week" ? "" : "none";
       document.getElementById("fab").style.display = canEdit() ? "" : "none";
@@ -158,7 +176,7 @@
       document.getElementById("todayBtn").style.visibility = (view === "month" ? sel.slice(0, 7) === today.slice(0, 7) : view === "week" ? weekStart(sel) === weekStart(today) : sel === today) ? "hidden" : "";
       renderDay();
     }
-    function setView(v) { view = v; saveQ(); refresh(); }
+    function setView(v) { view = v; remember("view", v); saveQ(); refresh(); }
     function move(n) {
       if (view === "month") { const d = parse(sel); d.setDate(1); d.setMonth(d.getMonth() + n); sel = iso(d); }
       else sel = addDays(sel, n * (view === "week" ? 7 : 1));
@@ -167,7 +185,8 @@
     function goToday() { sel = today; saveQ(); refresh(); }
     function pick(k) { sel = k; saveQ(); refresh(); }
 
-    const markHtml = (i, cls) => (i.holiday ? [`<span class="${cls} hol">🎌 ${esc(i.holiday)}</span>`] : []).concat(i.events.map(e => `<span class="${cls}">📅 ${esc(e.title)}</span>`), i.anniv.map(a => `<span class="${cls}">🎂 ${esc(a.label)}</span>`));
+    const markHtml = (i, cls) => (show.other && i.holiday ? [`<span class="${cls} hol">🎌 ${esc(i.holiday)}</span>`] : []).concat(
+      show.events ? i.events.map(e => `<span class="${cls}">📅 ${esc(e.title)}</span>`) : [], show.other ? i.anniv.map(a => `<span class="${cls}">🎂 ${esc(a.label)}</span>`) : []);
     function renderGrid() {
       const d = parse(sel), y = d.getFullYear(), m = d.getMonth();
       const start = new Date(y, m, 1 - new Date(y, m, 1).getDay());
@@ -175,9 +194,9 @@
       for (let i = 0; i < 42; i++) {
         const dd = new Date(start); dd.setDate(start.getDate() + i);
         const k = iso(dd), inf = info(k), marks = markHtml(inf, "m");
-        if (inf.sky && inf.sky.term) marks.push(`<span class="m term">${esc(inf.sky.term)}</span>`);
-        const moon = inf.sky && inf.sky.moon_mark_emoji ? `<span class="moon" title="${esc(inf.sky.moon_mark)}">${inf.sky.moon_mark_emoji}</span>` : "";
-        const cls = ["c-day", dd.getMonth() !== m ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", dd.getDay() === 0 ? "sun" : dd.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        if (show.moon && inf.sky && inf.sky.term) marks.push(`<span class="m term">${esc(inf.sky.term)}</span>`);
+        const moon = show.moon && inf.sky && inf.sky.moon_mark_emoji ? `<span class="moon" title="${esc(inf.sky.moon_mark)}">${inf.sky.moon_mark_emoji}</span>` : "";
+        const cls = ["c-day", dd.getMonth() !== m ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", show.other && inf.holiday ? "hol" : "", dd.getDay() === 0 ? "sun" : dd.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
         html += `<button class="${cls}" onclick="pick('${k}')">${moon}<span class="n">${dd.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
       }
       document.getElementById("grid").innerHTML = html;
@@ -186,16 +205,16 @@
       const ws = weekStart(sel);
       document.getElementById("week").innerHTML = Array.from({length: 7}, (_, i) => {
         const k = addDays(ws, i), dd = parse(k), inf = info(k), marks = markHtml(inf, "");
-        if (inf.sky && inf.sky.moon_mark_emoji) marks.push(`<span class="none">${inf.sky.moon_mark_emoji} ${esc(inf.sky.moon_mark)}</span>`);
-        if (inf.sky && inf.sky.term) marks.push(`<span class="none">${esc(inf.sky.term)}</span>`);
-        const cls = ["c-wrow", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", i === 0 ? "sun" : i === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        if (show.moon && inf.sky && inf.sky.moon_mark_emoji) marks.push(`<span class="none">${inf.sky.moon_mark_emoji} ${esc(inf.sky.moon_mark)}</span>`);
+        if (show.moon && inf.sky && inf.sky.term) marks.push(`<span class="none">${esc(inf.sky.term)}</span>`);
+        const cls = ["c-wrow", k === today ? "today" : "", k === sel ? "sel" : "", show.other && inf.holiday ? "hol" : "", i === 0 ? "sun" : i === 6 ? "sat" : ""].filter(Boolean).join(" ");
         return `<button class="${cls}" onclick="pick('${k}')"><span class="d">${dd.getMonth() + 1}/${dd.getDate()}<small>${WD[i]}${k === today ? " きょう" : ""}</small></span><span class="items">${marks.join("") || '<span class="none">—</span>'}</span></button>`;
       }).join("");
     }
     function renderDay() {
       const d = parse(sel), inf = info(sel);
-      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}${inf.holiday ? ` 🎌 ${inf.holiday}` : ""}`;
-      const ev = inf.events.map(e => {
+      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}${show.other && inf.holiday ? ` 🎌 ${inf.holiday}` : ""}`;
+      const ev = (show.events ? inf.events : []).map(e => {
         const span = e.date !== e.end ? `${e.date.slice(5).replace("-", "/")}〜${e.end.slice(5).replace("-", "/")}` : "";
         const sub = [span, e.time ? `${esc(e.time)} から` : "", e.place ? `📍 ${esc(e.place)}` : ""].filter(Boolean).join(" ・ ");
         const who = e.who.length ? `<div class="who">${e.who.map(w => `<span><i class="c-dot" style="background:${esc(colorOf(w))}"></i>${esc(nameOf(w))}</span>`).join("")}</div>` : "";
@@ -203,13 +222,14 @@
         return `<div class="c-item"><span>📅</span><div class="t"><b>${esc(e.title)}</b>${sub ? `<div class="sub">${sub}</div>` : ""}${who}${e.note ? `<div class="sub">${esc(e.note)}</div>` : ""}${by}</div>
           ${canTouch(e) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('event', ${JSON.stringify(e.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('event', ${JSON.stringify(e.id)}, ${JSON.stringify(e.title)})">消す</button>` : ""}</div>`;
       });
-      const an = inf.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
+      const an = (show.other ? inf.anniv : []).map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
           ${canTouch(a) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('anniv', ${JSON.stringify(a.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('anniv', ${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})">消す</button>` : ""}</div>`);
-      const sk = inf.sky;
+      const sk = show.moon ? inf.sky : null;
       const skyLine = sk ? `<div class="c-sky">${sk.moon_mark_emoji || sk.moon} 月齢 ${sk.moon_age}${sk.moon_mark ? `(${esc(sk.moon_mark)})` : ""}${sk.sunrise ? ` ・ 日の出 ${esc(sk.sunrise)} 日の入 ${esc(sk.sunset)}` : ""}${sk.term ? ` ・ きょうから ${esc(sk.term)}` : sk.current_term ? ` ・ ${esc(sk.current_term)}` : ""}</div>` : "";
-      const rm = inf.room;
+      const rm = show.temp ? inf.room : null;
       const roomLine = rm && rm.devices ? `<div class="c-sky">${Object.values(rm.devices).filter(d => "temperature_min" in d).map(d => `🌡 ${esc(d.name)} ${d.temperature_min}〜${d.temperature_max}℃${"humidity_min" in d ? ` ・ 💧 ${d.humidity_min}〜${d.humidity_max}%` : ""}`).join(" / ")}</div>` : "";
-      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`);
+      const hidden = Object.values(show).some(v => !v);
+      document.getElementById("dayItems").innerHTML = skyLine + roomLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">${hidden ? "この日は(見せているものの中には)何もありません" : "この日はまだ何もありません"}</p>`);
     }
 
     // ---- 右下の ＋ ----
