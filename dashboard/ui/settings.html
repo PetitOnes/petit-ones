@@ -38,6 +38,8 @@
     .s-toast.on { opacity: 1; }
     .s-pane { display: none; padding-top: 16px; }   /* 上の粒の列と、いちばん上のカードのあいだ */
     .s-pane.on { display: block; }
+    .s-swatch { width: 44px; height: 32px; padding: 0; font-size: 0.7rem; color: var(--ui-text-mute); border: var(--ui-line-w) solid var(--ui-line); border-radius: 8px; cursor: pointer; }
+    .s-swatch:disabled { cursor: default; }
     .s-checks { display: flex; flex-wrap: wrap; gap: 6px 8px; margin-top: 6px; }
     .s-check { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; font-size: 0.9rem; background: var(--ui-surface-soft); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: 999px; cursor: pointer; }
     .s-check input { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--ui-accent-text); }
@@ -45,7 +47,9 @@
     .s-check.is-rec { border-color: var(--ui-accent-line); }
     .s-rec { margin-left: 2px; padding: 1px 7px; font-size: 0.7rem; font-weight: 700; color: var(--ui-accent-text); background: var(--ui-accent-soft); border-radius: 999px; }
     .s-rec.is-off { color: var(--ui-danger); background: var(--ui-danger-soft, #fbe2dc); margin-left: 8px; }
+    .s-matrix-wrap { overflow-x: auto; }
     .s-matrix { width: 100%; margin-top: 6px; border-collapse: collapse; font-size: 0.9rem; }
+    .s-matrix tr.is-child th, .s-matrix tr.is-child td { background: var(--ui-accent-soft); }
     .s-matrix th, .s-matrix td { padding: 4px 2px; text-align: center; border-bottom: var(--ui-line-w) solid var(--ui-line-soft); }
     .s-matrix thead th { font-size: 0.75rem; font-weight: 700; color: var(--ui-text-sub); }
     .s-matrix tbody th { text-align: left; font-weight: 700; white-space: nowrap; }
@@ -95,6 +99,13 @@
           <span style="display:flex;align-items:center;gap:8px;">
             <input type="color" id="topbarColor" value="#f6f3fa" onchange="saveUi({topbar_color: this.value})" style="width:44px;height:32px;border:none;background:none;padding:0;cursor:pointer;">
             <button class="a-btn a-btn--sub a-btn--s" onclick="saveUi({topbar_color: null})">ぷちの色に戻す</button>
+          </span>
+        </div>
+        <div class="s-row">
+          <span>📌 取っておいた色</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <button class="s-swatch" id="savedColorBtn" title="この色にする" onclick="if (ui.topbar_saved) saveUi({topbar_color: ui.topbar_saved})"></button>
+            <button class="a-btn a-btn--sub a-btn--s" id="keepColorBtn" onclick="if (ui.topbar_color) saveUi({topbar_saved: ui.topbar_color})">いまの色を取っておく</button>
           </span>
         </div>
       </div>
@@ -194,7 +205,7 @@
         <div id="hosts"></div>
         <button class="a-btn a-btn--ghost a-btn--s" onclick="addHost('')">＋ 追加</button>
       </details>
-      <button class="a-btn s-save" onclick="saveChar()">保存</button>
+      <button class="a-btn s-save" id="saveBtn" onclick="saveChar()" disabled>保存</button>
     </section>
   </div>
   <div class="s-toast" id="toast"></div>
@@ -256,6 +267,12 @@
       document.getElementById("houseTitle").value = ui.house_title || "";
       const c = ui.topbar_color;
       document.getElementById("topbarColor").value = c || "#f6f3fa";
+      // 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、ここを押せば戻せる
+      const sw = document.getElementById("savedColorBtn");
+      sw.style.background = ui.topbar_saved || "transparent";
+      sw.textContent = ui.topbar_saved ? "" : "なし";
+      sw.disabled = !ui.topbar_saved;
+      document.getElementById("keepColorBtn").disabled = !c || c === ui.topbar_saved;
       const key = ui.send_key === "ctrl_enter" ? "ctrl_enter" : "enter";
       document.querySelectorAll("#sendKey [data-v]").forEach(b => b.classList.toggle("is-on", b.dataset.v === key));
       const order = toolOrder();
@@ -388,6 +405,17 @@
       document.getElementById("hosts").innerHTML = (m5.m5_hosts || []).map(hostRow).join("");
       renderDayType();
       lockSections();
+      setDirty(false);   // 読み込んだばかり。何か変えるまで、保存は押せない
+    }
+    // 保存ボタンは、何か変えたら押せるようにする(変えていないのに押して、保存したつもりにならないように)
+    function setDirty(on) { const b = document.getElementById("saveBtn"); b.disabled = !on; b.textContent = on ? "保存" : "保存(変えたら押せます)"; }
+    for (const ev of ["input", "change", "click"]) {
+      document.getElementById("paneChar").addEventListener(ev, e => {
+        if (e.target.closest("#saveBtn")) return;
+        if (ev === "click" && !e.target.closest("button, .a-pill, .s-hour, [onclick]")) return;   // 押して中身が変わるもの(時間帯の升・✕・足す)
+        if (e.target.closest('[onclick^="restNow"]')) return;   // 「いまから」のボタンは、すぐ効く(保存は要らない)
+        setDirty(true);
+      });
     }
     async function saveChar() {
       const id = active;
@@ -407,7 +435,7 @@
           fetch(`/api/${id}/settings`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(data)}),
           advancedOk ? fetch(`/api/${id}/config/m5_hosts`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({m5_hosts: hosts})}) : Promise.resolve({ok: true}),
         ]);
-        if (a.ok && b.ok) toast("保存しました");
+        if (a.ok && b.ok) { toast("保存しました"); setDirty(false); }
         else { const j = await (a.ok ? b : a).json().catch(() => ({})); toast(j.error || "保存できなかった"); }
       } catch (e) { toast("保存できなかった"); }
     }
@@ -466,32 +494,34 @@
 
     // ---- 👪 ひと ----
     // 人ごとに 3 つ: (1) ぷちごとの表(子・会話・メール・ぷちログ) (2) 見せるページ (3) してよいこと(たたんである)
-    const KINDS = [["children", "子"], ["chat", "会話"], ["mail_in", "受信"], ["mail_out", "送信"], ["petitlog", "ログ"]];
     function renderPeople() {
       const el = document.getElementById("people");
-      const rec = access.recommended || [];
+      const rec = access.recommended || [], kinds = access.view_kinds || [];
       el.innerHTML = access.users.map(u => {
         const uid = esc(u.id);
         const kids = u.children.map(id => (access.characters.find(c => c.id === id) || {}).name || id).join("・") || "(子はいません)";
-        const rows = access.characters.map(c => {
+        // 列: ぷちたち、そのあと ほかの人(アルバム・ボイスメモの行だけに、印が付く)
+        const cols = access.characters.map(c => ({...c, human: false})).concat((u.others || []).map(o => ({...o, human: true})));
+        const box = (kind, c, on, dis) => `<td><input type="checkbox" data-user="${uid}" data-kind="${kind}" data-char="${esc(c.id)}" ${on ? "checked" : ""} ${dis ? "disabled" : ""}></td>`;
+        const head = `<tr><th></th>${cols.map(c => `<th>${esc(c.name)}</th>`).join("")}</tr>`;
+        const childRow = `<tr class="is-child"><th>子</th>${cols.map(c => c.human ? "<td></td>" : box("children", c, u.children.includes(c.id), false)).join("")}</tr>`;
+        const rows = kinds.map(k => `<tr><th>${esc(k.label)}</th>${cols.map(c => {
+          if (c.human && !k.human) return "<td></td>";
           const child = u.children.includes(c.id);
-          const cell = ([key]) => {
-            const on = key === "children" ? child : child || (u[key] || []).includes(c.id);
-            return `<td><input type="checkbox" data-user="${uid}" data-kind="${key}" data-char="${esc(c.id)}" ${on ? "checked" : ""} ${child && key !== "children" ? "disabled" : ""}></td>`;
-          };
-          return `<tr><th>${esc(c.name)}</th>${KINDS.map(cell).join("")}</tr>`;
-        }).join("");
-        const pages = access.tools.filter(t => TOOL_ALL[t]).map(t => `<label class="s-check${rec.includes(t) ? " is-rec" : ""}"><input type="checkbox" data-user="${uid}" data-tool="${esc(t)}" ${u.hide_tools.includes(t) ? "" : "checked"}> ${TOOL_ALL[t].icon} ${esc(TOOL_ALL[t].name)}${rec.includes(t) ? '<span class="s-rec">おすすめ</span>' : ""}</label>`).join("");
+          return box(k.id, c, child || (u.views[k.id] || []).includes(c.id), child);
+        }).join("")}</tr>`).join("");
+        const order = access.tools.filter(t => TOOL_ALL[t]).sort((a, b) => rec.includes(b) - rec.includes(a));   // おすすめを上に
+        const pages = order.map(t => `<label class="s-check${rec.includes(t) ? " is-rec" : ""}"><input type="checkbox" data-user="${uid}" data-tool="${esc(t)}" ${u.hide_tools.includes(t) ? "" : "checked"}> ${TOOL_ALL[t].icon} ${esc(TOOL_ALL[t].name)}${rec.includes(t) ? '<span class="s-rec">おすすめ</span>' : ""}</label>`).join("");
         const cans = (access.can_labels || []).map(c => `<label class="s-check"><input type="checkbox" data-user="${uid}" data-can="${esc(c.id)}" ${u.can[c.id] !== false ? "checked" : ""}> ${esc(c.label.replace("{kids}", kids === "(子はいません)" ? "子" : kids))}</label>`).join("");
         const off = (access.can_labels || []).filter(c => u.can[c.id] === false).length;
         return `<div class="m-card"><span class="a-heading">${esc(u.name)}</span>
-          <div class="a-label">ぷちごとに決める</div>
-          <table class="s-matrix"><thead><tr><th></th>${KINDS.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>
-          <p class="a-hint" style="margin:6px 0 0"><b>子</b>にすると、その子の会話・記憶・設定まで見られて、会話・メール・ぷちログは自動で入ります。<b>受信</b>・<b>送信</b>はメール、<b>ログ</b>はぷちログです。</p>
+          <div class="a-label">だれの分を、見せるか・してよいか</div>
+          <div class="s-matrix-wrap"><table class="s-matrix"><thead>${head}</thead><tbody>${childRow}${rows}</tbody></table></div>
+          <p class="a-hint" style="margin:6px 0 0"><b>子</b>にすると、その子の会話・記憶・設定まで見られて、下の行は自動で入ります。</p>
           <div class="a-label" style="margin-top:14px">見せるページ</div>
           <div class="s-checks">${pages}</div>
           <div style="display:flex;gap:8px;margin-top:8px"><button class="a-btn a-btn--sub a-btn--s" data-user="${uid}" data-pages="rec">おすすめにそろえる</button><button class="a-btn a-btn--ghost a-btn--s" data-user="${uid}" data-pages="all">ぜんぶ見せる</button></div>
-          <details class="s-cans" ${off ? "open" : ""}><summary>してよいこと(消す・変える)${off ? `<span class="s-rec is-off">${off} 個 外してある</span>` : ""}</summary>
+          <details class="s-cans" ${off ? "open" : ""}><summary>してよいこと(消す・変える・送る)${off ? `<span class="s-rec is-off">${off} 個 外してある</span>` : ""}</summary>
             <p class="a-hint" style="margin:6px 0">外すと、その人の画面からできなくなります。その人は、設定からお願いを送れます。</p>
             <div class="s-checks s-checks--col">${cans}</div></details>
         </div>`;
@@ -500,7 +530,7 @@
     function peopleBody(user) {
       const all = sel => [...document.querySelectorAll(`#people input[data-user="${CSS.escape(user)}"]${sel}`)];
       const of = kind => all(`[data-kind="${kind}"]`).filter(x => x.checked).map(x => x.dataset.char);
-      return {user, children: of("children"), chat: of("chat"), mail_in: of("mail_in"), mail_out: of("mail_out"), petitlog: of("petitlog"),
+      return {user, children: of("children"), views: Object.fromEntries((access.view_kinds || []).map(k => [k.id, of(k.id)])),
               hide_tools: all("[data-tool]").filter(x => !x.checked).map(x => x.dataset.tool),
               can: Object.fromEntries(all("[data-can]").map(x => [x.dataset.can, x.checked]))};
     }

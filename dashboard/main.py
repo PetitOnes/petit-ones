@@ -535,17 +535,20 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "terminal": ("/terminal", "/api/terminal"),
     "logs": ("/stream-logs", "/api/stream-logs"),
     "costs": ("/costs", "/api/costs"),
+    "help": ("/help",),
 }
 # 見せるのをおすすめするページ(毎日の暮らしで使うもの)。👪 ひと に「おすすめ」と出す
-RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "anniv", "album", "voice", "notes", "notebook"]
+RECOMMENDED_TOOLS = ["yousu", "petitlog", "diary", "anniv", "album", "voice", "notes", "notebook", "help"]
 ACCESS_DEFAULT = {"hide_tools": ["monitor", "terminal", "logs", "costs"], "petitlog": []}
 # can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
 CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
+    ("hello", "{kids}に「ここにいるよ」を送る"),
     ("rest", "{kids}の からだ おやすみ を使う"),
     ("body", "ようす から、{kids}の体の設定(明るさ・音量・PSAVE・WHO)を変える"),
     ("album_delete", "自分のアルバムの写真を消す"),
     ("voice_delete", "自分のボイスメモを消す"),
     ("notes_delete", "自分のノートを消す"),
+    ("notebook", "交換日記に書く"),
     ("anniv", "記念日を足す・直す・消す(自分が足したもの)"),
     ("sounds", "音を取り込む・消す・{kids}の体へ送る"),
     ("schedule", "設定: {kids}のアクティブタイムを変える"),
@@ -556,6 +559,8 @@ CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
 CAN_KEYS = [k for k, _ in CAN_LABELS]
 # 決まりを、入口(メソッドと道)で掛けるもの。設定の保存(/api/<id>/settings)は、中身を見て api_save_settings で掛ける
 CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
+    ("hello", "POST", r"/api/hello"),
+    ("notebook", "POST", r"/api/notebook"),
     ("rest", "POST", r"/api/switches/rest|/api/[^/]+/switches/rest"),
     ("body", "POST", r"/api/[^/]+/body"),
     ("album_delete", "DELETE", r"/api/album/.+"),
@@ -580,6 +585,23 @@ def _load_access() -> dict:
         return raw if isinstance(raw, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+# 👪 ひと の表の行。(id, 言葉, 決めていないときの答え, 人(世話人)の分もあるか)
+#   決めていないときの答えは、いままでの動きに合わせてある(メール・アルバム・ボイスメモは、だれの分でも。ほかは子だけ)
+VIEW_KINDS = [
+    ("chat", "会話", False, False),
+    ("mail_in", "メール受信", True, False),
+    ("mail_out", "メール送信", True, False),
+    ("petitlog", "ぷちログ表示", False, False),
+    ("diary", "日記表示", False, False),
+    ("notes", "ノート表示", False, False),
+    ("album", "アルバム表示", True, True),
+    ("voice", "ボイスメモ表示", True, True),
+]
+VIEW_DEFAULT = {k: d for k, _, d, _ in VIEW_KINDS}
+# 入口(GET /api/<子>/<ここ>…)と、見てよいかの種類
+VIEW_ROUTES = {"petit_log": "petitlog", "diary_list": "diary", "diary_day": "diary", "diary": "diary", "notes": "notes"}
 
 
 def _auth_children(user: str) -> list[str]:
@@ -607,20 +629,19 @@ def _access_of(user: str) -> dict:
     children = ids("children")
     return {"hide_tools": [t for t in (hide if hide is not None else ACCESS_DEFAULT["hide_tools"]) if t in HIDEABLE_TOOLS],
             "children": children if children is not None else _auth_children(user),
-            "chat": ids("chat"), "mail_in": ids("mail_in"), "mail_out": ids("mail_out"),
-            "petitlog": ids("petitlog") or [],
+            **{k: ids(k) for k in VIEW_DEFAULT},
             "can": {k: can_raw.get(k) is not False for k in CAN_KEYS}}
 
 
-def _ok_for(user: str, kind: str, char_id: str) -> bool:
-    """見られる子が決まっている人が、その子に対して kind(chat / mail_in / mail_out / petitlog)をしてよいか"""
+def _ok_for(user: str, kind: str, who: str) -> bool:
+    """見られる子が決まっている人が、その子(アルバム・ボイスメモは人も)に対して kind(VIEW_KINDS)をしてよいか"""
     acc = _access_of(user)
-    if char_id in acc["children"]:
+    if who in acc["children"] or who == user:   # 自分の子と、自分の分は、いつでも
         return True
-    extra = acc[kind]
-    if extra is None:   # まだ決めていない: メールはどの子でも、会話は子だけ
-        return kind in ("mail_in", "mail_out")
-    return char_id in extra
+    extra = acc.get(kind)
+    if extra is None:   # まだ決めていない
+        return VIEW_DEFAULT.get(kind, False)
+    return who in extra
 
 
 def _is_limited_user(user: str | None) -> bool:
@@ -771,6 +792,11 @@ async def auth_middleware(request: Request, call_next):
                 if path.startswith("/api/"):
                     return JSONResponse({"error": "この道具は使えません"}, status_code=403)
                 return HTMLResponse("<meta charset='utf-8'><p style='font-family:sans-serif;padding:24px'>このページは開けません。<a href='/'>もどる</a></p>", status_code=403)
+        # アルバム・ボイスメモは、見てよいと決めてもらった人・子の分だけ(自分の分は、いつでも)
+        me_id = _get_username(request) or ""
+        m = re.match(r"/api/(album|voice_memo)/([a-zA-Z0-9_]+)(/|$)", path)
+        if m and request.method == "GET" and m.group(2) in ALBUM_PERSONS and not _ok_for(me_id, "album" if m.group(1) == "album" else "voice", m.group(2)):
+            return JSONResponse({"error": "この人の分は、見られないことになっています"}, status_code=403)
         can = _access_of(_get_username(request) or "")["can"]
         for key, methods, pattern in CAN_ROUTES:
             if not can.get(key, True) and request.method in methods.split("|") and re.fullmatch(pattern, path):
@@ -787,7 +813,8 @@ async def auth_middleware(request: Request, call_next):
             peek = request.method == "GET" and len(parts) == 4 and parts[3] in ("status", "sensors", "body")
             # ぷちログは、家の持ち主が「見てよい」と決めた子の分も読める
             who = _get_username(request) or ""
-            if is_char and request.method == "GET" and len(parts) == 4 and parts[3] == "petit_log" and _ok_for(who, "petitlog", candidate):
+            # ぷちログ・日記・ノートを読む入口は、家の持ち主が「見てよい」と決めた子の分も通す
+            if is_char and request.method == "GET" and len(parts) >= 4 and parts[3] in VIEW_ROUTES and _ok_for(who, VIEW_ROUTES[parts[3]], candidate):
                 peek = True
             # 会話(話す・これまでの会話を読む)は、家の持ち主が「話してよい」と決めた子の分も通す
             if is_char and len(parts) >= 4 and parts[3] == "chat" and _ok_for(who, "chat", candidate):
@@ -5271,6 +5298,7 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
     except (OSError, json.JSONDecodeError):
         return {}
     base.pop("topbar_color", None)
+    base.pop("topbar_saved", None)
     base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
     return base
 
@@ -5287,6 +5315,7 @@ def api_ui_get(request: Request = None):
 
 class UiSettings(BaseModel):
     topbar_color: str | None = None   # "#rrggbb"。None/空ならぷちの色に合わせる
+    topbar_saved: str | None = None   # 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、この色に戻せる
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない
@@ -5301,6 +5330,8 @@ def api_ui_set(req: UiSettings, request: Request = None):
     # 送られてきたときだけ変える(null は「ぷちの色に戻す」。道具の列だけ送ったときは色を触らない)
     if "topbar_color" in req.model_fields_set or "topbar_color" not in cur:
         cur["topbar_color"] = req.topbar_color or None
+    if req.topbar_saved and re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_saved):
+        cur["topbar_saved"] = req.topbar_saved
     if req.house_title:
         cur["house_title"] = req.house_title.strip()[:30]
     if req.send_key in ("enter", "ctrl_enter"):
@@ -6789,6 +6820,8 @@ def api_me(request: Request):
                     "petitlog": mine + [c for c in every if c not in mine and _ok_for(username, "petitlog", c)],
                     "chat": [c for c in every if _ok_for(username, "chat", c)],
                     "mail_out": [c for c in every if _ok_for(username, "mail_out", c)],
+                    "album": [x for x in ALBUM_PERSONS if _ok_for(username, "album", x)],
+                    "voice": [x for x in VOICE_MEMO_PERSONS if _ok_for(username, "voice", x)],
                     "owner_name": _user_label(OWNER_USER, OWNER_USER)})
     return out
 
@@ -6797,10 +6830,7 @@ class AccessBody(BaseModel):
     user: str
     hide_tools: list[str] | None = None
     children: list[str] | None = None    # その人の子
-    chat: list[str] | None = None        # 子のほかに、話してよい子
-    mail_in: list[str] | None = None     # 子のほかに、手紙を受け取ってよい子
-    mail_out: list[str] | None = None    # 子のほかに、手紙を送ってよい子
-    petitlog: list[str] | None = None    # 子のほかに、ぷちログを見てよい子
+    views: dict[str, list[str]] | None = None   # VIEW_KINDS ごとに、子のほかに「よい」子(アルバム・ボイスメモは人も)
     can: dict[str, bool] | None = None   # できること(CAN_KEYS)。送った項目だけ変える
 
 
@@ -6814,6 +6844,21 @@ def api_petitlog_characters(request: Request):
     who = _get_username(request) or ""
     by_id = {c["id"]: c for c in chars}
     order = [i for i in allowed if i in by_id] + [c["id"] for c in chars if c["id"] not in allowed and _ok_for(who, "petitlog", c["id"])]
+    return [by_id[i] for i in order]
+
+
+@app.get("/api/viewable")   # 道を /api/viewable/<kind> にすると、/api/<子>/notes などの入口とぶつかる
+def api_view_characters(kind: str, request: Request):
+    """kind(petitlog / diary / notes)を見てよい子。自分の子が先、そのあと家の持ち主が決めた子"""
+    if kind not in ("petitlog", "diary", "notes"):
+        return JSONResponse({"error": "unknown kind"}, status_code=400)
+    chars = list_characters()
+    allowed = _get_allowed_characters(request)
+    if allowed is None:
+        return chars
+    who = _get_username(request) or ""
+    by_id = {c["id"]: c for c in chars}
+    order = [i for i in allowed if i in by_id] + [c["id"] for c in chars if c["id"] not in allowed and _ok_for(who, kind, c["id"])]
     return [by_id[i] for i in order]
 
 
@@ -6843,11 +6888,14 @@ def api_access_get(request: Request):
         if user in chars:   # ぷち自身のログインは、ここでは扱わない
             continue
         acc = _access_of(user)
+        others = [p for p in ALBUM_PERSONS if p not in chars and p != user]   # ほかの人(家の持ち主など)。アルバム・ボイスメモだけ
         users.append({"id": user, "name": _user_label(user, user), "children": [c for c in acc["children"] if c in chars],
-                      # ぷちごとに、いま効いている答え(子は、ぜんぶ「よい」)
-                      **{k: [c for c in chars if _ok_for(user, k, c)] for k in ("chat", "mail_in", "mail_out", "petitlog")},
+                      # ぷち(と人)ごとに、いま効いている答え(子は、ぜんぶ「よい」)
+                      "views": {k: [c for c in list(chars) + (others if human else []) if _ok_for(user, k, c)] for k, _, _, human in VIEW_KINDS},
+                      "others": [{"id": p, "name": _user_label(p, p)} for p in others],
                       "hide_tools": acc["hide_tools"], "can": acc["can"]})
     return {"users": users, "tools": list(HIDEABLE_TOOLS), "recommended": RECOMMENDED_TOOLS,
+            "view_kinds": [{"id": k, "label": label, "human": human} for k, label, _, human in VIEW_KINDS],
             "characters": [{"id": k, "name": v} for k, v in chars.items()],
             "can_labels": [{"id": k, "label": v} for k, v in CAN_LABELS]}
 
@@ -6863,10 +6911,11 @@ def api_access_set(body: AccessBody, request: Request):
     known = {c["id"] for c in list_characters()}
     if body.hide_tools is not None:
         cur["hide_tools"] = [t for t in body.hide_tools if t in HIDEABLE_TOOLS]
-    for key in ("children", "chat", "mail_in", "mail_out", "petitlog"):
-        value = getattr(body, key)
-        if value is not None:
-            cur[key] = [c for c in value if c in known]
+    if body.children is not None:
+        cur["children"] = [c for c in body.children if c in known]
+    for key, value in (body.views or {}).items():
+        if key in VIEW_DEFAULT and isinstance(value, list):
+            cur[key] = [c for c in value if c in known or c in ALBUM_PERSONS]
     if body.can is not None:
         old = cur.get("can") if isinstance(cur.get("can"), dict) else {}
         cur["can"] = {**old, **{k: bool(v) for k, v in body.can.items() if k in CAN_KEYS}}
@@ -7838,8 +7887,8 @@ HTML = """<!DOCTYPE html>
         (_meNow.mine ? `<button class="chip" onclick="setMeNow('')">消す</button>` : "") +
         (others ? `<div class="others">${others}</div>` : "") +
         // 「ここにいるよ」: ぷちたちに合図を送る(🌱 ようす にあるものと同じ)
-        `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button></div>` +
-        `<div class="others" id="meNowHelloMsg"></div>` +
+        (canDo("hello") ? `<div class="row" style="margin-top:8px;"><button class="chip" id="meNowHelloBtn" onclick="sendHello('meNowHelloBtn', 'meNowHelloMsg')">👋 ここにいるよ</button></div>` +
+        `<div class="others" id="meNowHelloMsg"></div>` : "") +
         // からだ おやすみ(2026-11-14 ありさん): 3 人まとめて、いまから n 分 カメラ・声・効果音を止める。考える・書くはいつも通り
         `<div class="others" style="margin-top:8px">🌙 からだ おやすみ(カメラ・声・音を止める): ${restWords()}</div>` +
         // からだ おやすみ を使えないことになっている人には、様子だけを出して、押すところは出さない
@@ -8173,6 +8222,7 @@ HTML = """<!DOCTYPE html>
       panel.innerHTML = rows.join("");
       const cards = allChars.map(c => bodyCards[c.id] ? `<div data-bodycard="${c.id}">${bodyCards[c.id]}</div>` : "").join("");
       document.getElementById("groupBodySettings").innerHTML = cards || '<div class="empty">つながっている体がありません</div>';
+      document.getElementById("groupBodySettings").closest("section").style.display = canDo("body") ? "" : "none";
     }
 
     async function update() {
@@ -10310,7 +10360,7 @@ NOTES_HTML = """<!DOCTYPE html>
     }
 
     async function initChars() {
-      const [charsRes, meRes] = await Promise.all([fetch("/api/characters"), fetch("/api/me")]);
+      const [charsRes, meRes] = await Promise.all([fetch("/api/viewable?kind=notes"), fetch("/api/me")]);   // 子と、見てよいと決めてもらった子
       const charList = await charsRes.json(), me = await meRes.json();
       chars = charList.map(c => ({ id: c.id, name: c.name||c.id }));
       chars.push({ id: me.username, name: me.name, editable: true });
@@ -10939,12 +10989,13 @@ ALBUM_HTML = """<!DOCTYPE html>
     let currentViewer = "arisan";    // 見ている人 = ログイン中の人
     let viewerLimited = false;       // 見られる子が決まっている人は、消せるのは自分のアルバムの写真だけ
     let viewerCanDelete = true;      // 家の持ち主が「自分の写真を消す」を外していれば false
+    let visibleIds = null;           // 見てよい人・子(見られる子が決まっている人だけ。null は、だれの分でも)
     const unread = {};               // ぷちのアルバムごとの、まだ見ていない枚数
     let selectedFile = null;
 
     function buildTabs() {   // だれの分かはドロップダウンで選ぶ
       const sel = document.getElementById("personSelect");
-      PERSONS.forEach(p => {
+      PERSONS.filter(p => !visibleIds || visibleIds.includes(p.id)).forEach(p => {   // 見てよいと決めてもらった人・子の分だけ
         const o = document.createElement("option");
         o.value = p.id; o.textContent = p.label; o.selected = p.id === currentPerson;
         sel.appendChild(o);
@@ -11128,6 +11179,7 @@ ALBUM_HTML = """<!DOCTYPE html>
         if (me.username && PERSONS.some(p => p.id === me.username)) currentViewer = me.username;
         viewerLimited = !!me.limited;
         viewerCanDelete = !me.can || me.can.album_delete !== false;
+        if (Array.isArray(me.album)) visibleIds = me.album;
       } catch(e) {}
       currentPerson = currentViewer;
       buildTabs();
@@ -11270,7 +11322,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 
     function buildTabs() {   // だれの分かはドロップダウンで選ぶ
       const sel = document.getElementById("personSelect");
-      PERSONS.forEach(p => {
+      PERSONS.filter(p => !visibleIds || visibleIds.includes(p.id)).forEach(p => {   // 見てよいと決めてもらった人・子の分だけ
         const o = document.createElement("option");
         o.value = p.id; o.textContent = p.label; o.selected = p.id === currentPerson;
         sel.appendChild(o);
@@ -11283,6 +11335,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 
     let viewerId = "arisan", viewerLimited = false;   // 見られる子が決まっている人は、録る・消すのは自分のボイスメモだけ
     let viewerCanDelete = true;                       // 家の持ち主が「自分のボイスメモを消す」を外していれば false
+    let visibleIds = null;                            // 聞いてよい人・子(null は、だれの分でも)
     function canEdit(id) { return !viewerLimited || id === viewerId; }
     function switchPerson(id) {
       currentPerson = id;
@@ -11523,6 +11576,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
         if (me.username) viewerId = me.username;
         viewerLimited = !!me.limited;
         viewerCanDelete = !me.can || me.can.voice_delete !== false;
+        if (Array.isArray(me.voice)) visibleIds = me.voice;
       } catch (e) {}
       buildTabs();
       // ぷちの分を見ているときは録音の欄を出さない
