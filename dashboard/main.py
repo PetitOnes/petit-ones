@@ -2159,8 +2159,16 @@ async def _body_settings(character_id: str, host: str) -> dict:
         except Exception:
             return None
 
-    bri, vol, ps, cam = await asyncio.gather(*[asyncio.to_thread(_text, p) for p in
-                                               ("/getbrightness", "/getvolume", "/getpowersave", "/cam_to")])
+    # 体は一度に 1 つしか答えられない。同時に聞くと、答えが返らない項目が出る(2026-11-14 に、ぷちこの体で起きた)。
+    # 順番に聞き、返らなかったものは 1 回だけ聞き直す
+    def _all() -> list[str | None]:
+        out = []
+        for path in ("/getbrightness", "/getvolume", "/getpowersave", "/cam_to"):
+            value = _text(path)
+            out.append(value if value is not None or path == "/cam_to" else _text(path))
+        return out
+
+    bri, vol, ps, cam = await asyncio.to_thread(_all)
 
     def _int(v: str | None) -> int | None:
         try:
