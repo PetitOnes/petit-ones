@@ -10370,8 +10370,8 @@ NOTES_HTML = """<!DOCTYPE html>
     .note-item .note-actions button:hover { opacity: 1; }
     .note-item .note-actions { display: flex; gap: 2px; }
     .note-item .note-actions button.star.on { opacity: 1; color: #f5b301; }   /* ★ を付けたノート */
-    .note-item .note-actions button.pin { font-size: 0.75rem; }
-    .note-item .note-actions button.pin.on { opacity: 1; }   /* ピン留め(自分だけ。いちばん上に) */
+    .note-item .note-actions button.pin { font-size: 0.75rem; filter: grayscale(1); opacity: 0.35; }   /* 付けていない 📌 は薄い灰色 */
+    .note-item .note-actions button.pin.on { filter: none; opacity: 1; }   /* ピン留め(自分だけ。いちばん上に) */
     .note-item .unread { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #f58e7d; margin-right: 6px; flex-shrink: 0; }   /* まだ見ていない(開いてから更新された) */
 
     .create-btn { padding: 7px; background: #0f3460; border: 1px solid #4a7abf; border-radius: 8px; color: white; cursor: pointer; font-size: 0.83rem; text-align: center; flex-shrink: 0; }
