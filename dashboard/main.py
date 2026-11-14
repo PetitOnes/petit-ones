@@ -2203,10 +2203,12 @@ def api_relations(request: Request):
         cfg = get_char_config(c["id"])
         rel_path = char_dir(c["id"]) / "data" / "relations.json"
         self_info = {}
+        updated = ""   # 関係の記録を、さいごに書きかえた日(ファイルの時刻。相手ごとの時刻は、記録に無い)
         if rel_path.exists():
             try:
                 rel = json.loads(rel_path.read_text(encoding="utf-8"))
                 self_info = rel.get("self", {})
+                updated = datetime.fromtimestamp(rel_path.stat().st_mtime).strftime("%Y-%m-%d")
             except Exception:
                 pass
         nodes.append({
@@ -2215,6 +2217,7 @@ def api_relations(request: Request):
             "color": cfg.get("color", "#cab8d9"),
             "has_avatar": (char_dir(c["id"]) / "resources" / "petit.png").exists(),
             "kind": "petit",
+            "updated": updated,
             "self_info": self_info,
         })
 
@@ -2225,7 +2228,7 @@ def api_relations(request: Request):
     nodes.append({
         "id": owner_id,
         "name": owner_info["name"],
-        "color": owner_info["color"],
+        "color": _person_color(owner_id) or owner_info["color"],   # 人の色は、その人が決めたトップバーの色(手紙の差出人の色と同じ決まり)
         "has_avatar": False,
         "kind": "human",
         "self_info": {},
@@ -2237,7 +2240,7 @@ def api_relations(request: Request):
                 nodes.append({
                     "id": uid,
                     "name": uinfo["name"],
-                    "color": uinfo["color"],
+                    "color": _person_color(uid) or uinfo["color"],
                     "has_avatar": False,
                     "kind": "human",
                     "self_info": {},
@@ -10088,6 +10091,8 @@ KANKEI_HTML = """<!DOCTYPE html>
     .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
     .back-btn:hover { background: #f0eaf8; }
     #chart { max-width: 640px; width: 100%; height: auto; }
+    .chart-container { display: flex; justify-content: center; max-width: 660px; margin: 10px auto 14px; padding: 6px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
+    @media (max-width: 700px) { .chart-container { margin-left: 12px; margin-right: 12px; } }
     .tooltip {
       position: fixed; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 10px;
       padding: 10px 14px; font-size: 0.85rem; pointer-events: none; opacity: 0;
@@ -10098,7 +10103,14 @@ KANKEI_HTML = """<!DOCTYPE html>
     .tooltip .gauge-bar { background: #f0eaf8; border-radius: 4px; height: 8px; overflow: hidden; }
     .tooltip .gauge-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
     .tooltip .gauge-label { font-size: 0.75rem; color: #6E625A; margin-top: 2px; }
-    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; max-width: 980px; margin: 0 auto; padding: 0 16px 30px; align-items: start; }
+    /* 1 人 1 段(横に長いカード)。中で、相手ごとの気持ちを横に並べる */
+    .cards { display: flex; flex-direction: column; gap: 14px; max-width: 980px; margin: 0 auto; padding: 0 16px 30px; }
+    .card-date { margin-left: auto; font-size: 0.75rem; font-weight: 400; color: #9a8d82; white-space: nowrap; }
+    .self { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 6px 20px; }
+    .self-item { font-size: 0.88rem; line-height: 1.6; color: #3A322D; overflow-wrap: anywhere; }
+    .self-item b { display: block; font-size: 0.75rem; color: #9b8ec4; letter-spacing: 0.04em; }
+    .feels { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 20px; }
+    .feels .feel + .feel { border-top: none; }
     .chart-hint { max-width: 720px; margin: -8px auto 12px; padding: 0 16px; text-align: center; font-size: 0.8rem; color: #9a8d82; }
     svg.face { flex: 0 0 auto; display: block; }
     .person-dot { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-weight: 700; }
@@ -10116,7 +10128,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       background: #fff; border-radius: 16px; padding: 16px;
       border: 1.5px solid #eee1cf; border-top: 3px solid #cab8d9;
     }
-    .card h3 { font-size: 1rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+    .card h3 { font-size: 1rem; margin-bottom: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
     .card .avatar-small { width: 28px; height: 28px; border-radius: 50%; }
     .card .likes { font-size: 0.8rem; color: #6E625A; margin-bottom: 4px; }
     .card .notes { font-size: 0.85rem; color: #6E625A; line-height: 1.6; overflow-wrap: anywhere; }
@@ -10281,7 +10293,7 @@ KANKEI_HTML = """<!DOCTYPE html>
         const heartSize = Math.max(14, e.closeness * 26);
         const heart = svgEl("text", {
           x: mx, y: my, "font-size": heartSize, "text-anchor": "middle",
-          "dominant-baseline": "central", fill: "#e94560", stroke: "#FBF4E8", "stroke-width": 3, "paint-order": "stroke",
+          "dominant-baseline": "central", fill: "#e94560", stroke: "#fff", "stroke-width": 3, "paint-order": "stroke",
           style: "cursor:default"
         });
         heart.textContent = "\\u2665";
@@ -10363,12 +10375,16 @@ KANKEI_HTML = """<!DOCTYPE html>
             <div class="feel-bar"><div style="width:${pct(e.closeness)}%;background:${esc(n.color)}"></div></div>
             <div class="feel-text">${e.feeling ? esc(e.feeling) : '<span class="feel-none">(まだ書いていない)</span>'}</div>
           </div>`).join("");
+        // じぶんのこと: 記録の self(好きなもの・わたしとは…)。書いてある項目だけ出す
+        const list = v => [].concat(v || []).filter(Boolean).join("、");
+        const self = [["好きなもの", list(si.likes)], ["わたしとは", si.notes], ["大切にしていること", list(si.important)], ["にがてなもの", list(si.dislikes)], ["じぶんへの気持ち", si.feeling]]
+          .filter(([, v]) => v).map(([label, v]) => `<div class="self-item"><b>${label}</b>${esc(v)}</div>`).join("");
+        const day = /^\\d{4}-\\d{2}-\\d{2}$/.test(n.updated || "") ? n.updated.replace(/^(\\d+)-0?(\\d+)-0?(\\d+)$/, "$1/$2/$3") : "";
         return `<div class="card" style="border-top-color:${esc(n.color)}">
-          <h3>${faceSvg(n.color, 44)}<span>${esc(n.name)}</span></h3>
-          ${si.likes?.length ? `<div class="likes">♥ すきなもの: ${esc([].concat(si.likes).join("、"))}</div>` : ""}
-          ${si.notes ? `<div class="notes">${esc(si.notes)}</div>` : ""}
+          <h3>${faceSvg(n.color, 44)}<span>${esc(n.name)}</span>${day ? `<span class="card-date">さいごに書きかえた日 ${day}</span>` : ""}</h3>
+          ${self ? `<div class="self">${self}</div>` : ""}
           <div class="card-sub">${esc(n.name)} から、みんなへ</div>
-          ${rows || '<div class="feel-none">まだありません</div>'}
+          ${rows ? `<div class="feels">${rows}</div>` : '<div class="feel-none">まだありません</div>'}
         </div>`;
       }).join("");
     }
