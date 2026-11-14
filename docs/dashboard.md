@@ -141,7 +141,7 @@ vim ~/petit_claude/auth.json  # パスワードを設定
 | `embed.css` | 古いページ（アルバム・ボイスメモ・ノート・交換日記・ライブラリ）を、トップページの会話の場所に出すときの配色 |
 | `md.js` | markdown を HTML にしたあとの後始末 |
 | `petitlog.html` / `diary.html` | ぷちログ（1 日のタイムライン）と日記の一覧。データの組み立ては `dashboard/petit_log.py`（読むだけ） |
-| 右上の 📍 | いま どこ。わたしのいま（自室・お外・会社 など）を決めると `PETIT_DATA_DIR/state/whereabouts.json` に、ログインの人ごとの一言と時刻が入る。ぷちの体の居場所（家 / お外）は、体験デーモンが `characters/<id>/state/experience_state.json` に書く体の Wi-Fi（何番目か）から決める。どの番号がどこかは `PETIT_DATA_DIR/config/places.json`（無ければ 1・2 = 家、3 = お外）。計算と保存は `scripts/whereabouts.py`。会話の system prompt と自律行動の冒頭に「ありさんのいま: 会社(9:02 から)」「あなたの体のいま: 家(家の Wi-Fi)」と伝わる |
+| 右上の 📍 | いま どこ。わたしのいま（自室・お外・会社 など）を決めると `PETIT_DATA_DIR/state/whereabouts.json` に、ログインの人ごとの一言と、決めた時刻(since)・いつまでか(until。1・3・8 時間か「消すまで」)が入る。過ぎたら無いものとして扱う。ぷちの体の居場所（家 / お外）は、体験デーモンが `characters/<id>/state/experience_state.json` に書く体の Wi-Fi（何番目か）から決める。どの番号がどこかは `PETIT_DATA_DIR/config/places.json`（無ければ 1・2 = 家、3 = お外）。計算と保存は `scripts/whereabouts.py`。会話の system prompt と自律行動の冒頭に「ありさんのいま: 会社(9:02 から)」「あなたの体のいま: 家(家の Wi-Fi)」と伝わる |
 | `anniversaries.html` | 記念日（`/anniversaries`）。家の設定 `PETIT_DATA_DIR/config/anniversaries.json` に、名前・最初の日・くり返し（毎年・毎月・その日だけ）・ひとことを足す。計算と保存は `scripts/anniversaries.py`。当日は、ぷちログのその日のいちばん上に出る。ぷちたちには、前の日の自律行動で 1 回だけ「あしたは○○の日」と伝わる（`anniversaries.py notice`。前の日に動かなかった子には当日に）。ぷちも `anniversaries.py add` で足せる |
 | `desires.html` | 欲求の様子（`/desires`）。その子の欲求ごとに、この数日の強さの線・上限にいた時間・いちばん強かった時間・満たした記憶の回数と、その欲求の決まり（満たすまでの時間・満たしたことになる言葉）を出す。データの組み立ては `dashboard/desire_history.py`（読むだけ） |
 | `styleguide.html` | 部品の見本（`/ui`） |

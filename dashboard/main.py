@@ -1966,7 +1966,8 @@ def api_anniversaries_delete(item_id: str):
 # ---- いま どこ: 家の人の「いま」(自室・お外・会社 など。右上の 📍 で決める)と、ぷちの体の居場所(家 / お外。体の Wi-Fi から)。
 #      保存と文は scripts/whereabouts.py ----
 class WhereaboutsBody(BaseModel):
-    text: str = ""   # 空にすると消える
+    text: str = ""               # 空にすると消える
+    hours: float | None = None   # 何時間そうか(無ければ消すまで)
 
 
 def _whereabouts_view(d: dict, me: str) -> dict:
@@ -1977,7 +1978,9 @@ def _whereabouts_view(d: dict, me: str) -> dict:
         b = wa.body(cid, DATA_DIR)
         if b:
             bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"])}
-    return {"users": users, "bodies": bodies, "choices": wa.choices(d), "me": me, "mine": d["users"].get(me, {}).get("text", "")}
+    mine = d["users"].get(me, {})
+    return {"users": users, "bodies": bodies, "choices": wa.choices(d), "me": me,
+            "mine": mine.get("text", ""), "mine_since": mine.get("since", ""), "mine_until": mine.get("until", "")}
 
 
 @app.get("/api/whereabouts")
@@ -1990,7 +1993,7 @@ def api_whereabouts(request: Request):
 def api_whereabouts_set(body: WhereaboutsBody, request: Request):
     me = _get_username(request) or "arisan"
     try:
-        d = _whereabouts().set_status(me, body.text, DATA_DIR)
+        d = _whereabouts().set_status(me, body.text, DATA_DIR, hours=body.hours)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return _whereabouts_view(d, me)
@@ -6105,6 +6108,8 @@ HTML = """<!DOCTYPE html>
     .me-now-menu .row { display: flex; gap: 6px; }
     .me-now-menu input { flex: 1; width: 0; min-width: 0; min-height: 36px; padding: 0 10px; border: 1.5px solid #e6dcd6; border-radius: 10px; font: inherit; font-size: 0.95rem; }
     .me-now-menu .others { font-size: 0.8rem; color: #888; }
+    .me-now-menu .chips.small .chip { min-height: 30px; padding: 0 10px; font-size: 0.8rem; font-weight: 600; color: #777; }
+    .me-now-menu > .chip { align-self: flex-start; }   /* 「消す」は左に小さく */
     /* タブの行は折り返さず横スクロール(2026-10-16 ありさん) */
     .char-tabs { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 4px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .char-tabs::-webkit-scrollbar { display: none; }
@@ -6352,7 +6357,7 @@ HTML = """<!DOCTYPE html>
       <!-- 家の人の「いま」(2026-11-14 ありさん): 自室・お外・会社 など。ぷちたちの会話・自律行動に 1 行で伝わる -->
       <div class="me-now" id="meNow">
         <button class="gear-btn me-now-btn" id="meNowBtn" onclick="toggleMeNow(event)" aria-haspopup="true" aria-expanded="false" title="わたしのいま">📍<span class="me-now-text" id="meNowText"></span></button>
-        <div class="char-menu me-now-menu" id="meNowMenu" style="display:none"></div>
+        <div class="char-menu me-now-menu" id="meNowMenu" style="display:none" onclick="event.stopPropagation()"></div><!-- 中を押しても閉じない(押した札が描き直しで消えると、外側の「外を押した」判定に当たるため) -->
       </div>
       <button class="gear-btn" id="mailBtn" onclick="openMailbox()" title="メールボックス">📬<span class="mail-badge" id="mailBadge"></span></button>
       <button class="gear-btn" id="gearBtn" onclick="openSettings()">⚙️</button>
@@ -6996,6 +7001,9 @@ HTML = """<!DOCTYPE html>
 
     // 📍 わたしのいま(自室・お外・会社 など)。GET/POST /api/whereabouts。ぷちたちには 1 行で伝わる
     let _meNow = { users: {}, bodies: {}, choices: [], me: "", mine: "" };
+    const ME_NOW_HOURS = [[null, "消すまで"], [1, "1 時間"], [3, "3 時間"], [8, "8 時間"]];   // 何時間そうか(決めたときからの長さ)
+    let _meNowHours = null;
+    function _hm(iso) { const t = iso ? new Date(iso) : null; return t && !isNaN(t) ? `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}` : ""; }
     async function loadMeNow() {
       try { _meNow = await fetch("/api/whereabouts").then(r => r.json()); } catch (e) { return; }
       document.getElementById("meNowText").textContent = _meNow.mine || "";
@@ -7007,14 +7015,19 @@ HTML = """<!DOCTYPE html>
       const chips = _meNow.choices.map(c => `<button class="chip${c === _meNow.mine ? " active" : ""}" onclick="setMeNow(${JSON.stringify(c).replace(/"/g, "&quot;")})">${esc(c)}</button>`).join("");
       const others = Object.entries(_meNow.users).filter(([u]) => u !== _meNow.me).map(([, v]) => `${esc(v.name)}: ${esc(v.text)}`)
         .concat(Object.values(_meNow.bodies || {}).filter(b => b.text).map(b => `${esc(b.name)}: ${esc(b.text)}`)).join(" / ");
+      const hours = ME_NOW_HOURS.map(([h, label]) => `<button class="chip hrs${h === _meNowHours ? " active" : ""}" onclick="pickMeNowHours(${h})">${label}</button>`).join("");
+      const now = _meNow.mine ? `<div class="others">${esc(_meNow.mine)}: ${esc(_hm(_meNow.mine_since))} から${_meNow.mine_until ? `、${esc(_hm(_meNow.mine_until))} まで` : ""}</div>` : "";
       document.getElementById("meNowMenu").innerHTML =
+        now +
         `<div class="chips">${chips}</div>` +
         `<div class="row"><input id="meNowInput" placeholder="ほかの言葉で…" maxlength="30"><button class="chip" onclick="setMeNow(document.getElementById('meNowInput').value)">決める</button></div>` +
+        `<div class="chips small">${hours}</div>` +
         (_meNow.mine ? `<button class="chip" onclick="setMeNow('')">消す</button>` : "") +
         (others ? `<div class="others">${others}</div>` : "");
       const inp = document.getElementById("meNowInput");
       inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
     }
+    function pickMeNowHours(h) { _meNowHours = h; renderMeNow(); }
     function toggleMeNow(ev) {
       if (ev) ev.stopPropagation();
       const m = document.getElementById("meNowMenu");
@@ -7032,7 +7045,7 @@ HTML = """<!DOCTYPE html>
     }
     async function setMeNow(text) {
       try {
-        const r = await fetch("/api/whereabouts", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ text: text || "" }) });
+        const r = await fetch("/api/whereabouts", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ text: text || "", hours: text ? _meNowHours : null }) });
         const d = await r.json();
         if (!r.ok) { alert(d.error || "決められなかった"); return; }
         _meNow = d;

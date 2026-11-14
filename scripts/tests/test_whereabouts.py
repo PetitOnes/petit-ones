@@ -75,3 +75,17 @@ def test_body_places_from_wifi_and_host(tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "places.json").write_text(json.dumps({"wifi": {"3": "おでかけ"}, "how": {"3": "スマホ"}}), encoding="utf-8")
     assert wa.body("puchiko", tmp_path, NOW) == {"place": "おでかけ", "how": "スマホ", "since": "2026-11-14T12:40:00", "offline": False}
+
+
+def test_hours_until_and_expiry(tmp_path):
+    wa.set_status("arisan", "会社", tmp_path, now=datetime(2026, 11, 14, 9, 2), hours=8)
+    assert wa.people_lines(wa.load(tmp_path, NOW), LABEL, NOW) == ["ありさんのいま: 会社(9:02 から、17:02 まで)"]
+    late = datetime(2026, 11, 14, 17, 2)
+    assert wa.load(tmp_path, late)["users"] == {}                      # 過ぎたら無いもの
+    assert wa.load(tmp_path, late)["recent"] == ["会社"]                # 候補には残る
+    wa.set_status("arisan", "自室", tmp_path, now=datetime(2026, 11, 14, 22, 0), hours=10)
+    assert wa.people_lines(wa.load(tmp_path, datetime(2026, 11, 14, 23, 0)), LABEL, datetime(2026, 11, 14, 23, 0)) == ["ありさんのいま: 自室(22:00 から、あした 8:00 まで)"]
+    with pytest.raises(ValueError):
+        wa.set_status("arisan", "会社", tmp_path, hours=0)
+    with pytest.raises(ValueError):
+        wa.set_status("arisan", "会社", tmp_path, hours=24 * 8)

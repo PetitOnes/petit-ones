@@ -3,10 +3,11 @@
 
 人の「いま」は、ダッシュボードの右上(📍)で人が決める。置き場所は PETIT_DATA_DIR/state/whereabouts.json:
 
-    {"users": {"arisan": {"text": "会社", "since": "2026-11-14T09:02:11"}},
+    {"users": {"arisan": {"text": "会社", "since": "2026-11-14T09:02:11", "until": "2026-11-14T18:02:11"}},
      "recent": ["会社", "自室", "お外"]}
 
-- users: ログインのユーザー名ごとに、いまの一言と、そうなった時刻。空にすると消える
+- users: ログインのユーザー名ごとに、いまの一言と、決めた時刻(since)、いつまでか(until。無ければ消すまで)。
+  until を過ぎたものは無いものとして扱う(読むときに落とす)。空にすると消える
 - recent: 使った言葉(新しい順、RECENT_MAX 件)。ボタンの候補にする。はじめの候補は PRESETS
 
 ぷちの体の居場所は、体がどの Wi-Fi につながっているかから決める(人は何もしない)。
@@ -30,7 +31,7 @@ ip、つないだ先(host)、最後に見えた時刻(seen)を書く。どの番
 
 Usage:
     python3 whereabouts.py line [--character <id>]   # ぷちに渡す行(--character でその子を「あなた」に)。無ければ何も出さない
-    python3 whereabouts.py set <ユーザー名> "<一言>"   # 人のいまを決める。一言が空なら消す
+    python3 whereabouts.py set <ユーザー名> "<一言>" [--hours 3]   # 人のいまを決める(--hours で何時間か)。一言が空なら消す
     python3 whereabouts.py show                       # いまの中身(JSON)
 """
 
@@ -40,12 +41,13 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 PRESETS = ["自室", "お外", "会社"]
 RECENT_MAX = 8
 TEXT_MAX = 30
+HOURS_MAX = 24 * 7   # 何時間そうか、の上限
 BODY_STALE_S = 300   # デーモンがこれより長く書いていなければ、体のことは分からない
 DEFAULT_PLACES = {
     "wifi": {"1": "家", "2": "家", "3": "お外"},
@@ -65,14 +67,24 @@ def path(base: Path | None = None) -> Path:
 
 # ---- 人の「いま」 ----
 
-def load(base: Path | None = None) -> dict:
+def _expired(cur: dict, now: datetime) -> bool:
+    try:
+        return bool(cur.get("until")) and datetime.fromisoformat(cur["until"]) <= now
+    except (TypeError, ValueError):
+        return False
+
+
+def load(base: Path | None = None, now: datetime | None = None) -> dict:
+    """いまの中身。until を過ぎた人の分は落とす"""
+    now = now or datetime.now()
     try:
         d = json.loads(path(base).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         d = {}
     users = d.get("users") if isinstance(d.get("users"), dict) else {}
     recent = [r for r in d.get("recent", []) if isinstance(r, str)] if isinstance(d.get("recent"), list) else []
-    return {"users": {k: v for k, v in users.items() if isinstance(v, dict) and v.get("text")}, "recent": recent}
+    users = {k: v for k, v in users.items() if isinstance(v, dict) and v.get("text") and not _expired(v, now)}
+    return {"users": users, "recent": recent}
 
 
 def save(d: dict, base: Path | None = None) -> None:
@@ -90,12 +102,18 @@ def clean_text(text: str) -> str:
     return text
 
 
-def set_status(user: str, text: str, base: Path | None = None, now: datetime | None = None) -> dict:
-    """その人のいまを決める(text が空なら消す)。使った言葉は recent の先頭に"""
+def set_status(user: str, text: str, base: Path | None = None, now: datetime | None = None, hours: float | None = None) -> dict:
+    """その人のいまを決める(text が空なら消す)。hours は何時間そうか(無ければ消すまで)。使った言葉は recent の先頭に"""
     text = clean_text(text)
-    d = load(base)
+    now = (now or datetime.now()).replace(microsecond=0)
+    if hours is not None and not (0 < hours <= HOURS_MAX):
+        raise ValueError(f"時間は 0 より大きく {HOURS_MAX} まで")
+    d = load(base, now)
     if text:
-        d["users"][user] = {"text": text, "since": (now or datetime.now()).replace(microsecond=0).isoformat()}
+        cur = {"text": text, "since": now.isoformat()}
+        if hours is not None:
+            cur["until"] = (now + timedelta(hours=hours)).isoformat()
+        d["users"][user] = cur
         d["recent"] = ([text] + [r for r in d["recent"] if r != text])[:RECENT_MAX]
     else:
         d["users"].pop(user, None)
@@ -122,13 +140,25 @@ def _since_words(since: str, now: datetime) -> str:
     return f"{t.month}/{t.day} から"
 
 
+def _until_words(until: str, now: datetime) -> str:
+    try:
+        t = datetime.fromisoformat(until)
+    except (TypeError, ValueError):
+        return ""
+    if t.date() == now.date():
+        return f"{t.hour}:{t.minute:02d} まで"
+    if (t.date() - now.date()).days == 1:
+        return f"あした {t.hour}:{t.minute:02d} まで"
+    return f"{t.month}/{t.day} {t.hour}:{t.minute:02d} まで"
+
+
 def people_lines(d: dict, label=lambda u: u, now: datetime | None = None) -> list[str]:
-    """「ありさんのいま: 会社(9:02 から)」"""
+    """「ありさんのいま: 会社(9:02 から、18:02 まで)」"""
     now = now or datetime.now()
     out = []
     for user, cur in d.get("users", {}).items():
-        since = _since_words(cur.get("since", ""), now)
-        out.append(f"{label(user)}のいま: {cur['text']}" + (f"({since})" if since else ""))
+        detail = "、".join(x for x in (_since_words(cur.get("since", ""), now), _until_words(cur.get("until", ""), now)) if x)
+        out.append(f"{label(user)}のいま: {cur['text']}" + (f"({detail})" if detail else ""))
     return out
 
 
@@ -233,6 +263,7 @@ def main() -> int:
     p_set = sub.add_parser("set")
     p_set.add_argument("user")
     p_set.add_argument("text")
+    p_set.add_argument("--hours", type=float, default=None)
     a = ap.parse_args()
     base = data_dir()
     if a.cmd == "line":
@@ -242,7 +273,7 @@ def main() -> int:
         print(json.dumps({"people": load(base), "bodies": {cid: body(cid, base) for cid, _ in characters(base)}}, ensure_ascii=False, indent=2))
     elif a.cmd == "set":
         try:
-            set_status(a.user, a.text, base)
+            set_status(a.user, a.text, base, hours=a.hours)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 1
