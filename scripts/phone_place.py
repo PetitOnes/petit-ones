@@ -25,15 +25,22 @@ SwitchBot の機体(ハブ 2・温湿度計・人感・電気)は、機体 ID �
 - room: いまいる部屋(どの印も見えなければ null)。since はその部屋になった時刻、at は最後の報告
 - 部屋は分かるが、ソファか机かまでは電波では分からない
 
-ぷちに渡す行(scripts/whereabouts.py が人の行のあとに足す):
+ぷちには毎回は渡さない(2026-11-14 ありさん「伝わるってより、見に行けば分かる、にしたい」)。
+「見に行けるもの」の入口に `phone_place.py line` を置き、部屋が変わった・帰ってきた・出たときだけ 1 行(changes --mark):
 
-    ありさんのスマホ: 家(あり部屋)
-    ありさんのスマホ: 家の印が見えない(お外か、印の無い部屋)
+    line:     ありさんのスマホ: 家(あり部屋)
+              ありさんのスマホ: 家の印が見えない(お外か、印の無い部屋)
+    changes:  ありさんのスマホ: あり部屋 → 寝室 に動いた
+              ありさんのスマホ: 家(あり部屋)に戻ってきた
+              ありさんのスマホ: 家の印が見えなくなった(お外に出たか、印の無い部屋)
+
+伝えたことは characters/<id>/state/phone_told.json に覚える(はじめての回は覚えるだけで何も言わない)。
 
 Usage:
     python3 phone_place.py key <ユーザー名> [--label "ありさんのスマホ"]   # 鍵を作って設定に書く(鍵は画面に出さない)
     python3 phone_place.py show                                          # いまの覚え書き
-    python3 phone_place.py line                                          # ぷちに渡す行
+    python3 phone_place.py line                                          # 見に行ったときの行
+    python3 phone_place.py changes --character <id> [--mark]             # その子に前に伝えてから変わったときだけの行
 """
 
 from __future__ import annotations
@@ -212,6 +219,15 @@ def where(user: str, base: Path | None = None, now: datetime | None = None) -> d
     return {"room": cur.get("room"), "since": cur.get("since") or "", "at": cur.get("at"), "label": label}
 
 
+def _people_label(base: Path | None = None):
+    """ユーザー名 → 呼び名(config/people.json)。無ければそのまま"""
+    try:
+        people = json.loads(((base or data_dir()) / "config" / "people.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        people = {}
+    return lambda u: (people.get(u) or {}).get("name") or u
+
+
 def words(w: dict) -> str:
     return f"家({w['room']})" if w.get("room") else "家の印が見えない(お外か、印の無い部屋)"
 
@@ -226,6 +242,40 @@ def lines(base: Path | None = None, label=lambda u: u, now: datetime | None = No
     return out
 
 
+def change_line(base: Path | None, character_id: str, mark: bool = False, now: datetime | None = None) -> str:
+    """その子に前に伝えた居場所から変わった人だけ 1 行。報告が古い人は分からないので触らない。はじめての回は覚えるだけ"""
+    now = now or datetime.now()
+    told_path = (base or data_dir()) / "characters" / character_id / "state" / "phone_told.json"
+    try:
+        told = json.loads(told_path.read_text(encoding="utf-8"))
+        first = not isinstance(told, dict)
+    except (OSError, json.JSONDecodeError):
+        told, first = {}, True
+    if first:
+        told = {}
+    phones = config(base)["phones"]
+    lines_out = []
+    for user, p in phones.items():
+        w = where(user, base, now)
+        if w is None:
+            continue
+        name = (p.get("label") or f"{user} のスマホ")
+        room = w.get("room")
+        if not first and user in told and told[user] != room:
+            old = told[user]
+            if room and old:
+                lines_out.append(f"{name}: {old} → {room} に動いた")
+            elif room:
+                lines_out.append(f"{name}: 家({room})に戻ってきた")
+            else:
+                lines_out.append(f"{name}: 家の印が見えなくなった(お外に出たか、印の無い部屋)")
+        told[user] = room
+    if mark:
+        told_path.parent.mkdir(parents=True, exist_ok=True)
+        told_path.write_text(json.dumps(told, ensure_ascii=False), encoding="utf-8")
+    return "\n".join(lines_out)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -234,14 +284,21 @@ def main() -> int:
     k.add_argument("--label", default="")
     sub.add_parser("show")
     sub.add_parser("line")
+    c = sub.add_parser("changes", help="その子に前に伝えてから変わったときだけの行")
+    c.add_argument("--character", required=True)
+    c.add_argument("--mark", action="store_true", help="伝えたことにして覚える")
     a = ap.parse_args()
     if a.cmd == "key":
         make_key(a.user, a.label)
         print(f"{a.user} の鍵を {config_path()} に書いた(鍵は表示しない)")
     elif a.cmd == "show":
         print(json.dumps(_load(None), ensure_ascii=False, indent=1))
+    elif a.cmd == "changes":
+        out = change_line(None, a.character, mark=a.mark)
+        if out:
+            print(out)
     else:
-        print("\n".join(lines()))
+        print("\n".join(lines(label=_people_label())))
     return 0
 
 

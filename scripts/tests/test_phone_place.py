@@ -47,7 +47,7 @@ def test_report_hysteresis_and_lines(tmp_path):
     assert r["room"] == "寝室" and r["since"] == (T + timedelta(seconds=30 * 4)).isoformat()
     label = lambda u: {"arisan": "ありさん"}.get(u, u)  # noqa: E731
     assert pp.lines(base, label, T + timedelta(seconds=160)) == ["ありさんのスマホ: 家(寝室)"]
-    assert wa.lines(base, label=label, now=T + timedelta(seconds=160)) == ["ありさんのスマホ: 家(寝室)"]
+    assert wa.lines(base, label=label, now=T + timedelta(seconds=160)) == []   # 毎回は渡さない(見に行けるもの)
     # 古くなれば、何も言わない
     assert pp.where("arisan", base, T + timedelta(seconds=150 + 300)) is None
     assert pp.lines(base, label, T + timedelta(seconds=150 + 300)) == []
@@ -77,3 +77,29 @@ def test_first_sighting_after_empty_reports_does_not_pick_a_room_by_tie(tmp_path
     r = pp.report("arisan", {"DFE455C969D7": -44, "70041D7E07AE": -52}, base, T + timedelta(seconds=90))
     assert r["room"] == "あり部屋"
     assert pp.decide(None, {"寝室": -100, "あり部屋": -100}, 6) is None
+
+
+def test_change_line_only_when_moved(tmp_path):
+    base = _house(tmp_path)
+    for i in range(3):
+        pp.report("arisan", {"DFE455C969D7": -50}, base, T + timedelta(seconds=30 * i))
+    t = T + timedelta(seconds=70)
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == ""          # はじめては覚えるだけ
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == ""          # 変わっていない
+    for i in range(3, 6):
+        pp.report("arisan", {"70041D7E07AE": -45}, base, T + timedelta(seconds=30 * i))
+    t = T + timedelta(seconds=160)
+    assert pp.change_line(base, "puchiko", mark=False, now=t) == "ありさんのスマホ: あり部屋 → 寝室 に動いた"
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == "ありさんのスマホ: あり部屋 → 寝室 に動いた"   # mark 無しでは覚えない
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == ""
+    assert pp.change_line(base, "puchiteya", mark=True, now=t) == ""        # 子ごとに別
+    for i in range(6, 9):
+        pp.report("arisan", {}, base, T + timedelta(seconds=30 * i))
+    t = T + timedelta(seconds=250)
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == "ありさんのスマホ: 家の印が見えなくなった(お外に出たか、印の無い部屋)"
+    for i in range(9, 12):
+        pp.report("arisan", {"DFE455C969D7": -50}, base, T + timedelta(seconds=30 * i))
+    t = T + timedelta(seconds=340)
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == "ありさんのスマホ: 家(あり部屋)に戻ってきた"
+    # 報告が古くなったら、分からないので何も言わず、覚えも変えない
+    assert pp.change_line(base, "puchiko", mark=True, now=t + timedelta(seconds=600)) == ""

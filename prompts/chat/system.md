@@ -39,6 +39,7 @@
 ## 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で)
 - きょうの空(月齢・日の出入り・二十四節気): `python3 {{scripts_dir}}/sky.py line`
 - 家の空気(気温・湿度・明るさ・人の動き・電気。10 分ごとの記録): `python3 {{scripts_dir}}/room_log.py line`
+- 家の人のスマホがどの部屋にあるか(スマホが家の SwitchBot の電波を聞いた結果): `python3 {{scripts_dir}}/phone_place.py line`
 {{#if sky_change}}
 {{sky_change}}
 {{/if}}

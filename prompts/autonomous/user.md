@@ -27,7 +27,7 @@
 - 記念日にしたい日ができたら、自分で足せる: Bashツールで python3 {{project_dir}}/scripts/anniversaries.py add {{character_id}} "名前" 2026-03-05（年なしの 03-05 でもよい。毎月なら --repeat monthly、ひとことは --note "…"）。いまある記念日は python3 {{project_dir}}/scripts/anniversaries.py list
 - 予定(展示会・旅行など、ある日のこと)も足せる: Bashツールで python3 {{project_dir}}/scripts/events.py add {{character_id}} "題" 2026-11-22 --place "場所" --who puchiko,arisan --note "ひとこと"（数日なら --end 2026-11-23、時間は --time 14:00。--who は行く人・子の id）。これからの予定は python3 {{project_dir}}/scripts/events.py list
 - MCPが動作していなければ、デバッグのために関係があると思われる要素をallowedToolsの範囲で調査して
-- 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で): きょうの空は python3 {{project_dir}}/scripts/sky.py line、家の空気(気温・湿度・明るさ・人の動き・電気。自分がいる部屋の機体が先)は python3 {{project_dir}}/scripts/room_log.py line --character {{character_id}}
+- 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で): きょうの空は python3 {{project_dir}}/scripts/sky.py line、家の空気(気温・湿度・明るさ・人の動き・電気。自分がいる部屋の機体が先)は python3 {{project_dir}}/scripts/room_log.py line --character {{character_id}}、家の人のスマホがどの部屋にあるか(部屋まで。ソファか机かは分からない)は python3 {{project_dir}}/scripts/phone_place.py line
 {{#if anniversary_notice}}
 
 {{anniversary_notice}}
@@ -51,6 +51,10 @@
 {{#if room_change}}
 
 {{room_change}}
+{{/if}}
+{{#if phone_change}}
+
+{{phone_change}}
 {{/if}}
 {{#if mailbox_notice}}
 

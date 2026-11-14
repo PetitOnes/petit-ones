@@ -25,7 +25,6 @@ ip、つないだ先(host)、最後に見えた時刻(seen)を書く。どの番
 ぷちに渡す行(会話の system prompt と自律行動の冒頭):
 
     ありさんのいま: 会社(9:02 から)
-    ありさんのスマホ: 家(あり部屋)          # スマホが家の印(SwitchBot の BLE)を聞いた結果(scripts/phone_place.py)
     あなたの体のいま: 家(家の Wi-Fi)
     ぷちこの体のいま: お外(テザリング)
     ぷちるの体: いまは見えない(12:50 から)
@@ -185,15 +184,6 @@ def people_lines(d: dict, label=lambda u: u, now: datetime | None = None) -> lis
     return out
 
 
-def phone_lines(base: Path | None, label, now: datetime) -> list[str]:
-    """「ありさんのスマホ: 家(あり部屋)」。スマホが家の印(SwitchBot の BLE)を聞いて報告したもの(scripts/phone_place.py)"""
-    try:
-        import phone_place
-        return phone_place.lines(base, label, now)
-    except Exception:   # 設定が無い・読めないときは、何も足さない
-        return []
-
-
 # ---- ぷちの体 ----
 
 def load_places(base: Path | None = None) -> dict:
@@ -275,7 +265,7 @@ def lines(base: Path | None = None, me: str | None = None, label=None, now: date
     """ぷちに渡す行ぜんぶ: 人のいま + 体のいま(me の子を先に「あなたの体」として)"""
     now = now or datetime.now()
     out = people_lines(load(base), label or _people_label(base), now)
-    out += phone_lines(base, label or _people_label(base), now)
+    # スマホの居場所(scripts/phone_place.py)は毎回は渡さない。「見に行けるもの」の入口と、変わったときだけの 1 行(2026-11-14 ありさん)
     chars = characters(base)
     chars.sort(key=lambda c: c[0] != me)
     for cid, name in chars:
