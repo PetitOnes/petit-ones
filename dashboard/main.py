@@ -523,6 +523,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "diary": ("/diary",),
     "anniv": ("/anniversaries", "/api/anniversaries"),
     "calendar": ("/calendar", "/api/calendar", "/api/events", "/anniversaries", "/api/anniversaries"),   # 📅 よてい(記念日を吸収、2026-11-14)
+    "music": ("/music", "/api/music"),   # 🎧 聴く(音楽を一緒に感じる、2026-11-14)
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
     "album": ("/album", "/api/album"),
@@ -2833,6 +2834,30 @@ class MusicFrames(BaseModel):
     session: str | None = None
 
 
+_music_listen_proc: subprocess.Popen | None = None   # PC の中の音を数字にする子プロセス(music.py listen)
+
+
+def _music_chars() -> list[dict]:
+    """いっしょに聴く子: その家の子ぜんぶ(家ごとに違うので、名前は決め打ちしない)"""
+    return [c for c in list_characters() if c.get("id")]
+
+
+def _music_state(request: Request, now_for: str | None = None) -> dict:
+    """🎧 の画面に渡す、いまの回のぜんぶ。感想は、終わって 3 人そろってから(revealed)だけ中身を出す"""
+    mu = _music()
+    s = mu.session(DATA_DIR)
+    chars = _music_chars()
+    if not s:
+        return {"session": None, "chars": chars}
+    w = mu.wrote(s["id"], [c["id"] for c in chars], DATA_DIR)
+    revealed = bool(s.get("ended_at")) and w["all"]
+    d = mu._load_json(mu.music_dir(DATA_DIR) / f"{s['id']}.json") or {}
+    return {"session": s, "chars": chars, "position": mu.position(s), "now": mu.now_text(DATA_DIR), "wave": mu.wave(base=DATA_DIR),
+            "seconds": d.get("seconds", 0), "tempo": d.get("tempo"), "turns": d.get("turns") or [], "wrote": w["counts"], "all_wrote": w["all"],
+            "revealed": revealed, "feels": mu.feels(s["id"], DATA_DIR) if revealed else {}, "around": mu.around(s["id"], DATA_DIR) if s.get("ended_at") else "",
+            "listening_pc": bool(_music_listen_proc and _music_listen_proc.poll() is None)}
+
+
 @app.get("/api/music/session")
 def api_music_session(request: Request):
     mu = _music()
@@ -2840,16 +2865,82 @@ def api_music_session(request: Request):
     return {"session": s, "position": mu.position(s) if s else None, "now": mu.now_text(DATA_DIR) if s else "", "wave": mu.wave(base=DATA_DIR) if s else ""}
 
 
+@app.get("/api/music/state")
+def api_music_state(request: Request):
+    return _music_state(request)
+
+
+def _music_listen_stop() -> None:
+    global _music_listen_proc
+    if _music_listen_proc and _music_listen_proc.poll() is None:
+        _music_listen_proc.terminate()
+    _music_listen_proc = None
+
+
 @app.post("/api/music/start")
 def api_music_start(body: MusicStartBody, request: Request):
+    global _music_listen_proc
     if body.source not in ("pc", "phone", "mic"):
         return JSONResponse({"error": "source は pc / phone / mic"}, status_code=400)
-    return {"session": _music().start(body.source, _me(request), DATA_DIR)}
+    mu = _music()
+    s = mu.start(body.source, _me(request), DATA_DIR)
+    _music_listen_stop()
+    if body.source == "pc":   # PC の中の音を、裏で 1 秒ごとに数字にする(最長 90 分。stop で止める)
+        env = {**os.environ, "PETIT_DATA_DIR": str(DATA_DIR)}
+        _music_listen_proc = subprocess.Popen([sys.executable, str(PROJECT_DIR / "scripts" / "music.py"), "listen", "--source", "pc", "--seconds", "5400"],
+                                              env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"session": s, "state": _music_state(request)}
 
 
 @app.post("/api/music/stop")
 def api_music_stop(body: MusicStopBody, request: Request):
-    return {"session": _music().stop(body.title, body.note, DATA_DIR)}
+    _music_listen_stop()
+    s = _music().stop(body.title, body.note, DATA_DIR)
+    return {"session": s, "state": _music_state(request)}
+
+
+@app.post("/api/music/turn")
+async def api_music_turn(request: Request):
+    """いま 3 人に聴かせる: それぞれに、いまの音の数字と「感じたことを封をして書いて」を同時に渡す(会話の履歴には残さない)"""
+    mu = _music()
+    s = mu.session(DATA_DIR)
+    if not s:
+        return JSONResponse({"error": "聴いている回が無い"}, status_code=409)
+    user = _me(request)
+    owner_name = _user_label(user, user)
+    chars = _music_chars()
+    only = (request.query_params.get("only") or "").split(",")
+    if any(only):   # 終わったあと、まだ書いていない子だけに
+        chars = [c for c in chars if c["id"] in only]
+
+    async def _one(c: dict) -> tuple[str, str]:
+        msg = _prompt("music_turn", owner_name=owner_name, now=mu.now_text(DATA_DIR, character_id=c["id"]), character_id=c["id"], scripts_dir=str(PROJECT_DIR / "scripts"))
+        try:
+            reply = await call_claude(c["id"], msg, username=user, source="music", use_session=False)
+        except Exception as e:   # noqa: BLE001
+            reply = f"(届かなかった: {e})"
+        return c["id"], (reply or "")[:300]
+
+    results = dict(await asyncio.gather(*[_one(c) for c in chars]))
+    p = mu.music_dir(DATA_DIR) / f"{s['id']}.json"
+    d = mu._load_json(p) or {"id": s["id"], "frames": [], "tempo": None, "seconds": 0}
+    d.setdefault("turns", []).append({"at": datetime.now().replace(microsecond=0).isoformat(), "t": mu.position(s), "replies": results})
+    mu._save_json(p, d)
+    return {"replies": results, "state": _music_state(request)}
+
+
+@app.post("/api/music/notebook")
+async def api_music_notebook(request: Request):
+    """3 人の感想と答え合わせを、交換ノートに 1 つの書き込みとして残す(押した人の名前で)"""
+    mu = _music()
+    s = mu.session(DATA_DIR)
+    if not s:
+        return JSONResponse({"error": "回が無い"}, status_code=409)
+    names = {c["id"]: c.get("name") or c["id"] for c in _music_chars()}
+    text = mu.note_text(s["id"], names, DATA_DIR)
+    if not text:
+        return JSONResponse({"error": "まだ何も無い"}, status_code=409)
+    return await api_notebook_add(NotebookEntry(author=_user_label(_me(request), _me(request)), content=text), request)
 
 
 @app.post("/api/music/frames")
@@ -2936,7 +3027,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html",
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html",
              "video_memo": "videomemo.html"}
 
 
@@ -3342,6 +3433,12 @@ def api_desire_history(character_id: str, days: int = 7):
 @app.get("/anniversaries", response_class=HTMLResponse)
 def anniversaries_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["anniversaries"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/music", response_class=HTMLResponse)
+def music_page():
+    """🎧 聴く(音楽を一緒に感じる)。中身は dashboard/ui/music.html"""
+    return HTMLResponse((UI_DIR / _UI_PAGES["music"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/calendar", response_class=HTMLResponse)
@@ -8639,6 +8736,7 @@ HTML = """<!DOCTYPE html>
       petitlog:  {icon: "📜", name: "ぷちログ",   pane: "petitlog"},
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       calendar:  {icon: "📅", name: "よてい",     pane: "calendar"},   // 予定 + 記念日(🎂 を吸収、2026-11-14)
+      music:     {icon: "🎧", name: "聴く",       pane: "music"},      // 音楽を一緒に感じる(2026-11-14)。はじめは「ほか」の中
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
@@ -8834,7 +8932,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

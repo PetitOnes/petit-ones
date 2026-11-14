@@ -29,6 +29,12 @@ Usage:
     python3 music.py now                                           # いま何秒目で、この 10 秒がどんな音か(ぷちが見に行く)
     python3 music.py line                                          # 見に行けるものの 1 行(回が無ければ何も出さない)
     python3 music.py wave [<id>]                                   # 音量の流れを文字の波で
+    python3 music.py feel <character_id> "<感じたこと>"             # 感じたことを封をして書く(ほかの子には見えない。3 人そろったら並ぶ)
+    python3 music.py now --character <id>                          # 自分がこれまでに書いたことも添えて
+    python3 music.py around [<id>]                                 # その回のあいだの、部屋の記録(音の大きさ・CO2・机の動き)
+    python3 music.py note [<id>]                                   # 3 人の感想と答え合わせを 1 つの文に(交換ノート用)
+
+感想の置き場所: state/music/<id>.feel.json {"<character_id>": [{"t", "at", "text"}]}。封は画面が 3 人そろってから開ける
 """
 
 from __future__ import annotations
@@ -317,7 +323,7 @@ def describe(d: dict, pos: int | None, span: int = 10) -> str:
     return "、".join(parts)
 
 
-def now_text(base: Path | None = None, now: datetime | None = None) -> str:
+def now_text(base: Path | None = None, now: datetime | None = None, character_id: str | None = None) -> str:
     s = session(base)
     if not s:
         return ""
@@ -329,7 +335,114 @@ def now_text(base: Path | None = None, now: datetime | None = None) -> str:
     tail = ""
     if s.get("ended_at") and s.get("title"):
         tail = f"。答え合わせ: {s['title']}" + (f"。ありさん「{s['note']}」" if s.get("note") else "")
-    return f"聴いている回{state}: {head}({src})。{describe(d, pos)}{tail}"
+    mine = ""
+    if character_id:
+        own = feels(s["id"], base).get(character_id) or []
+        if own:
+            mine = "。あなたがこれまでに書いたこと: " + " / ".join(f"[{_mmss(int(f.get('t') or 0))}] {f['text']}" for f in own[-3:])
+    return f"聴いている回{state}: {head}({src})。{describe(d, pos)}{tail}{mine}"
+
+
+# ---- 感想(封をして書く)と、まわりの記録 ----
+
+def feel_path(sid: str, base: Path | None = None) -> Path:
+    return music_dir(base) / f"{sid}.feel.json"
+
+
+def feels(sid: str | None = None, base: Path | None = None) -> dict[str, list[dict]]:
+    sid = sid or (session(base) or {}).get("id")
+    if not sid:
+        return {}
+    d = _load_json(feel_path(sid, base)) or {}
+    return {k: v for k, v in d.items() if isinstance(v, list)}
+
+
+def feel(character_id: str, text: str, base: Path | None = None, now: datetime | None = None) -> dict:
+    """その子の感想を 1 件足す(封。画面は 3 人そろってから開ける)。回が無ければ ValueError"""
+    s = session(base)
+    if not s:
+        raise ValueError("聴いている回が無い")
+    text = " ".join(text.split())[:600]
+    if not text:
+        raise ValueError("中身が空")
+    now = now or datetime.now()
+    d = _load_json(feel_path(s["id"], base)) or {}
+    lst = d.setdefault(character_id, [])
+    lst.append({"t": position(s, now), "at": now.replace(microsecond=0).isoformat(), "text": text})
+    _save_json(feel_path(s["id"], base), d)
+    return {"id": s["id"], "count": len(lst), "t": lst[-1]["t"]}
+
+
+def wrote(sid: str | None, character_ids: list[str], base: Path | None = None) -> dict:
+    """だれが何件書いたか と、全員書いたか"""
+    f = feels(sid, base)
+    counts = {c: len(f.get(c) or []) for c in character_ids}
+    return {"counts": counts, "all": bool(character_ids) and all(counts.values())}
+
+
+def around(sid: str | None = None, base: Path | None = None, now: datetime | None = None) -> str:
+    """その回のあいだの部屋の記録(scripts/room_log.py の 10 分ごと)と気配。無ければ空"""
+    s = session(base) if not sid or (session(base) or {}).get("id") == sid else _load_json(session_path(base))
+    if not s:
+        return ""
+    try:
+        t0 = datetime.fromisoformat(s["started_at"])
+        t1 = datetime.fromisoformat(s["ended_at"]) if s.get("ended_at") else (now or datetime.now())
+    except (KeyError, TypeError, ValueError):
+        return ""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    parts = []
+    try:
+        import room_log
+        rows = []
+        for day in sorted({t0.strftime("%Y%m%d"), t1.strftime("%Y%m%d")}):
+            rows += [r for r in room_log.day_rows(base, day) if t0.isoformat() <= r.get("ts", "") <= t1.isoformat()]
+        noise = [dev["noise"] for r in rows for dev in r.get("devices", {}).values() if isinstance(dev.get("noise"), (int, float))]
+        co2 = [dev["eco2"] for r in rows for dev in r.get("devices", {}).values() if isinstance(dev.get("eco2"), (int, float))]
+        moves = sum(1 for r in rows for dev in r.get("devices", {}).values() if dev.get("move"))
+        if noise:
+            parts.append(f"部屋の音 {min(noise):.0f}〜{max(noise):.0f} dB")
+        if co2:
+            parts.append(f"CO2 {min(co2)}〜{max(co2)} ppm")
+        if rows:
+            parts.append(f"机の動き {moves} 回/{len(rows)} 読み")
+    except Exception:
+        pass
+    try:
+        import presence_watch
+        ev = []
+        for day in sorted({t0.strftime("%Y%m%d"), t1.strftime("%Y%m%d")}):
+            p = presence_watch.events_path(base or data_dir(), datetime.strptime(day, "%Y%m%d"))
+            if p.exists():
+                ev += [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+        ev = [e for e in ev if t0.isoformat() <= e.get("ts", "") <= t1.isoformat()]
+        if ev:
+            parts.append("気配: " + "、".join(f"{e['ts'][11:16]} {e.get('place', '')}に{'近づいた' if e.get('type') == 'arrived' else '離れた'}" for e in ev[:6]))
+    except Exception:
+        pass
+    return "聴いているあいだの部屋: " + "、".join(parts) if parts else ""
+
+
+def note_text(sid: str | None, names: dict[str, str], base: Path | None = None) -> str:
+    """3 人の感想と答え合わせを 1 つの文に(交換ノートへ)"""
+    s = session(base)
+    if not s:
+        return ""
+    sid = sid or s["id"]
+    f = feels(sid, base)
+    out = [f"🎧 いっしょに聴いた({s['started_at'][:10].replace('-', '/')} {s['started_at'][11:16]})" + (f" — {s['title']}" if s.get("title") else "")]
+    if s.get("note"):
+        out.append(f"ありさん「{s['note']}」")
+    w = wave(sid, base)
+    if w:
+        out.append(w)
+    for cid, lst in f.items():
+        for x in lst:
+            out.append(f"{names.get(cid, cid)} [{_mmss(int(x.get('t') or 0))}] {x['text']}")
+    ar = around(sid, base)
+    if ar:
+        out.append(ar)
+    return "\n".join(out)
 
 
 def line(base: Path | None = None, now: datetime | None = None) -> str:
@@ -371,8 +484,12 @@ def main() -> int:
     p = sub.add_parser("stop"); p.add_argument("--title", default=None); p.add_argument("--note", default=None)
     p = sub.add_parser("listen"); p.add_argument("--source", default="pc", choices=["pc"]); p.add_argument("--seconds", type=int, default=300); p.add_argument("--device", default=None)
     p = sub.add_parser("analyze"); p.add_argument("file"); p.add_argument("--id", default=None)
-    sub.add_parser("now"); sub.add_parser("line")
+    p = sub.add_parser("now"); p.add_argument("--character", default=None)
+    sub.add_parser("line")
     p = sub.add_parser("wave"); p.add_argument("id", nargs="?", default=None)
+    p = sub.add_parser("feel"); p.add_argument("character_id"); p.add_argument("text")
+    p = sub.add_parser("around"); p.add_argument("id", nargs="?", default=None)
+    p = sub.add_parser("note"); p.add_argument("id", nargs="?", default=None)
     a = ap.parse_args()
     if a.cmd == "start":
         s = start(a.source, a.by)
@@ -390,11 +507,22 @@ def main() -> int:
         print(f"{sid}: {d['seconds']} 秒、拍 {d['tempo']}")
         print(wave(sid))
     elif a.cmd == "now":
-        print(now_text())
+        print(now_text(character_id=a.character))
     elif a.cmd == "line":
         t = line()
         if t:
             print(t)
+    elif a.cmd == "feel":
+        try:
+            r = feel(a.character_id, a.text)
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        print(f"封をして書いた({_mmss(int(r['t'] or 0))} のところ。{r['count']} 件目)。3 人そろったら並びます")
+    elif a.cmd == "around":
+        print(around(a.id))
+    elif a.cmd == "note":
+        print(note_text(a.id, {}))
     else:
         print(wave(a.id))
     return 0

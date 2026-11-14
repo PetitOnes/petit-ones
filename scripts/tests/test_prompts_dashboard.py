@@ -81,6 +81,11 @@ def test_restriction_lines_come_from_autonomous_template():
     assert out.splitlines()[0] == "- いまは からだ おやすみ(15:30 まで。いまから): …" and "声（speak）" in out and "マイク" not in out
 
 
+def test_music_turn():
+    t = P("music_turn", owner_name="ありさん", now="聴いている回: いま 1:24(PC の中の音)。この 10 秒: 音量 0.62", character_id="puchiko", scripts_dir="/s")
+    assert t.startswith("いま、ありさんと いっしょに曲を聴いている回です") and "python3 /s/music.py feel puchiko" in t and "いま 1:24" in t and "声と効果音は出さないで" in t
+
+
 def test_from_prefix_and_relay_hint():
     assert P("from_prefix", user_display_name="かぜおさん", message="やあ") == "[かぜおさんから] やあ"
     assert P("now_prefix", now="2026-11-14 22:28 (JST)", message="やあ") == "[いま 2026-11-14 22:28 (JST)] やあ"   # 続きの会話の頭(前の回の「いま」を引きずらないように)

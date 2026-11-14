@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>聴く</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 🎧 聴く(2026-11-14): 曲を 3 人といっしょに。先に聴いて、感想は封をして、あとで答え合わせ */
+    .u-pos { font-family: var(--ui-font-head); font-size: 2rem; color: var(--ui-heading); letter-spacing: 0.04em; }
+    .u-wave { font-family: ui-monospace, monospace; font-size: 0.95rem; letter-spacing: 1px; color: var(--ui-accent); white-space: nowrap; overflow-x: auto; padding: 4px 0; }
+    .u-now { font-size: 0.85rem; color: var(--ui-text-sub, #777); line-height: 1.6; }
+    .u-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .u-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; background: var(--ui-surface); border: 1.5px solid var(--ui-line, #eee); font-size: 0.85rem; font-weight: 700; }
+    .u-chip i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .u-chip.done { border-color: var(--ui-accent); }
+    .u-feel { padding: 10px 12px; border-radius: 12px; background: var(--ui-surface); margin-top: 8px; border-left: 4px solid #ccc; }
+    .u-feel .who { font-weight: 700; font-size: 0.85rem; }
+    .u-feel .t { font-size: 0.75rem; color: var(--ui-text-sub, #999); margin-left: 6px; }
+    .u-feel p { margin: 4px 0 0; line-height: 1.6; white-space: pre-wrap; }
+    .u-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+    .u-form label { display: block; margin-top: 8px; }
+    .u-form .a-input { width: 100%; box-sizing: border-box; }
+    .u-msg { font-size: 0.8rem; color: #d9534f; }
+    .u-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 30; }
+    .u-toast.on { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎧 聴く</h1></div>
+
+    <!-- 回が無いとき: 始める -->
+    <div class="m-card" id="startCard" style="display:none">
+      <span class="a-heading">いっしょに聴く回を始める</span>
+      <p class="a-hint" style="margin:0 0 8px">曲が鳴っている音を、1 秒ごとの数字(音量・高さの重心・拍・静けさ)にして 3 人に渡します。音そのものは残しません。曲名やひとことは、終わるときに足します(先に聴いて、あとで答え合わせ)。</p>
+      <div class="m-pills" id="srcPills">
+        <button class="a-pill is-on" data-src="phone" onclick="pickSrc('phone')">📱 スマホが聞く</button>
+        <button class="a-pill" data-src="pc" onclick="pickSrc('pc')">💻 PC の中の音</button>
+      </div>
+      <p class="a-hint" id="srcHint" style="margin:6px 0 8px"></p>
+      <button class="a-btn" onclick="startSession()">始める</button>
+    </div>
+
+    <!-- 回があるとき -->
+    <div id="live" style="display:none">
+      <div class="m-card">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <span class="u-pos" id="pos">0:00</span>
+          <span class="a-label" id="srcLabel"></span>
+        </div>
+        <div class="u-wave" id="wave"></div>
+        <div class="u-now" id="nowText"></div>
+        <div class="u-chips" id="chips"></div>
+        <div class="u-acts" id="liveActs">
+          <button class="a-btn" id="turnBtn" onclick="turn()">🎧 いま みんなに聴かせる</button>
+          <button class="a-btn a-btn--ghost" onclick="showEnd()">終える</button>
+          <span class="u-msg" id="liveMsg"></span>
+        </div>
+        <div class="u-form" id="endForm" style="display:none">
+          <label><span class="a-label">曲名(答え合わせ。なくてもよい)</span><input class="a-input" id="fTitle" maxlength="80" placeholder="たとえば shining"></label>
+          <label><span class="a-label">ありさんのひとこと(どうしてこの曲か、いつ聴いていたか)</span><input class="a-input" id="fNote" maxlength="500"></label>
+          <div class="u-acts"><button class="a-btn a-btn--ghost a-btn--s" onclick="hideEnd()">やめる</button><button class="a-btn a-btn--s" onclick="stopSession()">終える</button></div>
+        </div>
+      </div>
+
+      <!-- 終わったあと -->
+      <div class="m-card" id="afterCard" style="display:none">
+        <span class="a-heading" id="afterTitle"></span>
+        <div id="afterBody"></div>
+        <div class="u-acts" id="afterActs"></div>
+      </div>
+    </div>
+    <p class="a-label" style="margin-top:10px">それぞれ先に書いて、みんな書き終わってから並びます。ほかの子の分を先に見ると寄ってしまうから。</p>
+  </div>
+  <div class="u-toast" id="toast"></div>
+
+  <script>
+    const { esc } = PetitPage;
+    let st = null, src = "phone", timer = null, poll = null, busy = false;
+    const $ = id => document.getElementById(id);
+    const mmss = s => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1800); }
+    const SRC_HINT = {phone: "スマホの Garmin BLE Bridge アプリで「🎧 聴いて送る」をオンにしてください。カフェでも、スマホで鳴らす曲でも。", pc: "この PC で鳴っている音(YouTube など)をそのまま数字にします。マイクは通りません。"};
+    function pickSrc(v) { src = v; document.querySelectorAll("#srcPills [data-src]").forEach(b => b.classList.toggle("is-on", b.dataset.src === v)); $("srcHint").textContent = SRC_HINT[v]; }
+
+    async function load() {
+      try { st = await (await fetch("/api/music/state")).json(); } catch (e) { return; }
+      render();
+    }
+    function colorOf(id) { return ((st.chars || []).find(c => c.id === id) || {}).color || "#ccc"; }
+    function nameOf(id) { return ((st.chars || []).find(c => c.id === id) || {}).name || id; }
+    function render() {
+      const s = st && st.session;
+      $("startCard").style.display = s ? "none" : "";
+      $("live").style.display = s ? "" : "none";
+      if (!s) { pickSrc(src); clearInterval(timer); return; }
+      const ended = !!s.ended_at;
+      $("srcLabel").textContent = ({pc: "💻 PC の中の音", phone: "📱 スマホが聞いた音", mic: "🎤 体のマイク"})[s.source] || s.source;
+      $("wave").textContent = st.wave || "";
+      $("nowText").textContent = st.now || "";
+      $("chips").innerHTML = (st.chars || []).map(c => { const n = (st.wrote || {})[c.id] || 0; return `<span class="u-chip${n ? " done" : ""}"><i style="background:${esc(c.color || "#ccc")}"></i>${esc(c.name)} ${n ? `✓ ${n}` : "まだ"}</span>`; }).join("");
+      $("liveActs").style.display = ended ? "none" : "";
+      if (ended) $("endForm").style.display = "none";
+      clearInterval(timer);
+      if (!ended) {
+        const t0 = new Date(s.started_at).getTime();
+        const tick = () => { $("pos").textContent = mmss(Math.max(0, Math.floor((Date.now() - t0) / 1000))); };
+        tick(); timer = setInterval(tick, 1000);
+        if (s.source === "pc" && !st.listening_pc) $("liveMsg").textContent = "PC の音を読む係が動いていません(止まったか、音の出口が見つからない)"; else if (!(st.seconds > 0) && st.position > 20) $("liveMsg").textContent = s.source === "phone" ? "まだスマホから数字が届いていません(アプリの「🎧 聴いて送る」はオン?)" : ""; else $("liveMsg").textContent = "";
+      } else {
+        $("pos").textContent = mmss(st.position || 0) + " で終わり";
+      }
+      // 終わったあと
+      $("afterCard").style.display = ended ? "" : "none";
+      if (!ended) return;
+      const title = s.title ? `答え合わせ: ${esc(s.title)}` : "答え合わせ(曲名は無し)";
+      $("afterTitle").textContent = st.revealed ? title : "みんながそろうのを待っている";
+      if (st.revealed) {
+        const feels = Object.entries(st.feels || {}).flatMap(([cid, lst]) => lst.map(x => ({cid, ...x}))).sort((a, b) => (a.t || 0) - (b.t || 0) || a.at.localeCompare(b.at));
+        $("afterBody").innerHTML =
+          (s.note ? `<p style="margin:4px 0 8px">ありさん「${esc(s.note)}」</p>` : "") +
+          feels.map(f => `<div class="u-feel" style="border-left-color:${esc(colorOf(f.cid))}"><span class="who" style="color:${esc(colorOf(f.cid))}">${esc(nameOf(f.cid))}</span><span class="t">${mmss(f.t || 0)} のところ</span><p>${esc(f.text)}</p></div>`).join("") +
+          (st.around ? `<p class="a-hint" style="margin-top:10px">${esc(st.around)}</p>` : "");
+        $("afterActs").innerHTML = `<button class="a-btn" onclick="toNotebook()">📖 交換ノートに残す</button><button class="a-btn a-btn--ghost" onclick="newSession()">つぎの曲へ</button>`;
+      } else {
+        const missing = (st.chars || []).filter(c => !((st.wrote || {})[c.id])).map(c => c.name);
+        $("afterBody").innerHTML = `<p class="a-hint" style="margin:4px 0 0">まだ ${esc(missing.join("・"))} が書いていません。もう一度聴かせるか、そのまま「つぎの曲へ」でも。</p>`;
+        $("afterActs").innerHTML = `<button class="a-btn" onclick="turnAfter()">もう一度 渡す(終わったあとの数字で)</button><button class="a-btn a-btn--ghost" onclick="newSession()">つぎの曲へ</button>`;
+      }
+    }
+    async function startSession() {
+      if (busy) return; busy = true;
+      try { const r = await fetch("/api/music/start", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({source: src})}); if (!r.ok) throw 0; toast("始めた"); }
+      catch (e) { toast("始められなかった"); }
+      busy = false; load();
+    }
+    async function turn(after) {
+      if (busy) return; busy = true;
+      const b = $("turnBtn"); if (b) { b.disabled = true; b.textContent = "みんなに渡している…"; }
+      try {
+        const r = await fetch("/api/music/turn", {method: "POST"});
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || "");
+        const n = Object.values(j.state && j.state.wrote || {}).filter(Boolean).length;
+        toast(`渡した(書いたのは ${n} 人)`);
+      } catch (e) { toast("渡せなかった" + (e.message ? `: ${e.message}` : "")); }
+      if (b) { b.disabled = false; b.textContent = "🎧 いま みんなに聴かせる"; }
+      busy = false; load();
+    }
+    // 終わったあとに、まだ書いていない子がいるとき: 回を開け直さずに渡したいので、いったん終わりを外して渡し、また終える
+    async function turnAfter() {
+      const missing = (st.chars || []).filter(c => !((st.wrote || {})[c.id])).map(c => c.id);
+      if (!missing.length || busy) return; busy = true;
+      try { const r = await fetch("/api/music/turn?only=" + missing.join(","), {method: "POST"}); toast(r.ok ? "渡した" : "渡せなかった"); } catch (e) { toast("渡せなかった"); }
+      busy = false; load();
+    }
+    function showEnd() { $("endForm").style.display = ""; $("fTitle").focus(); }
+    function hideEnd() { $("endForm").style.display = "none"; }
+    async function stopSession() {
+      if (busy) return; busy = true;
+      try { await fetch("/api/music/stop", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({title: $("fTitle").value, note: $("fNote").value})}); toast("終えた"); }
+      catch (e) { toast("終えられなかった"); }
+      busy = false; load();
+    }
+    async function toNotebook() {
+      try { const r = await fetch("/api/music/notebook", {method: "POST"}); toast(r.ok ? "交換ノートに残した" : "残せなかった"); } catch (e) { toast("残せなかった"); }
+    }
+    function newSession() { st = {session: null, chars: st.chars}; render(); }
+    load();
+    poll = setInterval(() => { if (!busy) load(); }, 5000);
+  </script>
+</body>
+</html>
