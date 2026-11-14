@@ -2212,6 +2212,7 @@ def api_relations(request: Request):
             "name": cfg.get("name", c["id"]),
             "color": cfg.get("color", "#cab8d9"),
             "has_avatar": (char_dir(c["id"]) / "resources" / "petit.png").exists(),
+            "kind": "petit",
             "self_info": self_info,
         })
 
@@ -2224,6 +2225,7 @@ def api_relations(request: Request):
         "name": owner_info["name"],
         "color": owner_info["color"],
         "has_avatar": False,
+        "kind": "human",
         "self_info": {},
     })
     # For arisan (admin without character restriction), also show all human nodes
@@ -2235,6 +2237,7 @@ def api_relations(request: Request):
                     "name": uinfo["name"],
                     "color": uinfo["color"],
                     "has_avatar": False,
+                    "kind": "human",
                     "self_info": {},
                 })
 
@@ -2866,8 +2869,8 @@ def kankei_page():
 
 @app.get("/relations", response_class=HTMLResponse)
 def relations_page():
-    """🕸️ 関係: ぷちたちと人の、気持ちの図とカード"""
-    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "rel").replace("__TITLE__", "🕸️ 関係"), headers={"Cache-Control": "no-cache"})
+    """🤝 関係: ぷちたちと人の、気持ちの図とカード"""
+    return HTMLResponse(KANKEI_HTML.replace("__MODE__", "rel").replace("__TITLE__", "🤝 関係"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/notes", response_class=HTMLResponse)
@@ -7968,7 +7971,7 @@ HTML = """<!DOCTYPE html>
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
       kairanban: {icon: "📋", name: "回覧板",     pane: "kairanban"},
       library:   {icon: "📚", name: "ライブラリ", pane: "library"},
-      relations: {icon: "🕸️", name: "関係",       pane: "relations"},   // 2026-11-14 に ひみつ から分けた
+      relations: {icon: "🤝", name: "関係",       pane: "relations"},   // 2026-11-14 に ひみつ から分けた
       kankei:    {icon: "🔒", name: "ひみつ",     pane: "kankei"},
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
@@ -9920,8 +9923,8 @@ KANKEI_HTML = """<!DOCTYPE html>
     .mode-rel .mail-section { display: none; }
     .mode-mail .chart-container, .mode-mail .cards { display: none; }
     .mode-mail .mail-thread { max-height: none; }
-    .chart-container { display: flex; justify-content: center; padding: 20px; }
-    svg { max-width: 700px; width: 100%; height: auto; }
+    .chart-container { display: flex; justify-content: center; padding: 8px 8px 12px; }
+    #chart { max-width: 640px; width: 100%; height: auto; }
     .tooltip {
       position: fixed; background: #fff; border: 1.5px solid #E3D6C2; border-radius: 10px;
       padding: 10px 14px; font-size: 0.85rem; pointer-events: none; opacity: 0;
@@ -9947,15 +9950,29 @@ KANKEI_HTML = """<!DOCTYPE html>
     .mail-meta { font-size: 0.7rem; color: #9a8d82; margin-top: 4px; }
     .mail-sender { font-size: 0.75rem; font-weight: 600; margin-bottom: 4px; }
     .mail-empty { color: #9a8d82; font-size: 0.85rem; text-align: center; padding: 20px; }
-    .cards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; padding: 0 20px 30px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; max-width: 980px; margin: 0 auto; padding: 0 16px 30px; align-items: start; }
+    .chart-hint { max-width: 720px; margin: -8px auto 12px; padding: 0 16px; text-align: center; font-size: 0.8rem; color: #9a8d82; }
+    .mode-mail .chart-hint { display: none; }
+    svg.face { flex: 0 0 auto; display: block; }
+    .person-dot { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; font-weight: 700; }
+    .card-sub { margin: 12px 0 2px; padding-top: 10px; border-top: 1.5px dashed #eee1cf; font-size: 0.78rem; font-weight: 700; color: #9b8ec4; letter-spacing: 0.04em; }
+    .feel { padding: 8px 0; }
+    .feel + .feel { border-top: 1px solid #f3eadb; }
+    .feel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+    .feel-to { font-size: 0.92rem; font-weight: 700; color: #3A322D; }
+    .feel-pct { font-size: 0.8rem; color: #6E625A; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .feel-bar { height: 6px; margin: 4px 0 6px; background: #f0eaf8; border-radius: 999px; overflow: hidden; }
+    .feel-bar > div { height: 100%; border-radius: 999px; }
+    .feel-text { font-size: 0.9rem; line-height: 1.6; color: #3A322D; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .feel-none { font-size: 0.85rem; color: #9a8d82; }
     .card {
-      background: #fff; border-radius: 12px; padding: 16px; width: 260px;
+      background: #fff; border-radius: 16px; padding: 16px;
       border: 1.5px solid #eee1cf; border-top: 3px solid #cab8d9;
     }
     .card h3 { font-size: 1rem; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
     .card .avatar-small { width: 28px; height: 28px; border-radius: 50%; }
     .card .likes { font-size: 0.8rem; color: #6E625A; margin-bottom: 4px; }
-    .card .notes { font-size: 0.85rem; color: #6E625A; font-style: italic; }
+    .card .notes { font-size: 0.85rem; color: #6E625A; line-height: 1.6; overflow-wrap: anywhere; }
     .detail-overlay {
       position: fixed; inset: 0; background: rgba(58,50,45,0.45); z-index: 200;
       display: none; align-items: center; justify-content: center; padding: 20px;
@@ -9981,7 +9998,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   </style>
 </head>
 <body class="mode-__MODE__">
-  <!-- 1 つの作りを 2 つのページで使う(2026-11-14 に分けた): mode-rel = 🕸️ 関係(図とカード)、mode-mail = 🔒 ひみつ(ぷちどうしの手紙) -->
+  <!-- 1 つの作りを 2 つのページで使う(2026-11-14 に分けた): mode-rel = 🤝 関係(図とカード)、mode-mail = 🔒 ひみつ(ぷちどうしの手紙) -->
   <div class="top-bar">
     <a href="/" class="back-btn">← もどる</a>
     <h1>__TITLE__</h1>
@@ -9991,6 +10008,7 @@ KANKEI_HTML = """<!DOCTYPE html>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="detail-panel" id="detailPanel"></div>
   </div>
+  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。くわしい気持ちは、下に文字で。</div>
   <div class="cards" id="cards"></div>
   <div class="mail-section">
     <div id="mailThread" class="mail-thread"></div>
@@ -10004,7 +10022,22 @@ KANKEI_HTML = """<!DOCTYPE html>
     if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
     const MODE = "__MODE__";   // "rel" = 関係のページ / "mail" = ひみつ(手紙)のページ
     const SVG_NS = "http://www.w3.org/2000/svg";
-    const CX = 350, CY = 350, RADIUS = 220, NODE_R = 40;
+    const CX = 350, CY = 340, RADIUS = 225, NODE_R = 72;   // NODE_R: 顔のまわりに空ける半径
+    const FACE_W = 116, FACE_H = 87;   // 図の中の顔(体の画面と同じ 4:3)
+    const esc = t => String(t ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+    // ぷちの顔: 体の画面と同じ形(白い画面に、その子の色で、目・鼻・ハートの口)。320x240 の中に描く
+    function faceInner(color) {
+      const c = esc(color || "#cab8d9");
+      return `<rect x="5" y="5" width="310" height="230" rx="34" fill="#fff" stroke="${c}" stroke-width="10"/>`
+        + `<g fill="${c}"><ellipse cx="160" cy="121" rx="14" ry="6"/>`
+        + `<ellipse cx="75" cy="90" rx="22" ry="32" transform="rotate(20 75 90)"/><ellipse cx="245" cy="90" rx="22" ry="32" transform="rotate(-20 245 90)"/>`
+        + `<circle cx="142" cy="165" r="20"/><circle cx="178" cy="165" r="20"/><path d="M130 175 L190 175 L160 210 Z"/></g>`;
+    }
+    const faceSvg = (color, w) => `<svg class="face" viewBox="0 0 320 240" width="${w}" height="${Math.round(w * 0.75)}" aria-hidden="true">${faceInner(color)}</svg>`;
+    // 人: その人の色の丸に、名前のはじめの 2 文字
+    const personDot = (n, size) => `<span class="person-dot" style="width:${size}px;height:${size}px;background:${esc(n.color)};font-size:${Math.round(size * 0.36)}px">${esc(n.name.slice(0, 2))}</span>`;
+    const isPetit = n => !!n && n.kind !== "human";
+    const pct = v => Math.round((v || 0) * 100);
 
     function svgEl(tag, attrs) {
       const el = document.createElementNS(SVG_NS, tag);
@@ -10020,7 +10053,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       const outgoing = _edges.filter(e => e.from === nodeId);
       const incoming = _edges.filter(e => e.to === nodeId);
       const panel = document.getElementById("detailPanel");
-      let html = `<div class="header"><img src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"><h2 style="color:${ink(n.color)}">${n.name}</h2></div>`;
+      let html = `<div class="header">${isPetit(n) ? faceSvg(n.color, 64) : personDot(n, 48)}<h2 style="color:${ink(n.color)}">${n.name}</h2></div>`;
 
       if (outgoing.length) {
         html += `<div style="font-size:0.8rem;color:#6E625A;margin-bottom:8px">${n.name} → みんなへの気持ち</div>`;
@@ -10073,7 +10106,7 @@ KANKEI_HTML = """<!DOCTYPE html>
           id: `arr${i}`, markerWidth: "8", markerHeight: "6",
           refX: "8", refY: "3", orient: "auto", markerUnits: "strokeWidth"
         });
-        marker.appendChild(svgEl("path", { d: "M0,0 L8,3 L0,6 Z", fill: "#e94560" }));
+        marker.appendChild(svgEl("path", { d: "M0,0 L8,3 L0,6 Z", style: `fill:${ink(nodes.find(n => n.id === e.from)?.color)}` }));
         defs.appendChild(marker);
       });
       svg.appendChild(defs);
@@ -10098,17 +10131,17 @@ KANKEI_HTML = """<!DOCTYPE html>
         const strokeW = Math.max(1, e.closeness * 5 + 1);
         const line = svgEl("line", {
           x1: x1 + ox, y1: y1 + oy, x2: x2 + ox, y2: y2 + oy,
-          stroke: "#e94560", "stroke-width": strokeW, "stroke-opacity": 0.6,
+          style: `stroke:${ink(nodes.find(n => n.id === e.from)?.color)}`, "stroke-width": strokeW, "stroke-opacity": 0.75,
           "marker-end": `url(#arr${i})`
         });
         svg.appendChild(line);
 
         // heart at midpoint
-        const mx = (x1 + x2) / 2 + ox, my = (y1 + y2) / 2 + oy;
-        const heartSize = Math.max(8, e.closeness * 16);
+        const mx = x1 + (x2 - x1) * 0.66 + ox, my = y1 + (y2 - y1) * 0.66 + oy;
+        const heartSize = Math.max(14, e.closeness * 26);
         const heart = svgEl("text", {
           x: mx, y: my, "font-size": heartSize, "text-anchor": "middle",
-          "dominant-baseline": "central", fill: "#e94560", "fill-opacity": 0.8,
+          "dominant-baseline": "central", fill: "#e94560", stroke: "#FBF4E8", "stroke-width": 3, "paint-order": "stroke",
           style: "cursor:default"
         });
         heart.textContent = "\\u2665";
@@ -10154,31 +10187,15 @@ KANKEI_HTML = """<!DOCTYPE html>
         const g = svgEl("g", { style: "cursor:pointer" });
         g.addEventListener("click", () => showDetail(n.id));
 
-        if (n.has_avatar || n.id !== "arisan") {
-          // clip for circular avatar
-          const clipId = `clip-${n.id}`;
-          const clipPath = svgEl("clipPath", { id: clipId });
-          clipPath.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: NODE_R }));
-          defs.appendChild(clipPath);
-
-          // background circle (white so avatars are visible)
-          g.appendChild(svgEl("circle", {
-            cx: p.x, cy: p.y, r: NODE_R, fill: "white", stroke: n.color, "stroke-width": 3
-          }));
-
-          const img = svgEl("image", {
-            href: `/api/avatar/${n.id}.png`, x: p.x - NODE_R, y: p.y - NODE_R,
-            width: NODE_R * 2, height: NODE_R * 2, "clip-path": `url(#${clipId})`
-          });
-          g.appendChild(img);
+        if (isPetit(n)) {
+          const face = svgEl("svg", { x: p.x - FACE_W / 2, y: p.y - FACE_H / 2, width: FACE_W, height: FACE_H, viewBox: "0 0 320 240" });
+          face.innerHTML = faceInner(n.color);
+          g.appendChild(face);
         } else {
-          // arisan: color circle
-          g.appendChild(svgEl("circle", {
-            cx: p.x, cy: p.y, r: NODE_R, fill: n.color, stroke: "#E3D6C2", "stroke-width": 2
-          }));
+          g.appendChild(svgEl("circle", { cx: p.x, cy: p.y, r: 44, fill: n.color, stroke: "#fff", "stroke-width": 4 }));
           const initials = svgEl("text", {
             x: p.x, y: p.y, "text-anchor": "middle", "dominant-baseline": "central",
-            fill: "white", "font-size": "16", "font-weight": "bold"
+            fill: "white", "font-size": "24", "font-weight": "bold"
           });
           initials.textContent = n.name.slice(0, 2);
           g.appendChild(initials);
@@ -10186,8 +10203,8 @@ KANKEI_HTML = """<!DOCTYPE html>
 
         // name label
         const label = svgEl("text", {
-          x: p.x, y: p.y + NODE_R + 18, "text-anchor": "middle",
-          fill: "#3A322D", "font-size": "14", "font-weight": "bold"
+          x: p.x, y: p.y + 74, "text-anchor": "middle",
+          fill: "#3A322D", "font-size": "24", "font-weight": "bold"
         });
         label.textContent = n.name;
         g.appendChild(label);
@@ -10195,20 +10212,25 @@ KANKEI_HTML = """<!DOCTYPE html>
         svg.appendChild(g);
       });
 
-      // self-info cards
+      // 図の下: 矢印の中身を、文字でぜんぶ。1 人 1 枚(その子から、みんなへの気持ち)
       const cardsDiv = document.getElementById("cards");
-      nodes.forEach(n => {
-        const si = n.self_info;
-        if (!si || (!si.likes?.length && !si.notes)) return;
-        const card = document.createElement("div");
-        card.className = "card";
-        card.style.borderTopColor = n.color;
-        let html = `<h3><img class="avatar-small" src="/api/avatar/${n.id}.png" onerror="this.style.display='none'"> ${n.name}</h3>`;
-        if (si.likes?.length) html += `<div class="likes">♥ ${si.likes.join("、")}</div>`;
-        if (si.notes) html += `<div class="notes">${si.notes}</div>`;
-        card.innerHTML = html;
-        cardsDiv.appendChild(card);
-      });
+      const nameOf = id => nodes.find(n => n.id === id)?.name || id;
+      cardsDiv.innerHTML = nodes.filter(isPetit).map(n => {
+        const si = n.self_info || {};
+        const out = edges.filter(e => e.from === n.id).sort((a, b) => b.closeness - a.closeness);
+        const rows = out.map(e => `<div class="feel">
+            <div class="feel-head"><span class="feel-to">→ ${esc(nameOf(e.to))}</span><span class="feel-pct">♥ ${pct(e.closeness)}%</span></div>
+            <div class="feel-bar"><div style="width:${pct(e.closeness)}%;background:${esc(n.color)}"></div></div>
+            <div class="feel-text">${e.feeling ? esc(e.feeling) : '<span class="feel-none">(まだ書いていない)</span>'}</div>
+          </div>`).join("");
+        return `<div class="card" style="border-top-color:${esc(n.color)}">
+          <h3>${faceSvg(n.color, 44)}<span>${esc(n.name)}</span></h3>
+          ${si.likes?.length ? `<div class="likes">♥ すきなもの: ${esc([].concat(si.likes).join("、"))}</div>` : ""}
+          ${si.notes ? `<div class="notes">${esc(si.notes)}</div>` : ""}
+          <div class="card-sub">${esc(n.name)} から、みんなへ</div>
+          ${rows || '<div class="feel-none">まだありません</div>'}
+        </div>`;
+      }).join("");
     }
 
     if (MODE === "rel") load();   // 関係のページだけ、図とカードを描く
