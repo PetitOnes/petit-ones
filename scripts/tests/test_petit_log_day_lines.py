@@ -127,3 +127,30 @@ def test_put_to_sleep_and_woken_from_the_dashboard_name_who_pressed(tmp_path):
     ]), encoding="utf-8")
     lines = [line for line in pl.day_lines(src, DAY) if "寝かされた" in line or "起こされた" in line or "眠った" in line]
     assert lines == ["13:00 ありさんに寝かされた", "15:00 ありさんに起こされた", "22:00 眠った"]
+
+
+def _sns_log(path: Path, ok: bool = True, at: str = "2026-11-13T12:10:00+00:00") -> None:
+    """ぷちSNS で手紙を送った回の、行動の記録(道具の呼び出しと、その返事)"""
+    use = {"type": "assistant", "timestamp": "2026-11-13T21:09:58+09:00", "message": {"content": [
+        {"type": "tool_use", "id": "t1", "name": "mcp__petit-sns__mail_send", "input": {"to": "tomo", "body": "外の友だちへ。\nげんき?"}}]}}
+    result = {"ok": True, "sent": {"id": "m1", "from": "puchiko", "to": "とも(tomo)", "body": "…", "at": at}} if ok else {"ok": False}
+    res = {"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}]}}
+    path.write_text(json.dumps(use, ensure_ascii=False) + "\n" + json.dumps(res, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def test_sns_mail_shows_in_the_log(tmp_path):
+    """家の外のぷちへ、ぷちSNS で送った手紙(家のメールボックスには無い)も、ぷちログと日記の材料に出る"""
+    src = _house(tmp_path)
+    _sns_log(tmp_path / "logs" / "20261113_210500_chat_stream.jsonl")
+    rows = [r for r in pl._Index(src).day(DAY) if r["kind"] == "mail"]
+    assert len(rows) == 1
+    assert rows[0]["to"] == "とも(tomo)" and rows[0]["via"] == "ぷちSNS" and rows[0]["text"].startswith("外の友だちへ。")
+    assert rows[0]["time"] == pl._local("2026-11-13T12:10:00+00:00").strftime("%H:%M")
+    assert any("とも(tomo)へ手紙を書いた" in line for line in pl.day_lines(src, DAY))
+
+
+def test_sns_mail_that_failed_is_not_shown(tmp_path):
+    src = _house(tmp_path)
+    _sns_log(tmp_path / "logs" / "20261113_210500_stream.jsonl", ok=False)
+    assert [r for r in pl._Index(src).day(DAY) if r["kind"] == "mail"] == []

@@ -83,7 +83,7 @@
       } else if (it.kind === "voice") {
         body = `ボイスメモを残した${it.title ? `「${esc(it.title)}」` : ""} <button class="a-btn a-btn--sub a-btn--s" data-play="${esc(it.url)}">▶ 聞く</button>`;
       } else if (it.kind === "mail") {
-        body = `${esc(it.to)}へメールを書いた<div class="o-log-text fold clamp o-log-sub">${esc(it.text)}${it.more ? "…" : ""}</div>`;
+        body = `${esc(it.to)}へ${it.via ? `手紙を送った <span class="o-log-sub">(${esc(it.via)})</span>` : "メールを書いた"}<div class="o-log-text fold clamp o-log-sub">${esc(it.text)}${it.more ? "…" : ""}</div>`;
       } else if (it.kind === "body") {
         body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
       } else if (it.kind === "anniv") {
