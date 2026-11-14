@@ -28,6 +28,9 @@
     .c-day.sun .n, .c-day.hol .n { color: #d9534f; } .c-day.sat .n { color: #4a7abf; }
     .c-day .m { display: block; max-width: 100%; font-size: 0.6rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text-sub); }
     .c-day .m.hol { color: #d9534f; }
+    .c-day .moon { position: absolute; top: 2px; right: 3px; font-size: 0.62rem; line-height: 1; opacity: 0.85; }   /* 新月・上弦・満月・下弦 の日だけ、端に小さく */
+    .c-day .m.term { color: var(--ui-text-mute); font-size: 0.56rem; }
+    .c-sky { font-size: 0.8rem; color: var(--ui-text-sub); margin: 2px 0 6px; }
     /* 週の見方: 7 日を縦に */
     .c-week { display: flex; flex-direction: column; gap: 4px; }
     .c-wrow { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1.5px solid transparent; border-radius: 10px; background: var(--ui-surface); font: inherit; cursor: pointer; text-align: left; }
@@ -126,7 +129,7 @@
     const canTouch = it => canEdit() && (!me.limited || it.by === me.username);
     const nameOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {name: id}).name;
     const colorOf = id => (chars.find(c => c.id === id) || people.find(p => p.id === id) || {}).color || "#ccc";
-    const info = k => { for (const ym of Object.keys(cache)) if (cache[ym][k]) return cache[ym][k]; return {anniv: [], events: [], holiday: null}; };
+    const info = k => { for (const ym of Object.keys(cache)) if (cache[ym][k]) return cache[ym][k]; return {anniv: [], events: [], holiday: null, sky: null}; };
     function saveQ() { q.set("view", view); q.set("date", sel); history.replaceState(null, "", location.pathname + "?" + q.toString()); }
 
     // ---- 読む(月ごとに覚える。週が月をまたぐときは両方) ----
@@ -172,8 +175,10 @@
       for (let i = 0; i < 42; i++) {
         const dd = new Date(start); dd.setDate(start.getDate() + i);
         const k = iso(dd), inf = info(k), marks = markHtml(inf, "m");
+        if (inf.sky && inf.sky.term) marks.push(`<span class="m term">${esc(inf.sky.term)}</span>`);
+        const moon = inf.sky && inf.sky.moon_mark_emoji ? `<span class="moon" title="${esc(inf.sky.moon_mark)}">${inf.sky.moon_mark_emoji}</span>` : "";
         const cls = ["c-day", dd.getMonth() !== m ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", dd.getDay() === 0 ? "sun" : dd.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
-        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${dd.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
+        html += `<button class="${cls}" onclick="pick('${k}')">${moon}<span class="n">${dd.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
       }
       document.getElementById("grid").innerHTML = html;
     }
@@ -181,6 +186,8 @@
       const ws = weekStart(sel);
       document.getElementById("week").innerHTML = Array.from({length: 7}, (_, i) => {
         const k = addDays(ws, i), dd = parse(k), inf = info(k), marks = markHtml(inf, "");
+        if (inf.sky && inf.sky.moon_mark_emoji) marks.push(`<span class="none">${inf.sky.moon_mark_emoji} ${esc(inf.sky.moon_mark)}</span>`);
+        if (inf.sky && inf.sky.term) marks.push(`<span class="none">${esc(inf.sky.term)}</span>`);
         const cls = ["c-wrow", k === today ? "today" : "", k === sel ? "sel" : "", inf.holiday ? "hol" : "", i === 0 ? "sun" : i === 6 ? "sat" : ""].filter(Boolean).join(" ");
         return `<button class="${cls}" onclick="pick('${k}')"><span class="d">${dd.getMonth() + 1}/${dd.getDate()}<small>${WD[i]}${k === today ? " きょう" : ""}</small></span><span class="items">${marks.join("") || '<span class="none">—</span>'}</span></button>`;
       }).join("");
@@ -198,7 +205,9 @@
       });
       const an = inf.anniv.map(a => `<div class="c-item"><span>🎂</span><div class="t"><b>${esc(a.label)}</b><div class="sub">${esc(REPEAT[a.repeat] || "")}${a.note ? ` ・ ${esc(a.note)}` : ""}</div></div>
           ${canTouch(a) ? `<button class="a-btn a-btn--ghost a-btn--s" onclick="openForm('anniv', ${JSON.stringify(a.id)})">直す</button><button class="a-btn a-btn--ghost a-btn--s" onclick="remove('anniv', ${JSON.stringify(a.id)}, ${JSON.stringify(a.name)})">消す</button>` : ""}</div>`);
-      document.getElementById("dayItems").innerHTML = ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`;
+      const sk = inf.sky;
+      const skyLine = sk ? `<div class="c-sky">${sk.moon_mark_emoji || sk.moon} 月齢 ${sk.moon_age}${sk.moon_mark ? `(${esc(sk.moon_mark)})` : ""}${sk.sunrise ? ` ・ 日の出 ${esc(sk.sunrise)} 日の入 ${esc(sk.sunset)}` : ""}${sk.term ? ` ・ きょうから ${esc(sk.term)}` : sk.current_term ? ` ・ ${esc(sk.current_term)}${sk.next_term ? `(${esc(sk.next_term.date.slice(5).replace("-", "/"))} から ${esc(sk.next_term.name)})` : ""}` : ""}</div>` : "";
+      document.getElementById("dayItems").innerHTML = skyLine + (ev.concat(an).join("") || `<p class="a-hint" style="margin:8px 0 0">この日はまだ何もありません</p>`);
     }
 
     // ---- 右下の ＋ ----

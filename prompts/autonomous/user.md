@@ -8,6 +8,9 @@
 近い予定:
 {{event_notice}}
 {{/if}}
+{{#if sky_line}}
+{{sky_line}}
+{{/if}}
 
 @{{character_dir}}/SOUL.md
 {{reflection_index_line}}

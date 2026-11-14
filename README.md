@@ -192,7 +192,9 @@ petit-ones/                   ← コード(git 管理、public)
 ├── textbook/                 # ぷちの教科書の clone(毎朝 04:30 に pull)
 ├── config/
 │   ├── people.json           # ぷち以外の人(表示名・色)
-│   └── anniversaries.json    # 記念日(ダッシュボードの 🎂 記念日 で足す。当日はぷちたちにも伝わる)
+│   ├── anniversaries.json    # 記念日(📅 よてい で足す。前の日にぷちたちにも伝わる)
+│   ├── events.json           # 予定(📅 よてい。7 日前からぷちたちにも伝わる)
+│   └── place.json            # 家の場所 {"name", "lat", "lon"}(日の出入り・天気のため。無ければ出さない)
 ├── .env                      # 一緒に暮らす人の名前・声のサーバー・鍵(.env.example から)
 ├── notes/                    # 人間ユーザー（arisan/kazahaya）のノート
 ├── token_logs/               # APIトークン使用量ログ（全ソース統合）

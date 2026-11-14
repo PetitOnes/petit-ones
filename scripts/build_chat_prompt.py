@@ -112,6 +112,11 @@ def main(argv: list[str]) -> int:
         variables["events"] = "\n".join(events.lines(DATA_DIR, None))
     except Exception:
         variables["events"] = ""
+    try:
+        import sky
+        variables["sky"] = sky.line(datetime.now(sky.JST).date(), sky.load_place(DATA_DIR))
+    except Exception:
+        variables["sky"] = ""
     sys.stdout.write(render_prompt.render("chat/system", variables, data_dir=DATA_DIR, project_dir=PROJECT_DIR))
     return 0
 
