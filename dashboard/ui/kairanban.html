@@ -22,7 +22,15 @@
     .k-issue[open] > summary::before { content: "▾"; }
     .k-title { flex: 1; min-width: 0; font-family: var(--ui-font-head); font-size: 1rem; font-weight: 700; color: var(--ui-text); overflow-wrap: anywhere; }
     .k-date { flex: 0 0 auto; font-size: var(--ui-fs-s); color: var(--ui-text-sub); white-space: nowrap; }
-    .k-body { padding: 2px 16px 16px; border-top: var(--ui-line-w) solid var(--ui-line-soft); font-size: var(--ui-fs-l); line-height: 1.75; color: var(--ui-text); overflow-wrap: anywhere; }
+    /* 既読の点: ぷち 1 人に 1 つ、その子の色。読んだ = 塗る、届いたがまだ = 輪だけ、届けていない = うすい点線の輪 */
+    .k-dots { flex: 0 0 auto; display: inline-flex; gap: 4px; align-self: center; }
+    .k-dot { width: 11px; height: 11px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--c, var(--ui-line-soft)); background: transparent; }
+    .k-dot.is-read { background: var(--c, var(--ui-text-sub)); }
+    .k-dot.is-none { border: 1.5px dashed var(--ui-text-mute); opacity: 0.6; }
+    .k-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 0 2px 10px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .k-legend span { display: inline-flex; align-items: center; gap: 4px; }
+    .k-who { padding: 8px 16px 0; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .k-body { margin-top: 8px; padding: 2px 16px 16px; border-top: var(--ui-line-w) solid var(--ui-line-soft); font-size: var(--ui-fs-l); line-height: 1.75; color: var(--ui-text); overflow-wrap: anywhere; }
     .k-body h1 { margin: 14px 0 6px; font-family: var(--ui-font-head); font-size: 1.05rem; color: var(--ui-heading); }
     .k-body > h1:first-child { display: none; }   /* 本文のはじめの見出しは、上の題と同じなので出さない */
     .k-body h2 { margin: 16px 0 6px; font-family: var(--ui-font-head); font-size: 1rem; color: var(--ui-heading); }
@@ -57,9 +65,20 @@
       empty.style.display = "none";
       // 本文は markdown。日本語の太字の後始末は、会話・ノートと同じ(md.js)
       const md = t => { const html = window.marked ? marked.parse(t || "") : `<pre>${esc(t || "")}</pre>`; return window.fixCjkBold ? fixCjkBold(html) : html; };
-      const when = d => /^\d{4}-\d{2}-\d{2}$/.test(d || "") ? dayLabel(d) : (d || "");
-      list.innerHTML = items.map((it, i) => `<details class="m-card k-issue"${i === 0 ? " open" : ""}>
-        <summary><span class="k-title">${esc(it.title)}</span><span class="k-date">${esc(when(it.date))}</span></summary>
+      // 日付と時刻。届けた号は届いた時刻、まだの号は名前に書いた時刻(無ければ日付だけ)
+      const when = it => (/^\d{4}-\d{2}-\d{2}$/.test(it.date || "") ? dayLabel(it.date) : (it.date || "")) + (it.time ? ` ${it.time}` : "");
+      let chars = [];
+      try { chars = await (await fetch("/api/characters/all")).json(); } catch (e) {}
+      const who = id => chars.find(c => c.id === id) || {id, name: id, color: ""};
+      const WORD = {read: "読んだ", unread: "まだ", none: "届けていない"};
+      const dot = r => { const c = who(r.id); return `<span class="k-dot is-${esc(r.state)}" style="${c.color ? `--c:${esc(c.color)}` : ""}" title="${esc(c.name)}: ${WORD[r.state] || ""}"></span>`; };
+      const dots = it => (it.readers || []).length ? `<span class="k-dots">${it.readers.map(dot).join("")}</span>` : "";
+      const whoLine = it => !(it.readers || []).length ? "" : `<div class="k-who">${it.sent ? it.readers.map(r => `${esc(who(r.id).name)} ${WORD[r.state] || ""}`).join(" ・ ") : "まだ届けていない(ここで読めるだけ)"}</div>`;
+      const sample = (state, word) => `<span><span class="k-dot is-${state}" style="--c:var(--ui-text-sub)"></span>${word}</span>`;
+      list.innerHTML = `<div class="k-legend">${sample("read", "読んだ")}${sample("unread", "届いた・まだ")}${sample("none", "届けていない")}</div>`
+        + items.map((it, i) => `<details class="m-card k-issue"${i === 0 ? " open" : ""}>
+        <summary><span class="k-title">${esc(it.title)}</span>${dots(it)}<span class="k-date">${esc(when(it))}</span></summary>
+        ${whoLine(it)}
         <div class="k-body">${md(it.content)}</div>
       </details>`).join("");
     })();
