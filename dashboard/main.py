@@ -704,6 +704,15 @@ def _save_stream_log(character_id: str, source: str, raw_json: str) -> None:
         pass
 
 
+def _record_contact(character_id: str, kind: str, who: str = "", via: str = "", setting_to: str = "") -> None:
+    """接点(scripts/contact.py)を 1 件残す。失敗しても会話は止めない"""
+    try:
+        import contact
+        contact.record(DATA_DIR, character_id, kind, who=who, via=via, setting_to=setting_to)
+    except Exception:
+        pass
+
+
 def _house_alert_check(result_item: dict | None, source: str, character_id: str) -> None:
     """Claude を呼べなかった(ログイン切れ・ネットワーク・エラー)ら世話人へ知らせる。直ったら 1 回知らせる。
 
@@ -1358,6 +1367,12 @@ def append_trio_log(entry: dict) -> None:
 
 
 async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False, source: str = "chat", use_session: bool = True) -> str:
+    # 接点: 人がこの子に話しかけた、を残す(中身は残さない)。欲求の「話したい」が読む(Issue #67)。
+    # 会話はログインしている人が確か。体のマイクは、だれの声かは分からないので、体の設定(CAM TO)だけ
+    if source == "chat" and username:
+        _record_contact(character_id, "talked", who=username, via="chat")
+    elif source == "mic":
+        _record_contact(character_id, "talked", setting_to=_mail_targets.get(character_id, ""), via="mic")
     # センサー/カメラ/マイクはスリムなMCP設定を使う
     _m5_sources = {"sensor", "camera", "mic"}
     char_sensor_mcp = char_dir(character_id) / "config" / "sensor-mcp.json"
