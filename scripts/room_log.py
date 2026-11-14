@@ -18,7 +18,7 @@
 
 Usage:
     python3 room_log.py record            # 読んで 1 行足す(失敗しても静かに終わる。cron 用)
-    python3 room_log.py line              # いまの 1 行(ぷちが見に行くとき。30 分以内の読みだけ)
+    python3 room_log.py line [--character <id>]   # いまの 1 行(ぷちが見に行くとき。30 分以内。--character でいる部屋の機体を先に)
     python3 room_log.py changes --character <id> [--mark]   # 前に伝えた値から大きく動いたときだけ 1 行(ぷちに渡すのはこちら)
     python3 room_log.py day --date YYYY-MM-DD   # その日のまとめ(JSON)
 """
@@ -237,8 +237,21 @@ def _hm(ts: str) -> str:
         return ""
 
 
-def line(base: Path | None = None, now: datetime | None = None) -> str:
-    """ぷちに渡す 1 行(30 分以内の読みだけ)"""
+def _my_room(base: Path | None, character_id: str | None) -> tuple[str, set[str]]:
+    """その子の体がいる部屋と、その部屋の機体の id(scripts/spots.py)。分からなければ ("", set())"""
+    if not character_id:
+        return "", set()
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import spots
+        b = spots.body_spot(base, character_id)
+        return (b["room"], set(spots.room_devices(base, b["room"]))) if b else ("", set())
+    except Exception:
+        return "", set()
+
+
+def line(base: Path | None = None, now: datetime | None = None, character_id: str | None = None) -> str:
+    """いまの 1 行(30 分以内の読みだけ)。character_id があれば、その子がいる部屋の機体を先に「いる部屋」と付けて"""
     snap = latest(base)
     if not snap:
         return ""
@@ -249,9 +262,11 @@ def line(base: Path | None = None, now: datetime | None = None) -> str:
         return ""
     if age > FRESH_MIN:
         return ""
+    my_room, mine = _my_room(base, character_id)
     air, move, power = [], [], []
-    for did, dev in snap["devices"].items():
-        name = dev.get("name", did)
+    ordered = sorted(snap["devices"].items(), key=lambda kv: kv[0] not in mine)
+    for did, dev in ordered:
+        name = dev.get("name", did) + ("(いる部屋)" if did in mine else "")
         if "temperature" in dev:
             air.append(f"{name} {dev['temperature']}℃" + (f"・{dev['humidity']}%" if "humidity" in dev else "") + (f"(明るさ {dev['light']})" if "light" in dev else ""))
         if "move" in dev:
@@ -267,7 +282,8 @@ def line(base: Path | None = None, now: datetime | None = None) -> str:
         parts.append("、".join(move))
     if power:
         parts.append("、".join(power))
-    return "家の空気: " + "。".join(parts) + f"({_hm(snap['ts'])} の読み)" if parts else ""
+    head = f"家の空気(いる部屋は {my_room}): " if my_room else "家の空気: "
+    return head + "。".join(parts) + f"({_hm(snap['ts'])} の読み)" if parts else ""
 
 
 TEMP_STEP = 2.0    # これ以上動いたら「変わった」(℃)
@@ -321,7 +337,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("record")
-    sub.add_parser("line")
+    p = sub.add_parser("line")
+    p.add_argument("--character", default=None)
     p = sub.add_parser("changes")
     p.add_argument("--character", required=True)
     p.add_argument("--mark", action="store_true")
@@ -333,7 +350,7 @@ def main() -> int:
         snap = record(base)
         print(f"[room] {len(snap['devices'])} 台を記録" if snap else "[room] 読めなかった(鍵が無い・つながらない)")
     elif a.cmd == "line":
-        text = line(base)
+        text = line(base, character_id=a.character)
         if text:
             print(text)
     elif a.cmd == "changes":

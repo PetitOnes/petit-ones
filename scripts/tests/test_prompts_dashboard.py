@@ -46,7 +46,7 @@ def test_system_prompt_matches_old_fstring():
         f"- これからの予定: `python3 {scripts_dir}/events.py list`\n"
         f"\n## 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で)\n"
         f"- きょうの空(月齢・日の出入り・二十四節気): `python3 {scripts_dir}/sky.py line`\n"
-        f"- 家の空気(気温・湿度・明るさ・人の動き・電気。10 分ごとの記録): `python3 {scripts_dir}/room_log.py line`\n"
+        f"- 家の空気(気温・湿度・明るさ・人の動き・電気。10 分ごとの記録。自分がいる部屋の機体が先): `python3 {scripts_dir}/room_log.py line --character {character_id}`\n"
         f"\n## 会話リレー\n"
         f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
         f"- 「ぷちこに話しかけて」「ぷちてゃと会話して」などと言われたら積極的に使う\n"

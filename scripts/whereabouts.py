@@ -223,7 +223,15 @@ def body(character_id: str, base: Path | None = None, now: datetime | None = Non
     if st.get("state") == "offline" or not net:
         return {"place": "", "how": "", "since": st.get("since", ""), "offline": True}
     place, how = place_of(net, load_places(base))
-    return {"place": place, "how": how, "since": net.get("since", ""), "offline": False}
+    spot = ""
+    try:   # 家の中の場所(人が ようす で決める。scripts/spots.py)。家にいるときだけ
+        import spots
+        b = spots.body_spot(base, character_id)
+        if b and place == DEFAULT_PLACES["wifi"]["1"]:
+            spot = b["label"]
+    except Exception:
+        spot = ""
+    return {"place": place, "how": how, "since": net.get("since", ""), "offline": False, "spot": spot}
 
 
 def body_line(name: str, b: dict, now: datetime, me: bool = False) -> str:
@@ -234,7 +242,7 @@ def body_line(name: str, b: dict, now: datetime, me: bool = False) -> str:
         return f"{who}: {UNSEEN}" + (f"({since})" if since else "")
     if not b.get("place"):
         return ""
-    detail = "、".join(x for x in (b.get("how", ""), since) if x)
+    detail = "、".join(x for x in (b.get("spot", ""), b.get("how", ""), since) if x)
     return f"{who}のいま: {b['place']}" + (f"({detail})" if detail else "")
 
 

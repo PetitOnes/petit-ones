@@ -77,3 +77,15 @@ def test_change_line(tmp_path):
     assert rl.change_line(tmp_path, "puchiru", now=T) == ""                     # 別の子は、まだ覚えていない(mark 無しでは覚えもしない)
     assert rl.change_line(tmp_path, "puchiko", now=T) == "家の空気が変わった: あり部屋 湿度 46% → 58%(18:20 の読み)"
     assert rl.change_line(tmp_path, "puchiko", now=datetime(2026, 11, 14, 19, 30)) == ""   # 古い読みでは言わない
+
+
+def test_line_with_my_room(tmp_path):
+    import spots as sp
+    rows = [{"ts": "2026-11-14T18:20:00", "devices": {"h2": {"name": "あり部屋のハブ２", "type": "Hub 2", "temperature": 23.9, "humidity": 43},
+                                                      "e3": {"name": "寝室の温湿度計", "type": "Meter", "temperature": 20.0, "humidity": 50}}}]
+    rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
+    (rd / "latest.json").write_text(json.dumps(rows[-1], ensure_ascii=False), encoding="utf-8")
+    items = sp.save([{"room": "寝室", "spot": "窓際", "devices": ["e3"]}], tmp_path)
+    sp.set_body_spot(tmp_path, "puchiru", items[0]["id"])
+    assert rl.line(tmp_path, T, "puchiru") == "家の空気(いる部屋は 寝室): 寝室の温湿度計(いる部屋) 20.0℃・50%、あり部屋のハブ２ 23.9℃・43%(18:20 の読み)"
+    assert rl.line(tmp_path, T, "puchiko").startswith("家の空気: あり部屋のハブ２ 23.9℃")   # 場所を決めていない子は、いつもの順

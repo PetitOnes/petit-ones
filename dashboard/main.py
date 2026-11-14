@@ -2360,6 +2360,51 @@ def _room_change_text(character_id: str) -> str:
         return ""
 
 
+def _spots():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import spots
+    return spots
+
+
+class SpotsBody(BaseModel):
+    spots: list[dict]
+
+
+class BodySpotBody(BaseModel):
+    spot_id: str | None = None
+
+
+@app.get("/api/spots")
+def api_spots():
+    """家の中の場所と、各ぷちの体がどこにいるか(ようす のカード・設定ページ)"""
+    sp = _spots()
+    bodies = {}
+    for c in list_characters():
+        b = sp.body_spot(DATA_DIR, c["id"])
+        if b:
+            bodies[c["id"]] = {"spot_id": b["id"], "label": b["label"], "since": b["since"]}
+    return {"spots": sp.load(DATA_DIR), "bodies": bodies}
+
+
+@app.post("/api/spots")
+def api_spots_set(body: SpotsBody):
+    try:
+        return {"spots": _spots().save(body.spots, DATA_DIR)}
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/{character_id}/spot")
+def api_body_spot(character_id: str, body: BodySpotBody, request: Request):
+    try:
+        d = _spots().set_body_spot(DATA_DIR, character_id, body.spot_id, _get_username(request) or "arisan")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"spot": d}
+
+
 def _sky():
     scripts_dir = str(PROJECT_DIR / "scripts")
     if scripts_dir not in sys.path:
@@ -2622,7 +2667,7 @@ def _whereabouts_view(d: dict, me: str) -> dict:
     for cid, name in wa.characters(DATA_DIR):
         b = wa.body(cid, DATA_DIR)
         if b:
-            bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"])}
+            bodies[cid] = {**b, "name": name, "text": ("見えない" if b["offline"] else b["place"] + (f"({b['spot']})" if b.get("spot") else ""))}
     mine = d["users"].get(me, {})
     # 候補(自室・お外・会社)は、人ごとに決められる(⚙️ 設定 → 🏠 家 → 📍 わたしのいま)
     return {"users": users, "bodies": bodies, "choices": wa.choices(d, _load_ui_settings(me).get("now_presets")), "me": me,
@@ -8613,6 +8658,9 @@ HTML = """<!DOCTYPE html>
                  border:1.5px solid ${off ? "#ececec" : (c.color || "#cab8d9")};background:${off ? "#f4f4f4" : "#fff"};color:${off ? "#bdbdbd" : "#444"};cursor:${off ? "default" : "pointer"};">${label}</button>`;
       const sleep = b.sleeping == null ? "" : row("💤 ねむり", "体を眠らせる(画面を消す)・起こす。体を 3 回触っても起きる", b.sleeping ? "いま 眠っている" : "いま 起きている",
         act("false", "☀️ おこす", !b.sleeping) + act("true", "🌙 ねかす", b.sleeping));
+      // いる場所(家の中のどこか。人が決める。⚙️ 設定 → 家 → 家の中の場所。2026-11-14 ありさん)
+      const spotBtns = (b.spots || []).map(s => btn("spot", s.id, s.spot ? `${s.room}:${s.spot}` : s.room, s.id === b.spot)).join("") + btn("spot", "", "—", !b.spot);
+      const spot = !(b.spots || []).length ? "" : row("📍 いる場所", "家の中のどこに置かれているか(人が決める)。📍 の体の居場所と、家の空気の「いる部屋」に使う", "", `<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">${spotBtns}</div>`);
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
@@ -8621,19 +8669,25 @@ HTML = """<!DOCTYPE html>
         <div style="display:flex;align-items:center;gap:8px;"><span style="width:10px;height:10px;border-radius:50%;background:${color};flex-shrink:0;"></span>
           <span style="font-weight:700;color:${readableText(color)};">${safe(c.name || c.id)}</span>
           <span data-bodymsg="${c.id}" style="font-size:0.75rem;color:#f44336;"></span></div>
-        ${sleep}${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
+        ${sleep}${spot}${pick("brightness", b.brightness)}${pick("volume", b.volume)}${psave}${who}</div>`;
     }
     // 押したら体に伝えて、体のいまの値でその子の分を描き直す。うまくいかなかったら知らせる
     document.addEventListener("click", async e => {
       const el = e.target.closest("button[data-body][data-key]");
       if (!el) return;
       const id = el.dataset.body, key = el.dataset.key, raw = el.dataset.value;
-      const value = key === "power_save" || key === "sleeping" ? raw === "true" : key === "cam_to" ? raw : Number(raw);
+      const value = key === "power_save" || key === "sleeping" ? raw === "true" : key === "cam_to" || key === "spot" ? raw : Number(raw);
       const card = document.querySelector(`[data-bodycard="${id}"]`);
       const msg = document.querySelector(`[data-bodymsg="${id}"]`);
       if (msg) msg.textContent = "";
       card.querySelectorAll("button").forEach(x => { x.disabled = true; });
       try {
+        if (key === "spot") {   // いる場所 は家の記録(体には何も送らない)
+          const r = await fetch(`/api/${id}/spot`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({spot_id: value || null})});
+          if (!r.ok) throw new Error("決められませんでした");
+          card.innerHTML = bodySettingsHtml(_bodyChars[id], {..._bodyLast[id], spot: value || null});
+          return;
+        }
         if (key === "sleeping") {   // 眠らせる・起こす は体の /sleep /wake。ほかの値はそのまま
           const r = await fetch(`/api/${id}/m5/${value ? "sleep" : "wake"}`, {method: "POST"});
           if (!r.ok) throw new Error("変えられませんでした");
@@ -8668,6 +8722,8 @@ HTML = """<!DOCTYPE html>
       try { allChars = await (await fetch("/api/characters/all")).json(); } catch { allChars = characters; }
       if (!allChars.length) { panel.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
       const bodyCards = {};
+      let spotsInfo = {spots: [], bodies: {}};   // 家の中の場所と、各体がどこにいるか
+      try { spotsInfo = await (await fetch("/api/spots")).json(); } catch (e) {}
       const rows = await Promise.all(allChars.map(async c => {
         try {
           // 体につながっているか と、電池(体の /sensors にある battery % と voltage mV)を同時に聞く
@@ -8700,7 +8756,7 @@ HTML = """<!DOCTYPE html>
           const ip = m5_online && addr ? `<span style="flex:0 0 100%;white-space:nowrap;" title="体のアドレス(Wi-Fi)">📡 ${addr}${ts}</span>` : "";
           // 体の設定(明るさ・音量・お出かけ・CAM TO)は、下の「からだの設定」のカードに出す
           const mine = characters.some(x => x.id === c.id && !x.chat_only);   // 子でない子(話すだけの子も)は、設定を変えられない
-          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, {...body, sleeping: !!m5_sleeping}) : "";
+          bodyCards[c.id] = mine && canDo("body") && m5_online && body.online ? bodySettingsHtml(c, {...body, sleeping: !!m5_sleeping, spots: spotsInfo.spots || [], spot: (spotsInfo.bodies[c.id] || {}).spot_id || null}) : "";
           // 1 段目: 名前と、体につながっているか。2 段目: 起きているか・電池。3 段目: アドレス(スマホ幅でも子ごとに位置がずれないように)
           return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;padding:8px 0;border-bottom:1px solid #f0f0f0;">
             <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
