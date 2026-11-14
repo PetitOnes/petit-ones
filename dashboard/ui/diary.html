@@ -189,7 +189,7 @@
       if (!openDate && document.getElementById("moreBtn").style.display !== "none" && window.innerHeight + window.scrollY > document.documentElement.scrollHeight - 400) loadMore();
     }, { passive: true });
 
-    charSelect(document.getElementById("charSelect"), start).then(id => {
+    charSelect(document.getElementById("charSelect"), start, "/api/viewable?kind=diary").then(id => {   // 子と、見てよいと決めてもらった子
       start(id);
       const date = q.get("date");   // ぷちログの「📖 日記」から来たとき
       if (/^\d{4}-\d{2}-\d{2}$/.test(date || "")) openDay(date);

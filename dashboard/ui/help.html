@@ -51,6 +51,7 @@
         const c = [...el.childNodes].find(n => n.nodeType === 8 && n.data.startsWith("id:"));
         if (c) { el.id = c.data.slice(3); c.remove(); }
       }
+      trim(box);
       body.textContent = ""; sections = [];
       let sec = null;
       for (const node of [...box.childNodes]) {
@@ -59,6 +60,38 @@
       }
       document.getElementById("toc").innerHTML = sections.map(s => `<a class="a-pill" href="#${esc(s.id)}">${esc(s.querySelector("h2").textContent)}</a>`).join("");
       if (location.hash) jump();
+    }
+    // 見られる子が決まっている人には、できないこと・見せないページの行を出さない(/api/me の can・hide_tools・chat)。
+    // 行の頭の太字(「**アクティブタイム**: …」の アクティブタイム)で見分ける。本文(help.md)に印は付けていない
+    let me = {};
+    const TOOL_WORDS = {petitlog: "ぷちログ", diary: "日記", album: "アルバム", voice: "ボイスメモ", notes: "ノート", notebook: "交換日記", anniv: "記念日",
+      desires: "欲求", sounds: "音", kairanban: "回覧板", library: "ライブラリ", kankei: "ひみつ", monitor: "モニタ", terminal: "ターミナル", logs: "行動ログ", costs: "おかね", yousu: "ようす"};
+    const CANNOT_LINES = [   // [できないこと, 行の頭の言葉, (あれば)その節だけ]
+      ["rest", /からだ おやすみ/], ["body", /ようす → からだの設定|WHO|PSAVE|明るさ|音量/, "puchi-body"],
+      ["schedule", /アクティブタイム|1 日に動く予定|今日のスケジュール/, "settings"], ["autonomous", /自律行動の頻度/, "settings"],
+      ["switches", /からだの使い方/, "settings"], ["advanced", /最大ターン数|くわしい設定/, "settings"], ["hello", /ここにいるよ/],
+    ];
+    function trim(box) {
+      if (!me.limited) return;
+      const cannot = k => me.can && me.can[k] === false;
+      const hidden = new Set(me.hide_tools || []);
+      const solo = (me.chat || []).length < 2;   // 話せる子が 1 人だけなら、みんな・だれか の話は要らない
+      let section = "";
+      for (const el of [...box.querySelectorAll("h2, li")]) {
+        if (el.nodeName === "H2") { section = el.id || ""; continue; }
+        if (!el.isConnected && !box.contains(el)) continue;
+        const strong = el.querySelector(":scope > strong, :scope > p > strong");
+        const lead = strong ? strong.textContent : "";
+        if (CANNOT_LINES.some(([k, re, only]) => cannot(k) && re.test(lead) && (!only || section === only))) { el.remove(); continue; }
+        if (solo && /みんなに聞く|べつべつに聞く|だれかに聞く/.test(lead)) { el.remove(); continue; }
+        // 道具の名前が並んだ行(「🖼️ アルバム / 🎤 ボイスメモ / …」): 見せない道具を抜く。全部なくなったら行ごと
+        const parts = lead.split(" / ");
+        const toolOf = t => Object.keys(TOOL_WORDS).find(id => t.replace(/^[^\p{L}]+/u, "").trim() === TOOL_WORDS[id]);
+        if (strong && parts.every(toolOf)) {
+          const keep = parts.filter(t => !hidden.has(toolOf(t)));
+          if (!keep.length) el.remove(); else strong.textContent = keep.join(" / ");
+        }
+      }
     }
     function jump() {
       const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -79,7 +112,8 @@
       }
       document.getElementById("empty").style.display = n ? "none" : "";
     });
-    fetch("/help.md").then(r => r.text()).then(build).catch(() => { body.textContent = "読めなかった"; });
+    fetch("/api/me").then(r => r.json()).then(m => { me = m || {}; }).catch(() => {})
+      .then(() => fetch("/help.md")).then(r => r.text()).then(build).catch(() => { body.textContent = "読めなかった"; });
   </script>
 </body>
 </html>
