@@ -14,6 +14,8 @@
 届いたか・読まれたかは、メールボックスから分かる。回覧板は同じ本文の手紙としてぷちに届くので、
 その号と同じ本文の手紙(ぷち以外から、その子あて、号の日付の 2 日前〜7 日後)を探し、
 mailbox/.metadata.json の read_by にその子がいれば「読んだ」。届いた手紙があれば、号の日時はその手紙の時刻。
+
+届けるのは send()(ダッシュボードの「届ける」)。まだ届いていない子のメールボックスに、号の本文をそのまま手紙として置く。
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ _ISSUE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:_(\d{2})(\d{2})(?=_|\.))?_?(.*)\.md
 _MAIL = re.compile(r"^from_(.+)_to_(.+?)_(\d{8})_(\d{4})")
 _PROBE = 60          # 本文を見比べる 1 か所の長さ(空白を除いた字数)
 _BEFORE, _AFTER = 2, 7   # 号の日付の何日前〜何日後の手紙を探すか
+_ID = re.compile(r"^[a-zA-Z0-9_]+$")
 
 
 def data_dir() -> Path:
@@ -106,15 +109,52 @@ def _delivery(base: Path, text: str, day: datetime, index: list[tuple[str, str, 
     return out
 
 
+def _read_by(base: Path) -> dict:
+    try:
+        mails = json.loads((base / "mailbox" / ".metadata.json").read_text(encoding="utf-8")).get("mails", {})
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return {}
+    return mails if isinstance(mails, dict) else {}
+
+
+def send(base: Path, filename: str, sender: str, petits: list[str], now: datetime | None = None) -> list[str]:
+    """その号を、まだ届いていない子へ手紙として届ける。届けた子の id を返す(みんな届いていれば [])。
+
+    届けられるのは、号の日付の _BEFORE 日前から _AFTER 日後まで(それより外の手紙は、その号のものと数えないため)
+    """
+    info = parse_name(Path(filename).name)
+    f = issues_dir(base) / Path(filename).name
+    if info is None or Path(filename).name != filename or not f.is_file():
+        raise ValueError("その号はありません")
+    if not _ID.match(sender or ""):
+        raise ValueError("差出人の名前がおかしい")
+    text = f.read_text(encoding="utf-8")
+    if not _probes(text):
+        raise ValueError("本文が短すぎて、届けたあとに見分けられません")
+    now = now or datetime.now()
+    day = datetime.strptime(info["date"], "%Y-%m-%d")
+    if not day - timedelta(days=_BEFORE) <= now < day + timedelta(days=_AFTER + 1):
+        raise ValueError(f"届けられるのは、号の日付の {_BEFORE} 日前から {_AFTER} 日後まで。名前の日付を直してください")
+    got = _delivery(base, text, day, _mail_index(base, petits), _read_by(base))
+    box = base / "mailbox"
+    box.mkdir(parents=True, exist_ok=True)
+    sent = []
+    for p in petits:
+        if p in got or not _ID.match(p):
+            continue
+        stem = f"from_{sender}_to_{p}_{now.strftime('%Y%m%d_%H%M')}"
+        target = next(t for t in [box / f"{stem}.md", *(box / f"{stem}_{i}.md" for i in range(2, 100))] if not t.exists())
+        target.write_text(text, encoding="utf-8")
+        sent.append(p)
+    return sent
+
+
 def list_issues(base: Path, petits: list[str]) -> list[dict]:
     """回覧板の一覧(新しい順)。readers は petits の順に {"id", "state": read / unread / none}"""
     folder = issues_dir(base)
     if not folder.is_dir():
         return []
-    try:
-        mails = json.loads((base / "mailbox" / ".metadata.json").read_text(encoding="utf-8")).get("mails", {})
-    except (OSError, json.JSONDecodeError, AttributeError):
-        mails = {}
+    mails = _read_by(base)
     index = _mail_index(base, petits)
     items = []
     for f in sorted(folder.glob("*.md"), reverse=True):
@@ -125,7 +165,7 @@ def list_issues(base: Path, petits: list[str]) -> list[dict]:
             text = f.read_text(encoding="utf-8")
         except OSError:
             continue
-        got = _delivery(base, text, datetime.strptime(info["date"], "%Y-%m-%d"), index, mails if isinstance(mails, dict) else {})
+        got = _delivery(base, text, datetime.strptime(info["date"], "%Y-%m-%d"), index, mails)
         first = min((g["at"] for g in got.values()), default=None)
         items.append({
             "filename": f.name,

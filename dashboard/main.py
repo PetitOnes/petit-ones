@@ -3200,9 +3200,6 @@ def notes_page():
 
 
 # ---- 回覧板(ぷちたちへの知らせ。PETIT_DATA_DIR/kairanban/<yyyy-mm-dd>_<hhmm>_<話題>.md) ----
-KAIRANBAN_DIR = Path(os.environ.get("PETIT_KAIRANBAN_DIR", str(DATA_DIR / "kairanban")))
-
-
 def _kairanban():
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import kairanban
@@ -3213,6 +3210,24 @@ def _kairanban():
 def api_kairanban():
     """回覧板の一覧(新しい順)。README と drafts/ は出さない。届いた日時と、ぷちごとの既読も(scripts/kairanban.py)"""
     return _kairanban().list_issues(DATA_DIR, [c["id"] for c in list_characters()])
+
+
+class KairanbanSendBody(BaseModel):
+    filename: str
+
+
+@app.post("/api/kairanban/send")
+def api_kairanban_send(body: KairanbanSendBody, request: Request):
+    """その号を、まだ届いていないぷちへ手紙として届ける(差出人は、押した人)。見られる子が決まっている人は届けられない"""
+    if _is_limited(request):
+        return JSONResponse({"error": "回覧板を届けられるのは、家の世話人だけです"}, status_code=403)
+    kb = _kairanban()
+    petits = [c["id"] for c in list_characters()]
+    try:
+        sent = kb.send(DATA_DIR, body.filename, _get_username(request) or "arisan", petits)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"sent": sent, "items": kb.list_issues(DATA_DIR, petits)}
 
 
 @app.get("/kairanban", response_class=HTMLResponse)
