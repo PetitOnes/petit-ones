@@ -213,6 +213,12 @@ def test_display_and_diary_prompts():
         "この日を自分の口調で2〜3文の日記にまとめて。余計な前置きなしで日記の文章だけ書いて。"
     ).replace("puchiko です", "puchikoです")
     assert P("diary", character_id="puchiko", soul=soul, date=date, lines=lines).rstrip("\n") == old
+    # ぷちログの出来事があるときだけ、その段落と「織り込んで」の一言が入る
+    events = "- 15:31 ありさんに持ち上げられた\n- 17:39〜17:55 ありさんと話した(4 回)"
+    with_events = P("diary", character_id="puchiko", soul=soul, date=date, lines=lines, events=events)
+    assert f"{lines}\n\n{date}に体に起きたこと・会話・ひとりの時間(ぷちログから):\n{events}\n\nこの日を" in with_events
+    assert "織り込んで。余計な前置き" in with_events
+    assert P("diary", character_id="puchiko", soul=soul, date=date, lines=lines, events="") .rstrip("\n") == old
 
 
 def test_display_char_info_json_loads():
