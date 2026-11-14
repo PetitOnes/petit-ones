@@ -8,10 +8,12 @@
 
     20261114_223700.mp4    # 本体(H.264 + AAC、長いほうの辺 LONG_SIDE まで、MAX_SECONDS 秒で切る)
     20261114_223700.jpg    # 一覧に出す 1 枚
-    .meta.json             # {"20261114_223700": {"title": "ひとこと"}}
+    .meta.json             # {"20261114_223700": {"title": "ひとこと", "locked": true}}
 
 - 取り込むとき、どんな動画でも上の形に変換する(ffmpeg)。長く撮っても、はじめの MAX_SECONDS 秒だけ残る
 - 名前は撮った時刻。同じ秒に 2 本あれば _2 を付ける
+- 残せるのは 1 人 MAX_PER_USER 本まで。それを超えたら、鍵をかけていない古いものから消える。鍵をかけたものは消えない
+  (ぜんぶ鍵つきでいっぱいのときは、新しく撮れない。鍵を外すか、消してから)
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ MAX_SECONDS = 10
 LONG_SIDE = 480                       # 長いほうの辺(px)
 MAX_UPLOAD_BYTES = 300 * 1024 * 1024  # スマホの元の動画は大きい(変換して 1MB 前後になる)
 TITLE_MAX = 30
+MAX_PER_USER = 10                     # 1 人が残せる本数(鍵つきも数える)
 _ID = re.compile(r"^\d{8}_\d{6}(_\d+)?$")
 _USER = re.compile(r"^[a-zA-Z0-9_]+$")
 
@@ -96,14 +99,45 @@ def clean_title(title: str) -> str:
     return " ".join(str(title or "").split())[:TITLE_MAX]
 
 
+def _ids(d: Path) -> list[str]:
+    """その人の動画メモの id(古い順)"""
+    return sorted(f.stem for f in d.glob("*.mp4") if is_id(f.stem)) if d.is_dir() else []
+
+
+def _locked(meta: dict, memo_id: str) -> bool:
+    info = meta.get(memo_id)
+    return isinstance(info, dict) and info.get("locked") is True
+
+
+def prune(base: Path, user: str) -> list[str]:
+    """MAX_PER_USER 本を超えた分を、鍵をかけていない古いものから消す。消した id を返す"""
+    d = user_dir(base, user)
+    meta = _meta(d)
+    ids, gone = _ids(d), []
+    while len(ids) > MAX_PER_USER:
+        victim = next((i for i in ids if not _locked(meta, i)), None)
+        if victim is None:
+            break
+        (d / f"{victim}.mp4").unlink(missing_ok=True)
+        (d / f"{victim}.jpg").unlink(missing_ok=True)
+        ids.remove(victim)
+        gone.append(victim)
+    if any(meta.pop(i, None) is not None for i in gone):
+        _save_meta(d, meta)
+    return gone
+
+
 def save(base: Path, user: str, raw: bytes, suffix: str = "", title: str = "", now: datetime | None = None) -> dict:
-    """動画を変換して、その人のメモに置く"""
+    """動画を変換して、その人のメモに置く。いっぱいなら、鍵のない古いものが消える(消えた id は "pruned")"""
     if not raw:
         raise VideoError("ファイルが空です")
     if len(raw) > MAX_UPLOAD_BYTES:
         raise VideoError(f"ファイルが大きすぎます({MAX_UPLOAD_BYTES // 1024 // 1024} MB まで)")
     d = user_dir(base, user)
     d.mkdir(parents=True, exist_ok=True)
+    before = _ids(d)
+    if len(before) >= MAX_PER_USER and all(_locked(_meta(d), i) for i in before):
+        raise VideoError(f"鍵をかけた動画メモでいっぱいです({MAX_PER_USER} 本)。どれかの鍵を外すか、消してから撮ってください")
     stem = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
     memo_id = next(i for i in [stem, *(f"{stem}_{n}" for n in range(2, 100))] if not (d / f"{i}.mp4").exists())
     with tempfile.TemporaryDirectory() as tmp:
@@ -120,7 +154,26 @@ def save(base: Path, user: str, raw: bytes, suffix: str = "", title: str = "", n
         meta = _meta(d)
         meta[memo_id] = {"title": title}
         _save_meta(d, meta)
-    return _row(d, user, memo_id, _meta(d))
+    return {**_row(d, user, memo_id, _meta(d)), "pruned": prune(base, user)}
+
+
+def set_lock(base: Path, user: str, memo_id: str, locked: bool) -> bool:
+    """鍵をかける・外す。その動画メモが無ければ False"""
+    p = path_of(base, user, memo_id)
+    if p is None:
+        return False
+    meta = _meta(p.parent)
+    info = meta.get(memo_id) if isinstance(meta.get(memo_id), dict) else {}
+    if locked:
+        info["locked"] = True
+    else:
+        info.pop("locked", None)
+    if info:
+        meta[memo_id] = info
+    else:
+        meta.pop(memo_id, None)
+    _save_meta(p.parent, meta)
+    return True
 
 
 def _row(d: Path, user: str, memo_id: str, meta: dict) -> dict:
@@ -128,7 +181,7 @@ def _row(d: Path, user: str, memo_id: str, meta: dict) -> dict:
     info = meta.get(memo_id) if isinstance(meta.get(memo_id), dict) else {}
     ts = datetime.strptime(memo_id[:15], "%Y%m%d_%H%M%S")
     return {"id": memo_id, "user": user, "ts": ts.isoformat(), "title": str(info.get("title") or ""),
-            "seconds": seconds_of(f), "bytes": f.stat().st_size}
+            "seconds": seconds_of(f), "bytes": f.stat().st_size, "locked": info.get("locked") is True}
 
 
 def list_all(base: Path) -> list[dict]:
@@ -154,9 +207,12 @@ def path_of(base: Path, user: str, memo_id: str, kind: str = "mp4") -> Path | No
 
 
 def delete(base: Path, user: str, memo_id: str) -> bool:
+    """消す。鍵つきは消さない(VideoError。先に鍵を外す)"""
     p = path_of(base, user, memo_id)
     if p is None:
         return False
+    if _locked(_meta(p.parent), memo_id):
+        raise VideoError("鍵がかかっています。消すなら、先に鍵を外してください")
     p.unlink()
     p.with_suffix(".jpg").unlink(missing_ok=True)
     meta = _meta(p.parent)

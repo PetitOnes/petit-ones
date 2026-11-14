@@ -3186,7 +3186,7 @@ def api_video_memo(request: Request):
     items = [{**r, "name": _user_label(r["user"]), "color": _person_color(r["user"]), "mine": r["user"] == me} for r in vm.list_all(DATA_DIR)]
     # 人ごとに見られるように、家の人の一覧も(自分を先に。まだ 1 本も撮っていない人も入る)
     people = [{"id": u, "name": _user_label(u), "color": _person_color(u)} for u in sorted(_USER_DISPLAY, key=lambda u: u != me)]
-    return {"items": items, "max_seconds": vm.MAX_SECONDS, "me": me, "people": people}
+    return {"items": items, "max_seconds": vm.MAX_SECONDS, "max_per_user": vm.MAX_PER_USER, "me": me, "people": people}
 
 
 @app.post("/api/video_memo/upload")
@@ -3217,9 +3217,28 @@ def api_video_memo_delete(user: str, memo_id: str, request: Request):
     """動画メモを消す(自分が撮ったものだけ)"""
     if user != (_get_username(request) or OWNER_USER):
         return JSONResponse({"error": "消せるのは、自分が撮ったものだけです"}, status_code=403)
-    if not _video_memo().delete(DATA_DIR, user, memo_id):
+    vm = _video_memo()
+    try:
+        found = vm.delete(DATA_DIR, user, memo_id)
+    except vm.VideoError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    if not found:
         return JSONResponse({"error": "その動画メモはありません"}, status_code=404)
     return {"ok": True}
+
+
+class VideoMemoLockBody(BaseModel):
+    locked: bool
+
+
+@app.post("/api/video_memo/{user}/{memo_id}/lock")
+def api_video_memo_lock(user: str, memo_id: str, body: VideoMemoLockBody, request: Request):
+    """鍵をかける・外す(自分が撮ったものだけ)。鍵つきは、いっぱいになっても消えない"""
+    if user != (_get_username(request) or OWNER_USER):
+        return JSONResponse({"error": "鍵をかけられるのは、自分が撮ったものだけです"}, status_code=403)
+    if not _video_memo().set_lock(DATA_DIR, user, memo_id, body.locked):
+        return JSONResponse({"error": "その動画メモはありません"}, status_code=404)
+    return {"ok": True, "locked": body.locked}
 
 
 @app.get("/sounds", response_class=HTMLResponse)

@@ -63,3 +63,28 @@ def test_names():
     assert not vm.is_id("../x") and not vm.is_id("20261114") and not vm.is_id("")
     assert vm.path_of(Path("/nowhere"), "ari", "../../etc/passwd") is None and vm.path_of(Path("/nowhere"), "a/b", "20261114_224005") is None
     assert vm.clean_title("あ" * 40) == "あ" * 30
+
+
+@needs_ffmpeg
+def test_keeps_ten_and_locked_ones_stay(tmp_path):
+    clip = _clip(tmp_path, 1, "160x120")
+    ids = [vm.save(tmp_path, "ari", clip, ".mp4", "", datetime(2026, 11, 14, 22, 0, n))["id"] for n in range(10)]
+    assert vm.set_lock(tmp_path, "ari", ids[0], True) and vm.list_all(tmp_path)[-1]["locked"] is True
+    # 11 本目: 鍵のない、いちばん古いもの(2 本目)が消える。鍵つきの 1 本目は残る
+    row = vm.save(tmp_path, "ari", clip, ".mp4", "", datetime(2026, 11, 14, 22, 1, 0))
+    assert row["pruned"] == [ids[1]] and vm.path_of(tmp_path, "ari", ids[1], "jpg") is None
+    left = [r["id"] for r in vm.list_all(tmp_path)]
+    assert len(left) == 10 and ids[0] in left and ids[1] not in left
+    # 鍵つきは消せない。外せば消せる
+    with pytest.raises(vm.VideoError):
+        vm.delete(tmp_path, "ari", ids[0])
+    # ぜんぶ鍵つきでいっぱいなら、新しく撮れない(何も消えない)
+    for i in left:
+        vm.set_lock(tmp_path, "ari", i, True)
+    with pytest.raises(vm.VideoError):
+        vm.save(tmp_path, "ari", clip, ".mp4", "", datetime(2026, 11, 14, 22, 2, 0))
+    assert len(vm.list_all(tmp_path)) == 10
+    assert vm.set_lock(tmp_path, "ari", ids[0], False) and vm.delete(tmp_path, "ari", ids[0]) is True
+    # ほかの人の本数は別
+    assert vm.save(tmp_path, "kaze", clip, ".mp4", "", datetime(2026, 11, 14, 22, 3, 0))["pruned"] == []
+    assert vm.set_lock(tmp_path, "ari", "20200101_000000", True) is False
