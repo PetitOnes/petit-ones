@@ -5713,7 +5713,7 @@ class UiSettings(BaseModel):
     topbar_saved: str | None = None   # 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、この色に戻せる
     hello_to: list[str] | None = None   # 📍 の「ここにいるよ」が届く子。空・null なら、みんな(自分が送ってよい子ぜんぶ)
     rest_to: list[str] | None = None    # 📍 の「からだ おやすみ」が効く子。空・null なら、みんな
-    now_presets: list[str] | None = None   # 📍 わたしのいま の候補(3 つまで、5 字まで)。空・null なら、はじめの候補(自室・お外・会社)
+    now_presets: list[str] | None = None   # 📍 わたしのいま の候補(4 つまで、5 字まで)。空・null なら、はじめの候補(自室・お外・会社)
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
     tools: list[dict] | None = None   # 道具の列: [{"id": "album", "show": true, "off": false}, …] の順。show=false は「ほか」の中、off=true は出さない

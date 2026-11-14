@@ -121,7 +121,7 @@ def set_status(user: str, text: str, base: Path | None = None, now: datetime | N
     return d
 
 
-PRESET_MAX = 3       # 自分で決める候補の数
+PRESET_MAX = 4       # 自分で決める候補の数(3 つでは足りなかった。2026-11-14)
 PRESET_MAX_LEN = 5   # 候補 1 つの長さ(「リビング」が入る長さ)
 
 

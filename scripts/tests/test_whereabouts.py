@@ -102,6 +102,6 @@ def test_own_presets_replace_the_first_ones(tmp_path):
 
 
 def test_clean_presets():
-    assert wa.clean_presets([" 寝室 ", "寝室", "", "とても長い名前の部屋", "台所", "庭"]) == ["寝室", "とても長い", "台所"]
+    assert wa.clean_presets([" 寝室 ", "寝室", "", "とても長い名前の部屋", "台所", "庭", "駅"]) == ["寝室", "とても長い", "台所", "庭"]
     assert wa.clean_presets(None) == []
     assert wa.clean_presets("自室") == []
