@@ -2504,14 +2504,19 @@ def api_calendar(month: str):
         return JSONResponse({"error": "month は 2026-11 の形で"}, status_code=400)
     an, ev = _anniv(), _events()
     an_items, ev_items = an.load(DATA_DIR), ev.load(DATA_DIR)
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import jp_holidays
     start = first - timedelta(days=(first.weekday() + 1) % 7)   # 日曜はじまり
     days = {}
     for i in range(42):
         d = start + timedelta(days=i)
         a_rows = [{**next(it for it in an_items if it["id"] == x["id"]), "label": x["label"]} for x in an.on_day(an_items, d)]
         e_rows = [_event_view(it) for it in ev.on_day(ev_items, d)]
-        if a_rows or e_rows:
-            days[d.isoformat()] = {"anniv": a_rows, "events": e_rows}
+        holiday = jp_holidays.name_of(d)   # 日本の祝日(scripts/jp_holidays.py)。カレンダーに 🎌 で出す
+        if a_rows or e_rows or holiday:
+            days[d.isoformat()] = {"anniv": a_rows, "events": e_rows, "holiday": holiday}
     return {"month": f"{y:04d}-{m:02d}", "days": days, "weeks": len(_cal.monthcalendar(y, m))}
 
 

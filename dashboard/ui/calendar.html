@@ -24,7 +24,8 @@
     .c-day.today { border-color: var(--ui-accent-line); }
     .c-day.sel { background: var(--ui-accent-soft); border-color: var(--ui-accent); }
     .c-day .n { font-size: 0.85rem; font-weight: 700; color: var(--ui-text); }
-    .c-day.sun .n { color: #d9534f; } .c-day.sat .n { color: #4a7abf; }
+    .c-day.sun .n, .c-day.hol .n { color: #d9534f; } .c-day.sat .n { color: #4a7abf; }
+    .c-day .m.hol { color: #d9534f; }
     .c-day .m { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ui-text-sub); }
     .c-list { margin-top: 12px; }
     .c-item { display: flex; align-items: flex-start; gap: 8px; padding: 10px 0; border-bottom: 1px solid var(--ui-line-soft); }
@@ -126,9 +127,9 @@
       for (let i = 0; i < 42; i++) {
         const d = new Date(start); d.setDate(start.getDate() + i);
         const k = iso(d), info = month.days[k] || {anniv: [], events: []};
-        const marks = info.events.map(e => `📅 ${esc(e.title)}`).concat(info.anniv.map(a => `🎂 ${esc(a.label)}`));
-        const cls = ["c-day", d.getMonth() !== m - 1 ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
-        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${d.getDate()}</span>${marks.slice(0, 2).map(t => `<span class="m">${t}</span>`).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
+        const marks = (info.holiday ? [`<span class="m hol">🎌 ${esc(info.holiday)}</span>`] : []).concat(info.events.map(e => `<span class="m">📅 ${esc(e.title)}</span>`), info.anniv.map(a => `<span class="m">🎂 ${esc(a.label)}</span>`));
+        const cls = ["c-day", d.getMonth() !== m - 1 ? "other" : "", k === today ? "today" : "", k === sel ? "sel" : "", info.holiday ? "hol" : "", d.getDay() === 0 ? "sun" : d.getDay() === 6 ? "sat" : ""].filter(Boolean).join(" ");
+        html += `<button class="${cls}" onclick="pick('${k}')"><span class="n">${d.getDate()}</span>${marks.slice(0, 2).join("")}${marks.length > 2 ? `<span class="m">＋${marks.length - 2}</span>` : ""}</button>`;
       }
       document.getElementById("grid").innerHTML = html;
     }
@@ -139,7 +140,8 @@
     }
     function renderDay() {
       const d = new Date(sel + "T00:00:00");
-      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}`;
+      const hol = (month.days[sel] || {}).holiday;
+      document.getElementById("dayTitle").textContent = `${d.getMonth() + 1}/${d.getDate()}(${WD[d.getDay()]})${sel === today ? " きょう" : ""}${hol ? ` 🎌 ${hol}` : ""}`;
       document.getElementById("addBtns").style.display = canEdit() ? "" : "none";
       const info = month.days[sel] || {anniv: [], events: []};
       const ev = info.events.map(e => {
