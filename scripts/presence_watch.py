@@ -212,6 +212,8 @@ def line(base: Path, now: datetime | None = None) -> str:
         elif last is not None:
             day = "" if last.date() == now.date() else f"{last.month}/{last.day} "
             rows.append(f"{place}のあたり: いまは動きがない(最後は {day}{last.strftime('%-H:%M')})")
+    if any("動きがない" in r for r in rows):   # 但し書き(2026-11-14 ありさん): 座りっぱなしだと「動きがない」のまま
+        rows.append("人感は、座ったまま動かないと更新されない(動きなし = いない、ではない)")
     return "\n".join(rows)
 
 

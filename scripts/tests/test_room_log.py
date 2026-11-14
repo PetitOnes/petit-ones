@@ -36,7 +36,7 @@ def test_summary_and_line(tmp_path):
     s = rl.day_summary(tmp_path, "2026-11-14")
     assert s["reads"] == 2 and s["devices"]["h2"]["temperature_min"] == 23.0 and s["devices"]["h2"]["temperature_max"] == 24.1
     assert s["devices"]["m1"]["moves"] == 1 and s["devices"]["b1"]["on"] == 1
-    assert rl.line(tmp_path, T) == "家の空気: あり部屋 24.1℃・44%(明るさ 9)。ありさん机の動き: なし(最後は 18:05)。あり部屋の電気 オフ(18:20 の読み)"
+    assert rl.line(tmp_path, T) == "家の空気: あり部屋 24.1℃・44%(明るさ 9)。ありさん机の動き: なし(最後は 18:05)。人感は、座ったまま動かないと更新されない(動きなし = いない、ではない)。あり部屋の電気 オフ(18:20 の読み)"
     assert rl.line(tmp_path, datetime(2026, 11, 14, 19, 0)) == ""   # 30 分より古い読みは渡さない
     assert rl.day_summary(tmp_path, "2026-11-13") == {"date": "2026-11-13", "reads": 0, "devices": {}}
 
@@ -60,7 +60,7 @@ def test_line_without_last_move(tmp_path):
     rows = [{"ts": "2026-11-14T18:20:00", "devices": {"m1": {"name": "ありさん机", "type": "Motion Sensor", "move": False}}}]
     rd = rl.room_dir(tmp_path); rd.mkdir(parents=True)
     (rd / "latest.json").write_text(json.dumps(rows[-1], ensure_ascii=False), encoding="utf-8")
-    assert rl.line(tmp_path, T) == "家の空気: ありさん机の動き: なし(記録を始めてから、まだ動きなし)(18:20 の読み)"
+    assert rl.line(tmp_path, T) == "家の空気: ありさん机の動き: なし(記録を始めてから、まだ動きなし)。人感は、座ったまま動かないと更新されない(動きなし = いない、ではない)(18:20 の読み)"
 
 
 def test_change_line(tmp_path):

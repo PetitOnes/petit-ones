@@ -8853,7 +8853,8 @@ HTML = """<!DOCTYPE html>
         if ("open" in d) bits.push(d.open === "open" ? "🚪 開" : "🚪 閉");
         return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid #f0f0f0;font-size:0.85rem;"><span style="font-weight:700;color:#555">${safe(d.name)}</span><span style="color:#777;text-align:right">${bits.join(" ")}</span></div>`;
       });
-      document.getElementById("roomPanel").innerHTML = rows.join("") + `<div style="font-size:0.72rem;color:#aaa;margin-top:4px">${hm(latest.ts)} の読み(10 分ごと)</div>`;
+      const hasMotion = Object.values(latest.devices).some(d => "move" in d);
+      document.getElementById("roomPanel").innerHTML = rows.join("") + `<div style="font-size:0.72rem;color:#aaa;margin-top:4px">${hm(latest.ts)} の読み(10 分ごと)${hasMotion ? "。🚶 は、座ったまま動かないと更新されない" : ""}</div>`;
       sec.style.display = "";
     }
     // からだの設定の 1 人分。スマホで押しやすいよう、つまみではなく大きめのボタンにする。

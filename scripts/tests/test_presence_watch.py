@@ -71,6 +71,6 @@ def test_line_does_not_say_who(tmp_path):
     run(base, [(0, True), (5, True)])
     assert pw.line(base, T0 + timedelta(minutes=6)) == "つくえのあたり: 動きがある(9:00 から)"
     run(base, [(6, False), (30, False)])
-    assert pw.line(base, T0 + timedelta(minutes=31)) == "つくえのあたり: いまは動きがない(最後は 9:05)"
+    assert pw.line(base, T0 + timedelta(minutes=31)) == "つくえのあたり: いまは動きがない(最後は 9:05)\n人感は、座ったまま動かないと更新されない(動きなし = いない、ではない)"
     # 見張りが止まっていたら、いまのことは言わない
     assert pw.line(base, T0 + timedelta(minutes=60)) == ""
