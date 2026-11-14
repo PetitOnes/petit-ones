@@ -46,6 +46,7 @@ API = "https://api.switch-bot.com/v1.1"
 TYPES = {"Hub 2", "Meter", "MeterPlus", "WoIOSensor", "Motion Sensor", "Color Bulb", "Strip Light", "Ceiling Light",
          "Plug", "Plug Mini (JP)", "Plug Mini (US)", "Contact Sensor"}
 FRESH_MIN = 30        # ぷちに渡すのは、これより新しい読みだけ
+MOTION_NOTE = "人感は、座ったまま動かないと更新されない(動きなし = いない、ではない)"
 OMRON_ID = "omron-env"            # PC に差した OMRON 2JCIE-BU01 の、機体としての id
 OMRON_PORT = "/dev/omron-env"     # udev の決まり(99-omron-2jcie-bu.rules)が作る名前
 OMRON_TYPE = "OMRON 2JCIE-BU"
@@ -343,7 +344,8 @@ def line(base: Path | None = None, now: datetime | None = None, character_id: st
     if air:
         parts.append("、".join(air))
     if move:
-        parts.append("、".join(move))
+        # 「動きなし」には但し書き(2026-11-14 ありさん: 机に座りっぱなしで動かないと更新されないことも伝えたい)
+        parts.append("、".join(move) + (f"。{MOTION_NOTE}" if any("なし" in m for m in move) else ""))
     if power:
         parts.append("、".join(power))
     head = f"家の空気(いる部屋は {my_room}): " if my_room else "家の空気: "
