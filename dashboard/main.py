@@ -2892,60 +2892,10 @@ def api_kairanban():
     return items
 
 
-KAIRANBAN_HTML = """<!DOCTYPE html>
-<html lang="ja">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
-  <link rel="stylesheet" href="/ui/tokens.css">
-  <title>回覧板</title>
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-  <style>
-    body { font-family: var(--ui-font-maru); background: #f6f3fa; color: #333; margin: 0; padding: 16px; }
-    .wrap { max-width: 720px; margin: 0 auto; }
-    h1 { font-size: 1.2rem; margin: 0 0 12px; }
-    h1 a { text-decoration: none; color: #999; font-size: 0.9rem; margin-right: 8px; }
-    .issue { background: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-    .issue summary { cursor: pointer; font-weight: 700; list-style: none; }
-    .issue summary::-webkit-details-marker { display: none; }
-    .issue summary .date { font-weight: 400; color: #999; font-size: 0.8rem; margin-left: 8px; }
-    .issue summary::before { content: "▸ "; color: #b8a6d4; }
-    .issue[open] summary::before { content: "▾ "; }
-    .md { font-size: 0.92rem; line-height: 1.75; margin-top: 10px; border-top: 1px solid #eee; padding-top: 10px; word-break: break-word; }
-    .md h1 { font-size: 1.05rem; } .md h2 { font-size: 0.98rem; margin: 16px 0 6px; } .md h3 { font-size: 0.92rem; }
-    .md pre { background: #f4f4f4; padding: 8px; border-radius: 8px; overflow-x: auto; font-size: 0.8rem; }
-    .md code { background: #f4f4f4; padding: 1px 4px; border-radius: 4px; font-size: 0.85em; }
-    .md table { border-collapse: collapse; } .md td, .md th { border: 1px solid #ddd; padding: 4px 8px; }
-    .empty { color: #999; text-align: center; padding: 40px 0; }
-  </style>
-</head>
-<body>
-<div class="wrap">
-  <h1><a href="/">←</a>📋 回覧板</h1>
-  <div id="list"><div class="empty">読み込み中…</div></div>
-</div>
-<script>
-  (async () => {
-    const list = document.getElementById("list");
-    let items = [];
-    try { items = await (await fetch("/api/kairanban")).json(); } catch {}
-    if (!items.length) { list.innerHTML = '<div class="empty">まだ回覧板はありません</div>'; return; }
-    const esc = s => s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
-    list.innerHTML = items.map((it, i) => `<details class="issue"${i === 0 ? " open" : ""}>
-      <summary>${esc(it.title)}<span class="date">${esc(it.date)}</span></summary>
-      <div class="md">${window.marked ? marked.parse(it.content) : "<pre>" + esc(it.content) + "</pre>"}</div>
-    </details>`).join("");
-  })();
-</script>
-</body>
-</html>"""
-
-
 @app.get("/kairanban", response_class=HTMLResponse)
 def kairanban_page():
-    return HTMLResponse(KAIRANBAN_HTML)
+    # ほかのページと同じ部品(dashboard/ui/)で。トップページの中にも開ける(2026-11-14)
+    return HTMLResponse((UI_DIR / "kairanban.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/library", response_class=HTMLResponse)
@@ -7923,7 +7873,7 @@ HTML = """<!DOCTYPE html>
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       notes:     {icon: "📓", name: "ノート",     pane: "notes"},
       notebook:  {icon: "📖", name: "交換日記",   pane: "notebook"},
-      kairanban: {icon: "📋", name: "回覧板",     attr: 'href="/kairanban"'},
+      kairanban: {icon: "📋", name: "回覧板",     pane: "kairanban"},
       library:   {icon: "📚", name: "ライブラリ", pane: "library"},
       kankei:    {icon: "🔒", name: "ひみつ",     attr: 'href="/kankei"'},
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
@@ -8106,7 +8056,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", anniv: "/anniversaries", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
