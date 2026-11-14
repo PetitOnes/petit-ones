@@ -69,6 +69,8 @@
     .s-count b { font-size: 1.1rem; }
     .s-warn { background: #fff4e0; color: #7a4b00; }
     .s-num { width: 72px !important; text-align: right; }
+    .m-card { position: relative; }
+    .s-help { position: absolute; top: 12px; right: 14px; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; border: 1.5px solid var(--ui-accent-line); color: var(--ui-accent-text); font-size: 0.85rem; font-weight: 700; text-decoration: none; }
   </style>
 </head>
 <body>
@@ -80,7 +82,7 @@
     <!-- 🏠 家 -->
     <section class="s-pane" id="paneHouse">
       <div class="m-card">
-        <span class="a-heading">トップバー</span>
+        <span class="a-heading">トップバー</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
         <div class="s-row">
           <span>🏷️ 題</span>
           <span style="display:flex;align-items:center;gap:8px;">
@@ -97,7 +99,7 @@
         </div>
       </div>
       <div class="m-card">
-        <span class="a-heading">送信のしかた</span>
+        <span class="a-heading">送信のしかた</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 8px">話しかける欄でのキーの使い方。送信ボタンはどちらでも使える。</p>
         <div class="m-pills" style="flex-wrap:wrap" id="sendKey">
           <button class="a-pill" data-v="enter" onclick="saveUi({send_key: 'enter'})">Enter で送信</button>
@@ -105,7 +107,7 @@
         </div>
       </div>
       <div class="m-card s-tools">
-        <span class="a-heading">道具の列</span>
+        <span class="a-heading">道具の列</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 6px">▲▼ で並びを変える。出し方は 3 つ: <b>最初</b>(列に出す)/ <b>ほか</b>(「ほか」を押したら出る)/ <b>なし</b>(出さない)。</p>
         <div id="tools"></div>
         <button class="a-btn a-btn--ghost a-btn--s" style="margin-top:8px" onclick="saveUi({tools: defaultTools()})">はじめの並びに戻す</button>
@@ -135,7 +137,7 @@
     <section class="s-pane" id="paneChar">
       <div class="m-card">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="a-heading">アクティブタイム（毎回動く時間帯）</span>
+          <span class="a-heading">アクティブタイム（毎回動く時間帯）</span><a class="s-help" data-help="settings-puchi" href="/help#settings-puchi" title="使い方">？</a>
           <span class="a-pill is-on" id="dayType" style="pointer-events:none"></span>
         </div>
         <div class="s-days">
@@ -148,7 +150,7 @@
         <div class="s-count s-warn" id="edgeWarn" style="display:none"></div>
       </div>
       <div class="m-card">
-        <span class="a-heading">自律行動（ひとりの時間）</span>
+        <span class="a-heading">自律行動（ひとりの時間）</span><a class="s-help" data-help="settings-puchi" href="/help#settings-puchi" title="使い方">？</a>
         <div class="s-count" id="runCount"></div>
         <div class="s-row"><span>⏰ cron で動き出す時刻</span><span class="s-sub" id="cronInfo"></span></div>
         <div class="s-row"><span>🕺 今日のスケジュール</span>
@@ -163,7 +165,7 @@
           <span style="display:flex;align-items:center;gap:6px"><input type="number" class="a-input s-num" id="maxTurns" min="1" max="200" step="1"><span class="s-sub" id="maxTurnsNote"></span></span></div>
       </div>
       <div class="m-card">
-        <span class="a-heading">からだの使い方</span>
+        <span class="a-heading">からだの使い方</span><a class="s-help" data-help="body-switches" href="/help#body-switches" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ふだん使ってよいもの。会話でも、ひとりの時間でも同じ決まり。</p>
         <div class="s-row"><span>👀 見る（カメラ）</span><label class="a-toggle"><input type="checkbox" id="bodySee"><span></span></label></div>
         <div class="s-row"><span>🗣 話す（声）</span><label class="a-toggle"><input type="checkbox" id="bodySpeak"><span></span></label></div>
@@ -171,7 +173,7 @@
         <div class="s-row"><span>👂 聞く（マイク）</span><label class="a-toggle"><input type="checkbox" id="bodyHear"><span></span></label></div>
       </div>
       <div class="m-card">
-        <span class="a-heading">🌙 からだ おやすみ</span>
+        <span class="a-heading">🌙 からだ おやすみ</span><a class="s-help" data-help="rest" href="/help#rest" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 6px">見る・話す・鳴らす を止める（聞く はそのまま）。考える・書く・調べる・手紙はいつも通り。</p>
         <div class="s-count" id="restNow"></div>
         <div class="m-pills" style="flex-wrap:wrap;margin:8px 0 4px">
@@ -202,7 +204,7 @@
     const q = new URLSearchParams(location.search);
     // 道具の一覧(id・絵・名前)。トップページ(dashboard/main.py の TOOLS)と同じ並び。scripts/tests/test_ui_settings_page.py が同じか確かめる
     const TOOL_LABELS = [
-      ["yousu", "🌱", "ようす"], ["settings", "⚙️", "設定"], ["petitlog", "📜", "ぷちログ"], ["diary", "📔", "日記"], ["anniv", "🎂", "記念日"],
+      ["yousu", "🌱", "ようす"], ["settings", "⚙️", "設定"], ["help", "📖", "使い方"], ["petitlog", "📜", "ぷちログ"], ["diary", "📔", "日記"], ["anniv", "🎂", "記念日"],
       ["desires", "🫧", "欲求"], ["sounds", "🔔", "音"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["notes", "📓", "ノート"],
       ["notebook", "📖", "交換日記"], ["kairanban", "📋", "回覧板"], ["library", "📚", "ライブラリ"], ["kankei", "🔒", "ひみつ"], ["monitor", "📡", "モニタ"],
       ["terminal", "🖥️", "ターミナル"], ["logs", "🔍", "行動ログ"], ["costs", "💰", "おかね"],
@@ -410,6 +412,8 @@
       } catch (e) { toast("保存できなかった"); }
     }
 
+    // 「？」は使い方のその節へ。埋めて出しているときは、使い方も埋めた形で
+    document.querySelectorAll("a.s-help").forEach(a => { a.href = `/help${q.has("embed") ? "?embed=1" : ""}#${a.dataset.help}`; });
     // ---- はじめ: ?char=<id> があればその子、無ければ家 ----
     (async () => {
       try { chars = (await (await fetch("/api/characters")).json()).filter(c => c && c.id); } catch (e) { chars = []; }
