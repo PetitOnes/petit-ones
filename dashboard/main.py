@@ -7474,8 +7474,11 @@ HTML = """<!DOCTYPE html>
       const row = (icon, title, now, buttons) => `<div style="display:flex;align-items:center;gap:8px;margin-top:8px;" title="${title}">
           <span style="flex:0 0 4.6em;font-size:0.8rem;color:#777;white-space:nowrap;">${icon}${now ? `<br><span style="font-size:0.7rem;color:#aaa;">${now}</span>` : ""}</span>
           <div style="flex:1;display:flex;gap:6px;">${buttons}</div></div>`;
+      // 体は明るさを 0〜255 で持ち、% に直すときに切り捨てる。5% と頼むと 4%、50% は 49%、75% は 74% と返ってくる。
+      // なので、1 だけずれた値は、そのボタンの値と見る
+      const near = (n, v) => Math.abs(n - v) <= 1;
       const pick = (key, v) => v == null ? "" : row(key === "brightness" ? "🔆 明るさ" : "🔊 音量", key === "brightness" ? "画面の明るさ" : "音量",
-        BODY_CHOICES[key].some(([n]) => n === v) ? "" : `いま ${v}%`, BODY_CHOICES[key].map(([n, label]) => btn(key, n, label, n === v)).join(""));
+        BODY_CHOICES[key].some(([n]) => near(n, v)) ? "" : `いま ${v}%`, BODY_CHOICES[key].map(([n, label]) => btn(key, n, label, near(n, v))).join(""));
       const psave = b.power_save == null ? "" : row("PSAVE", "お出かけ(省電力 + 消音)。オンのあいだは、画面が暗めで、音が出ません", "",
         btn("power_save", "false", "オフ", !b.power_save) + btn("power_save", "true", "オン", b.power_save));
       const who = !b.cam_to || !(b.cam_users || []).length ? "" : row("WHO", "体の設定ページの「CAM TO」。触られた・話しかけられた記録に「設定は ○○」と付く", "",
