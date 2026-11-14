@@ -10912,7 +10912,6 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     .turn-box { font-size: 0.85rem; color: #aaa; line-height: 1.8; }
     .turn-box .who { font-weight: 700; opacity: 0.55; }
     .turn-box .who.next { opacity: 1; text-decoration: underline; text-underline-offset: 3px; }
-    .turn-box .mine { display: inline-block; margin-top: 2px; padding: 2px 10px; border-radius: 999px; background: #f58e7d; color: #fff; font-weight: 700; }
     html.embed .turn-box { color: #6E625A; }
     .empty-state { text-align: center; color: #666; padding: 40px 0; font-size: 0.95rem; }
   </style>
@@ -10968,11 +10967,10 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     async function loadTurn() {
       let t;
       try { t = await (await fetch("/api/notebook/turn")).json(); } catch { return; }
-      const who = n => `<span class="who${n === t.next ? " next" : ""}" style="color:${esc(colorOf(n))}">${esc(n)}</span>`;
-      const last = t.last ? `前は ${esc(t.last.author)}(${esc(t.last.date)})。` : "まだだれも書いていない。";
-      const free = t.skippable && t.last ? `${t.skip_hours} 時間たったので、だれでも書いてよい。` : "";
-      const mine = t.my_turn ? `<span class="mine">3 人が一周したよ。つぎは ${esc(t.me)}の番</span>` : `${esc(t.me)}はいつでも書ける(3 人が一周したら 📖 にピンクの点)。`;
-      document.getElementById("turnBox").innerHTML = `順番: ${t.order.map(who).join(" → ")} → はじめに戻る<br>つぎは ${who(t.next)}。${last}${free}<br>${mine}`;
+      // 順番の 1 行だけ(2026-11-14 ありさん)。ぷちるのあとに自分。つぎの人に下線(一周していれば自分)
+      const next = t.my_turn ? t.me : t.next;
+      const who = n => `<span class="who${n === next ? " next" : ""}" style="color:${esc(colorOf(n))}">${esc(n)}</span>`;
+      document.getElementById("turnBox").innerHTML = `順番: ${t.order.concat([t.me]).map(who).join(" → ")}`;
     }
 
     async function initNotebook() {
