@@ -319,3 +319,23 @@ def test_touch_kinds_survive_body_reboot():
     events += d.process_sensors(ts(40.0), sample(4000, 0, 1))
     touch_events = [e for e in events if e.type == "touch"]
     assert touch_events[0].detail == {"count": 1, "strokes": 1}
+
+
+def test_setting_to_is_noted_on_hand_events():
+    """体が cam_to(設定ページの「CAM TO」)を返すなら、人の手が関わる出来事に添える"""
+
+    def sample(value: int, strokes: int) -> dict:
+        s = sensor_sample()
+        s.pop("lastTouchEventTime")
+        s.update({"last_touch": value, "tap_count": 0, "stroke_count": strokes, "cam_to": "keeper"})
+        return s
+
+    d = ExperienceDetector()
+    events = []
+    events += d.process_sensors(ts(0.0), sample(1000, 0))
+    events += d.process_sensors(ts(2.0), sample(3000, 1))
+    events += d.process_sensors(ts(40.0), sample(3000, 1))
+    touch_events = [e for e in events if e.type == "touch"]
+    assert touch_events[0].detail == {"count": 1, "strokes": 1, "cam_to": "keeper"}
+    # 明るさが変わった、のような出来事には付けない
+    assert all("cam_to" not in e.detail for e in events if e.type not in ("touch",))

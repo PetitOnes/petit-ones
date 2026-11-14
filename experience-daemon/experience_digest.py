@@ -85,9 +85,35 @@ def _format_duration_sec(sec: float) -> str:
     return f"{minutes}分"
 
 
+def _people_names() -> dict[str, str]:
+    """世話人の ID → 呼び名(家の config/people.json)。無ければ空"""
+    try:
+        raw = json.loads((DATA_DIR / "config" / "people.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        k: v["name"] for k, v in raw.items()
+        if isinstance(v, dict) and isinstance(v.get("name"), str) and v["name"]
+    }
+
+
+def _setting_note(detail: dict, names: dict[str, str]) -> str:
+    """体の設定「CAM TO」がだれになっていたかを添える。
+
+    だれの手だったかは言わない(体には分からない)
+    """
+    who = detail.get("cam_to")
+    if not isinstance(who, str) or not who:
+        return ""
+    return f"（設定は {names.get(who, who)}）"
+
+
 def _format_events(events: list[dict]) -> list[str]:
     lines: list[str] = []
     pending_picked_up: dict | None = None
+    names = _people_names()
 
     for record in events:
         ts = datetime.fromisoformat(record["ts"])
@@ -104,7 +130,9 @@ def _format_events(events: list[dict]) -> list[str]:
             if pending_picked_up is not None:
                 pu_hhmm = datetime.fromisoformat(pending_picked_up["ts"]).strftime("%H:%M")
                 duration = _format_duration_sec(detail.get("carried_sec", 0))
-                lines.append(f"{pu_hhmm} 持ち上げられて、{duration}くらい運ばれた")
+                note = _setting_note(detail, names) or _setting_note(
+                    pending_picked_up.get("detail", {}), names)
+                lines.append(f"{pu_hhmm} 持ち上げられて、{duration}くらい運ばれた{note}")
                 pending_picked_up = None
             else:
                 lines.append(f"{hhmm} 下ろされた")
@@ -125,12 +153,13 @@ def _format_events(events: list[dict]) -> list[str]:
             count = detail.get("count", 1)
             strokes = detail.get("strokes", 0)
             taps = detail.get("taps", 0)
+            note = _setting_note(detail, names)
             if strokes and taps:
-                lines.append(f"{hhmm} 撫でられた（{strokes}回）、タッチされた（{taps}回）")
+                lines.append(f"{hhmm} 撫でられた（{strokes}回）、タッチされた（{taps}回）{note}")
             elif strokes:
-                lines.append(f"{hhmm} 撫でられた（{strokes}回）")
+                lines.append(f"{hhmm} 撫でられた（{strokes}回）{note}")
             else:
-                lines.append(f"{hhmm} タッチされた（{taps or count}回）")
+                lines.append(f"{hhmm} タッチされた（{taps or count}回）{note}")
         elif etype == "offline_gap":
             minutes = detail.get("minutes", 0)
             minutes_int = max(1, round(minutes))
