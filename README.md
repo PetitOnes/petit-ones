@@ -140,7 +140,7 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── write_mailbox.py / mark_mail_read.py / list_unread_mail.py  # 手紙
 │   ├── mail_receipts.py      # 手紙が届いたこと(読まれた・スタンプ)を、書いたぷちに 1 回だけ知らせる
 │   ├── quiet_time.py         # 何も残さなかった自律行動の回の言葉を、その子のノート「しずかな時間_YYYY-MM」に 1 行残す
-│   ├── house_alert.py        # ぷちが Claude を呼べなかった・エラーで終わったときに Slack へ知らせる(docs/operations.md)
+│   ├── house_alert.py        # ぷちが Claude を呼べなかった・エラーで終わったときに Slack と手紙箱へ知らせる(docs/operations.md)
 │   ├── append_chat_log.py    #   /chat スキルのチャットログ保存
 │   ├── check_usage.py        #   トークン使用量(今日/今週/今月)
 │   ├── backup_petit.sh / restore_petit.sh

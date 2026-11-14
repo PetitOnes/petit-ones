@@ -5488,6 +5488,8 @@ _DISPLAY_NAME_CACHE: dict[str, tuple[float, str]] = {}   # char_id -> (config �
 
 def _char_display_name(char_id: str) -> str:
     """キャラクターIDから表示名を取得する(config.json の mtime で cache。メール 9,000 通で毎回読んでいた)。"""
+    if char_id == "house":
+        return "家の知らせ"   # scripts/house_alert.py が書く手紙(Claude を呼べなかった、など)
     config_path = CHARACTERS_DIR / char_id / "config" / "config.json"
     try:
         mtime = config_path.stat().st_mtime

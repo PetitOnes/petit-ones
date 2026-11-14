@@ -15,7 +15,10 @@ Usage:
       (会話を途中で止めた・ダッシュボードを入れ直した、のような 1 回きりの失敗では鳴らさない)
     - 続いているあいだは HOUSE_ALERT_REPEAT_HOURS(既定 3)時間ごとに 1 回
     - 直ったら(同じ種類が次に成功したら)1 回だけ「直りました」と知らせる
-    - 知らせる先は Slack(.env の HOUSE_ALERT_SLACK_CHANNEL、無ければ SLACK_APPROVE_CHANNEL)
+    - 知らせる先は 2 つ。どちらかに届けば「知らせた」と数える
+        Slack: .env の HOUSE_ALERT_SLACK_CHANNEL、無ければ SLACK_APPROVE_CHANNEL
+        家の手紙箱: .env の HOUSE_ALERT_MAIL_TO(世話人の ID。カンマ区切り)に書いた人へ、
+        mailbox/from_house_to_<ID>_<日時>.md を 1 通(ダッシュボードの「メール」に未読として出る)。無ければ書かない
     - 覚え書きは PETIT_DATA_DIR/state/house_alerts.json
     - HOUSE_ALERT=0 で止められる。知らせに失敗しても、呼んだ側の仕事は止めない
     - 知らせの文に、鍵・IP・会話の中身を入れない(理由の文は頭 200 字、鍵らしい並びは伏せる)
@@ -140,11 +143,61 @@ def _where(source: str, character: str) -> str:
     return f"{character} の {source}" if character else source
 
 
+MAIL_FROM = "house"   # 手紙箱での差出人の ID(ぷちの ID と重ならない名前)
+_VALID_ID = re.compile(r"^[a-zA-Z0-9]+$")
+
+
 def _send_slack(text: str) -> bool:
     import slack_notify
 
     channel = slack_notify.load_env_value("HOUSE_ALERT_SLACK_CHANNEL") or None
     return slack_notify.send(text, channel)
+
+
+def mail_recipients(raw: str | None) -> list[str]:
+    """HOUSE_ALERT_MAIL_TO の値から、手紙を書く相手の ID を返す(英数字だけの ID に限る)。"""
+    out = []
+    for part in (raw or "").split(","):
+        name = part.strip().strip('"\'')
+        if name and _VALID_ID.match(name) and name not in out:
+            out.append(name)
+    return out
+
+
+def write_letters(base: Path, recipients: list[str], text: str, now: datetime) -> list[Path]:
+    """家の手紙箱に、知らせを 1 人 1 通ずつ書く。書いたファイルを返す。"""
+    box = base / "mailbox"
+    written = []
+    for to in recipients:
+        box.mkdir(parents=True, exist_ok=True)
+        stem = f"from_{MAIL_FROM}_to_{to}_{now.strftime('%Y%m%d_%H%M')}"
+        path = box / f"{stem}.md"
+        n = 2
+        while path.exists():
+            path = box / f"{stem}_{n}.md"
+            n += 1
+        path.write_text(text.removeprefix("[house-alert] ") + "\n\n家の知らせ\n", encoding="utf-8")
+        written.append(path)
+    return written
+
+
+def _deliver(base: Path, now: datetime) -> Callable[[str], bool]:
+    """Slack と手紙箱の両方へ出す送り先を作る。どちらかに届けば True。片方の失敗で、もう片方を止めない。"""
+    def send(text: str) -> bool:
+        import slack_notify
+
+        delivered = False
+        try:
+            delivered = _send_slack(text)
+        except Exception as e:
+            print(f"[house-alert] Slack に送れなかった: {type(e).__name__}", file=sys.stderr)
+        try:
+            to = mail_recipients(slack_notify.load_env_value("HOUSE_ALERT_MAIL_TO"))
+            delivered = bool(write_letters(base, to, text, now)) or delivered
+        except Exception as e:
+            print(f"[house-alert] 手紙を書けなかった: {type(e).__name__}", file=sys.stderr)
+        return delivered
+    return send
 
 
 def _enabled() -> bool:
@@ -171,7 +224,7 @@ def report(base: Path, kind: str, source: str, character: str = "", detail: str 
            now: datetime | None = None, send: Callable[[str], bool] | None = None) -> str | None:
     """失敗を 1 件覚える。知らせを出したら、その文を返す(出さなければ None)。"""
     now = now or datetime.now()
-    send = send or _send_slack
+    send = send or _deliver(base, now)
     detail = clean_detail(detail)
     with _Locked(base):
         state = _load(state_path(base))
@@ -220,7 +273,7 @@ def ok(base: Path, kinds: tuple[str, ...] | list[str], source: str = "", charact
        now: datetime | None = None, send: Callable[[str], bool] | None = None) -> str | None:
     """うまくいった。続いていた失敗があれば消して、知らせ済みのものは「直りました」を 1 回出す。"""
     now = now or datetime.now()
-    send = send or _send_slack
+    send = send or _deliver(base, now)
     path = state_path(base)
     if not path.exists():
         return None

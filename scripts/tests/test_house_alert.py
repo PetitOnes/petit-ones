@@ -129,3 +129,29 @@ def test_other_kind_report_and_ok(tmp_path):
     text = ha.report(tmp_path, "backup", "バックアップ", detail="push に失敗", now=T0 + timedelta(days=1), send=box)
     assert text and "家で失敗がありました(backup)" in text
     assert ha.ok(tmp_path, ["backup"], "バックアップ", now=T0 + timedelta(hours=1), send=box).startswith("[house-alert] 直りました")
+
+
+def test_letter_goes_to_mailbox(tmp_path):
+    files = ha.write_letters(tmp_path, ["keeper"], "[house-alert] ぷちが Claude を呼べていません\n理由: x", T0)
+    assert [f.name for f in files] == ["from_house_to_keeper_20261114_0600.md"]
+    body = files[0].read_text(encoding="utf-8")
+    assert body.startswith("ぷちが Claude を呼べていません") and body.rstrip().endswith("家の知らせ")
+    # 同じ分にもう 1 通書いても、前の手紙を上書きしない
+    again = ha.write_letters(tmp_path, ["keeper"], "[house-alert] 直りました", T0)
+    assert again[0].name == "from_house_to_keeper_20261114_0600_2.md"
+
+
+def test_mail_recipients():
+    assert ha.mail_recipients("keeper, other") == ["keeper", "other"]
+    assert ha.mail_recipients('"keeper"') == ["keeper"]
+    assert ha.mail_recipients("../x, a_b, keeper") == ["keeper"]   # ファイル名を崩す ID は受け取らない
+    assert ha.mail_recipients(None) == []
+
+
+def test_deliver_writes_letter_even_if_slack_fails(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("HOUSE_ALERT_MAIL_TO=keeper\n", encoding="utf-8")
+    import slack_notify
+    monkeypatch.setattr(slack_notify, "ENV_FILE", tmp_path / ".env")
+    text = ha.check_result(tmp_path, AUTH, "自律行動", "a", T0)   # Slack の設定は無い → 手紙だけ届く
+    assert text and "ログインが切れています" in text
+    assert len(list((tmp_path / "mailbox").glob("from_house_to_keeper_*.md"))) == 1
