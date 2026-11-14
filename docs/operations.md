@@ -66,6 +66,8 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 時間で上がり、体の出来事(撫でられた・短く触られた・持たれた)や言葉があるたびに少しずつ下がります。書かなければ今までどおり。
 体の出来事は `experience-daemon` の記録を読むので、デーモンが動いていることが前提です。撫でとタッチの区別は、体のファームが
 `tap_count` / `stroke_count` を返すときだけ記録に残ります。状態は `characters/<id>/data/desire_relief.json`。
+出来事の中身で効き方を変える(`where`)、久しぶりほど大きく(`scale_by`)、間をあけて上げる(`raise` / `delay_min`)、谷を残す(`floor`)も書けます。
+体の出来事のほかに、人との接点(`characters/<id>/state/contact/`)と家の気配(`state/presence/`)も読みます。
 書き方は [m5-petit-desire の README](https://github.com/PetitOnes/m5-petit-desire#relief--体の出来事や言葉で少しずつ満たされる欲求任意)。
 
 ## 気配(家の人感センサーから「近づいた瞬間」を拾う)
