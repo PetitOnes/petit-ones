@@ -1135,6 +1135,8 @@ ALBUM_PERSONS = ["puchiteya", "puchiko", "puchiru", "arisan", "kazahaya"]
 ALBUM_MAX_PHOTOS = 50                     # ぷちのアルバム
 ALBUM_MAX_PHOTOS_HUMAN = 200              # 人のアルバム(2026-10-16 ありさん「200 枚くらい、消えないで」)
 ALBUM_HUMANS = {"arisan", "kazahaya"}
+# 人ごとの上限。無い人は ALBUM_MAX_PHOTOS_HUMAN(人)か ALBUM_MAX_PHOTOS(ぷち)
+ALBUM_MAX_PHOTOS_BY_PERSON = {"kazahaya": 50}      # 2026-11-14 ありさん「かぜおのアルバムの上限は 50 枚でいい」
 ALBUM_MAX_PX = 1200
 ALBUM_JPEG_QUALITY = 80
 
@@ -1208,12 +1210,19 @@ def _save_locks(person_id: str, locks: set):
     _locks_file(person_id).write_text(json.dumps(list(locks), ensure_ascii=False), encoding="utf-8")
 
 
+def _album_limit(person_id: str) -> int:
+    """その人(ぷち)のアルバムに置ける枚数"""
+    if person_id in ALBUM_MAX_PHOTOS_BY_PERSON:
+        return ALBUM_MAX_PHOTOS_BY_PERSON[person_id]
+    return ALBUM_MAX_PHOTOS_HUMAN if person_id in ALBUM_HUMANS else ALBUM_MAX_PHOTOS
+
+
 def _prune_album(person_id: str):
     """MAX超えたら古いものを削除（ロック済みはスキップ）"""
     d = _album_dir(person_id)
     locks = _load_locks(person_id)
     photos = sorted(d.glob("*.jpg"))
-    limit = ALBUM_MAX_PHOTOS_HUMAN if person_id in ALBUM_HUMANS else ALBUM_MAX_PHOTOS
+    limit = _album_limit(person_id)
     while len(photos) > limit:
         # ロックされていない最古のものを削除
         to_delete = next((p for p in photos if p.name not in locks), None)
@@ -3249,7 +3258,8 @@ async def api_notebook_add(entry: NotebookEntry, request: Request):
 @app.get("/album", response_class=HTMLResponse)
 def album_page():
     # 保存できる数は画面に渡す(「いま何枚 / 何枚まで」の表示用)
-    return HTMLResponse(ALBUM_HTML.replace("__ALBUM_MAX_HUMAN__", str(ALBUM_MAX_PHOTOS_HUMAN)).replace("__ALBUM_MAX__", str(ALBUM_MAX_PHOTOS)))
+    limits = {p: _album_limit(p) for p in ALBUM_PERSONS}
+    return HTMLResponse(ALBUM_HTML.replace("__ALBUM_LIMITS__", json.dumps(limits)))
 
 
 @app.get("/api/album/{person_id}")
@@ -11542,6 +11552,7 @@ ALBUM_HTML = """<!DOCTYPE html>
   </div>
 
   <script>
+    const ALBUM_LIMITS = __ALBUM_LIMITS__;   // 人ごとに置ける枚数
     const PERSONS = [
       {id:"puchiteya", label:"ぷちてゃ", human:false},
       {id:"puchiko",   label:"ぷちこ",   human:false},
@@ -11620,7 +11631,7 @@ ALBUM_HTML = """<!DOCTYPE html>
       const res = await fetch(`/api/album/${currentPerson}`);
       const photos = await res.json();
       document.getElementById("seenAllBtn").style.display = (unread[currentPerson] || 0) ? "" : "none";
-      showCount(photos.length, PERSONS.find(p=>p.id===currentPerson)?.human ? __ALBUM_MAX_HUMAN__ : __ALBUM_MAX__, "枚");
+      showCount(photos.length, ALBUM_LIMITS[currentPerson] || 50, "枚");   // 人ごとの上限(main.py の _album_limit)
       if (!photos.length) { empty.style.display="block"; return; }
       empty.style.display="none";
       photos.forEach(p => {
