@@ -6986,6 +6986,7 @@ def api_secret_mails(request: Request, scope: str = "petit", sender: str = "", t
     petits = {c["id"] for c in list_characters()}
     rows = [r for r in _secret_mail_index() if scope == "all" or (r[1] in petits and r[2] in petits)]
     count_from, count_to = Counter(r[1] for r in rows), Counter(r[2] for r in rows)
+    pairs = Counter((r[1], r[2]) for r in rows)   # だれから だれへ 何通(絞り込む前の、この範囲ぜんぶ)
     hit = [r for r in rows if (not sender or r[1] == sender) and (not to or r[2] == to)]
     offset, limit = max(0, offset), max(1, min(100, limit))
     items = []
@@ -7003,6 +7004,7 @@ def api_secret_mails(request: Request, scope: str = "petit", sender: str = "", t
 
     return {"scope": scope, "can_all": can_all, "total": len(hit), "offset": offset, "items": items,
             "people": {pid: person(pid) for pid in set(count_from) | set(count_to)},
+            "pairs": [{"from": a, "to": b, "count": v} for (a, b), v in pairs.most_common()],
             "senders": [{"id": k, "count": v} for k, v in count_from.most_common()],
             "recipients": [{"id": k, "count": v} for k, v in count_to.most_common()]}
 
