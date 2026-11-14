@@ -2963,6 +2963,27 @@ class NotebookEntry(BaseModel):
     content: str
 
 
+def _notebook_turn():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import notebook_turn
+    return notebook_turn
+
+
+@app.get("/api/notebook/turn")
+async def api_notebook_turn(request: Request):
+    """交換ノートの順番(だれの番か・一周して人の番か)。見ている人のノートで数える"""
+    nb_file = _notebook_file(request)
+    try:
+        entries = json.loads(nb_file.read_text(encoding="utf-8")) if nb_file.exists() else []
+    except Exception:
+        entries = []
+    username = _get_username(request) or "arisan"
+    me = _USER_DISPLAY.get(username, _USER_DISPLAY["arisan"])["name"]
+    return _notebook_turn().compute(entries if isinstance(entries, list) else [], me)
+
+
 @app.get("/api/notebook")
 async def api_notebook_list(request: Request):
     nb_file = _notebook_file(request)
@@ -7187,7 +7208,8 @@ HTML = """<!DOCTYPE html>
     .tool-row { display: flex; flex-wrap: nowrap; align-items: flex-start; gap: 0; margin: 0 calc(50% - 50vw) 12px; padding: 8px calc(50vw - 50%) 6px; background: var(--ui-paper); border-bottom: 1px solid var(--ui-cream-line); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
     .tool-row::-webkit-scrollbar { display: none; }
     .tool { flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 40px; padding: 4px 1px; border: none; background: none; color: #777; font: inherit; text-decoration: none; cursor: pointer; }
-    .tool-icon { font-size: 1.2rem; line-height: 1.2; opacity: 0.75; }
+    .tool-icon { position: relative; font-size: 1.2rem; line-height: 1.2; opacity: 0.75; }
+    .tool-dot { position: absolute; top: -2px; right: -6px; width: 9px; height: 9px; border-radius: 50%; background: #f58e7d; box-shadow: 0 0 0 2px var(--ui-paper, #fff); }   /* 交換日記: ありさんの番(3 人が一周した) */
     .tool-name { font-size: 0.62rem; line-height: 1.2; white-space: nowrap; }
     .char-tab { padding: 6px 16px; border-radius: 20px; border: 2px solid transparent; background: white; cursor: pointer; font-size: 0.85rem; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,0.06); transition: all 0.2s; }
 
@@ -7914,19 +7936,25 @@ HTML = """<!DOCTYPE html>
       const rest = Object.keys(TOOLS).filter(id => !seen.has(id)).map(id => ({id, show: saved.length ? false : TOOLS_DEFAULT_SHOWN.includes(id)}));
       return saved.map(t => ({id: t.id, show: t.show !== false, off: t.off === true})).concat(rest);
     }
+    // 交換日記の順番(/api/notebook/turn)。ありさんの番(3 人が一周した)なら 📖 にピンクの点。開いたとき・5 分ごと・ページを閉じたときに新しくする
+    let _notebookTurn = {};
+    async function loadNotebookTurn() {
+      try { _notebookTurn = await fetch("/api/notebook/turn").then(r => r.json()); } catch (e) { return; }
+      if (document.getElementById("toolRow").children.length) renderToolRow();
+    }
     function renderToolRow() {
-      const tool = (icon, name, attr) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
+      const tool = (icon, name, attr, dot) => `<${attr.startsWith("href") ? "a" : "button"} class="tool" ${attr}><span class="tool-icon">${icon}${dot ? '<span class="tool-dot" title="交換日記: ありさんの番"></span>' : ""}</span><span class="tool-name">${name}</span></${attr.startsWith("href") ? "a" : "button"}>`;
       const one = t => {
         const d = TOOLS[t.id];
         const attr = d.pane ? `onclick="showPane('${d.pane}')"${_pane === d.pane ? ' data-on="1"' : ""}` : d.attr;
-        return tool(d.icon, d.name, attr);
+        return tool(d.icon, d.name, attr, t.id === "notebook" && !!_notebookTurn.my_turn);
       };
       const order = toolOrder();
       // 3 段階(2026-11-14 ありさん): 最初に表示(show) / ほかを押したら表示(!show) / 表示しない(off)
       const shown = order.filter(t => t.show && !t.off), more = order.filter(t => !t.show && !t.off);
       const moreOpen = document.getElementById("moreTools") && document.getElementById("moreTools").style.display !== "none";
       document.getElementById("toolRow").innerHTML = shown.map(one).join("")
-        + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"')
+        + (more.length ? tool("…", "ほか", 'onclick="toggleMoreTools()" id="moreToolsBtn"', !!_notebookTurn.my_turn && more.some(t => t.id === "notebook"))
             + `<span id="moreTools" style="display:${moreOpen ? "contents" : "none"}">` + more.map(one).join("") + `</span>` : "");
     }
 
@@ -8099,6 +8127,7 @@ HTML = """<!DOCTYPE html>
         f.style.display = "none";
         f.removeAttribute("src");
         chatToBottom();
+        loadNotebookTurn();   // 交換日記に書いて戻ったら、点を消す
       }
       document.querySelectorAll("#toolRow .tool").forEach(t => t.removeAttribute("data-on"));
       if (name) { const t = document.querySelector(`#toolRow .tool[onclick="showPane('${name}')"]`); if (t) t.setAttribute("data-on", "1"); }
@@ -9359,6 +9388,8 @@ HTML = """<!DOCTYPE html>
 
     checkAuth();
     loadMeNow();
+    loadNotebookTurn();
+    setInterval(loadNotebookTurn, 300000);
     setInterval(loadMeNow, 60000);
     fetch("/api/me").then(r=>r.json()).then(d=>{_myName=d.name||"ありさん"; _myId=d.username||"arisan";}).catch(()=>{});
     // 一覧・表示するまとまり・会話の読み込みをまとめて。下にある #updated ができてから
@@ -10874,6 +10905,12 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     .author-petitya { color: #f0c674; }
     .author-petiko { color: #cab8d9; }
     .author-arisan { color: #7ec8e3; }
+    /* 順番(2026-11-14 ありさん): ぷちてゃ → ぷちこ → ぷちる。つぎの子を濃く、ありさんの番ならピンクで知らせる */
+    .turn-box { font-size: 0.85rem; color: #aaa; line-height: 1.8; }
+    .turn-box .who { font-weight: 700; opacity: 0.55; }
+    .turn-box .who.next { opacity: 1; text-decoration: underline; text-underline-offset: 3px; }
+    .turn-box .mine { display: inline-block; margin-top: 2px; padding: 2px 10px; border-radius: 999px; background: #f58e7d; color: #fff; font-weight: 700; }
+    html.embed .turn-box { color: #6E625A; }
     .empty-state { text-align: center; color: #666; padding: 40px 0; font-size: 0.95rem; }
   </style>
   <link rel="stylesheet" href="/ui/embed.css">
@@ -10894,6 +10931,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
     <h1>📖 交換ノート</h1>
   </div>
   <div class="container">
+    <div class="form-box turn-box" id="turnBox"></div>
     <div class="form-box">
       <div class="form-row">
         <span class="author-label" id="authorLabel">ありさん</span>
@@ -10913,8 +10951,26 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
       "ぷちこ": "author-petiko",
       "ありさん": "author-arisan",
       "ぷちる": "author-petitya",
-    };  // ここに無い書き手(ぷち以外の人)は author-arisan の色で出す
+    };   // 色は /api/characters のその子の色で上書きする(無い子だけこれ)  // ここに無い書き手(ぷち以外の人)は author-arisan の色で出す
     let _notebookAuthor = "ありさん";
+    const _charColor = {};   // 書き手の名前 → その子の色(/api/characters)。埋めて出す(明るい背景)ときは、明るい色を濃くする
+    const esc = t => String(t ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    function colorOf(name) {
+      const c = _charColor[name];
+      if (!c) return "";
+      if (!document.documentElement.classList.contains("embed")) return c;
+      const [r, g, b] = [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16));
+      return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? `rgb(${[r, g, b].map(v => Math.round(v * 0.42)).join(",")})` : c;
+    }
+    async function loadTurn() {
+      let t;
+      try { t = await (await fetch("/api/notebook/turn")).json(); } catch { return; }
+      const who = n => `<span class="who${n === t.next ? " next" : ""}" style="color:${esc(colorOf(n))}">${esc(n)}</span>`;
+      const last = t.last ? `前は ${esc(t.last.author)}(${esc(t.last.date)})。` : "まだだれも書いていない。";
+      const free = t.skippable && t.last ? `${t.skip_hours} 時間たったので、だれでも書いてよい。` : "";
+      const mine = t.my_turn ? `<span class="mine">3 人が一周したよ。つぎは ${esc(t.me)}の番</span>` : `${esc(t.me)}はいつでも書ける(3 人が一周したら 📖 にピンクの点)。`;
+      document.getElementById("turnBox").innerHTML = `順番: ${t.order.map(who).join(" → ")} → はじめに戻る<br>つぎは ${who(t.next)}。${last}${free}<br>${mine}`;
+    }
 
     async function initNotebook() {
       try {
@@ -10922,6 +10978,8 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
         _notebookAuthor = me.name || "ありさん";
         document.getElementById("authorLabel").textContent = _notebookAuthor;
       } catch {}
+      try { for (const c of await (await fetch("/api/characters")).json()) if (c.name && /^#[0-9a-fA-F]{6}$/.test(c.color || "")) _charColor[c.name] = c.color; } catch {}
+      loadTurn();
       loadEntries();
     }
 
@@ -10936,6 +10994,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
         }
         el.innerHTML = data.map(e => {
           const cls = authorColors[e.author] || "author-arisan";
+          const style = colorOf(e.author) ? ` style="color:${esc(colorOf(e.author))}"` : "";
           // 本文は content、古い書き方で text のものもある。どちらも無いと、1 件のせいで全体が出なくなっていた
           const escaped = String(e.content ?? e.text ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\n/g,"<br>");
           // 日付は date、無ければ timestamp から
@@ -10943,7 +11002,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
           if (!when && e.timestamp) { const d = new Date(e.timestamp); when = isNaN(d) ? String(e.timestamp) : d.toLocaleString("ja-JP", {year:"numeric", month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"}); }
           return `<div class="entry">
             <div class="entry-header">
-              <span class="entry-author ${cls}">${e.author || ""}</span>
+              <span class="entry-author ${cls}"${style}>${e.author || ""}</span>
               <span class="entry-date">${when}</span>
             </div>
             <div class="entry-content">${escaped}</div>
@@ -10968,6 +11027,7 @@ NOTEBOOK_HTML = """<!DOCTYPE html>
         });
         document.getElementById("contentArea").value = "";
         await loadEntries();
+        loadTurn();
       } catch(e) {
         console.error(e);
       }
