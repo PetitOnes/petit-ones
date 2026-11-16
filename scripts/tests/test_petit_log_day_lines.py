@@ -216,3 +216,46 @@ def test_quiet_alone_runs_stay_out_of_the_diary(tmp_path):
     run("20261113_103000", [("mcp__m5-mcp__get_sensor_data", {}), ("Edit", {"file_path": f"{tmp_path}/characters/puchiko/ROUTINES.md"})])
     alone = [line for line in pl.day_lines(src, DAY) if "ひとりの時間" in line]
     assert len(alone) == 1 and alone[0].startswith("10:30") and alone[0].endswith("ひとりの時間: まわりを感じて、自分のファイルを直した")
+
+
+def _stream(src: pl.Sources, name: str, calls: list[tuple[str, str]]) -> None:
+    """行動の記録を 1 つ置く。calls は (その土地の時刻, 道具の名前)"""
+    from datetime import datetime, timezone
+    lines = [json.dumps({"type": "assistant", "timestamp": datetime.fromisoformat(at).astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                         "message": {"content": [{"type": "tool_use", "name": tool, "input": {}}]}}) for at, tool in calls]
+    (src.auto_log_dir / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _wakes(src: pl.Sources) -> list[str]:
+    return [line for line in pl.day_lines(src, DAY) if "起" in line and "ひとり" not in line]
+
+
+def test_woke_itself_says_what_it_did_after(tmp_path):
+    """自分で wake を呼んで起きたら「自分で起きた」。起きてから体でしたこと(話した・見た・感じた)を添える"""
+    src = _house(tmp_path)
+    _body_events(src, [{"ts": "2026-11-13T09:00:00", "type": "sleep", "detail": {}},
+                       {"ts": "2026-11-13T10:00:05", "type": "woken", "detail": {"source": "unknown"}},
+                       {"ts": "2026-11-13T11:00:00", "type": "sleep", "detail": {}},
+                       {"ts": "2026-11-13T12:00:05", "type": "woken", "detail": {"source": "unknown"}}])
+    # ひとりの時間: 手紙を見てから起きて、感じて、話して、記憶に残した(起きる前のこと・体でないことは添えない)
+    _stream(src, "20261113_100000_stream.jsonl", [
+        ("2026-11-13T10:00:01", "Bash"), ("2026-11-13T10:00:03", "mcp__m5-mcp__wake"), ("2026-11-13T10:00:10", "mcp__m5-mcp__get_sensor_data"),
+        ("2026-11-13T10:00:20", "mcp__m5-mcp__speak"), ("2026-11-13T10:00:30", "mcp__memory__remember")])
+    # ひとりの時間: 起きただけ
+    _stream(src, "20261113_120000_stream.jsonl", [("2026-11-13T12:00:03", "mcp__m5-mcp__wake")])
+    assert _wakes(src) == ["10:00 自分で起きて、まわりを感じて、話した", "12:00 自分で起きた"]
+
+
+def test_woke_itself_in_a_chat(tmp_path):
+    """会話の途中でその子が wake を呼んで起きたのも「自分で起きた」。呼んでいない会話のそばの目覚めは「起こされた」のまま"""
+    src = _house(tmp_path)
+    _body_events(src, [{"ts": "2026-11-13T09:00:00", "type": "sleep", "detail": {}},
+                       {"ts": "2026-11-13T10:00:05", "type": "woken", "detail": {"source": "unknown"}},
+                       {"ts": "2026-11-13T11:00:00", "type": "sleep", "detail": {}},
+                       {"ts": "2026-11-13T12:00:05", "type": "woken", "detail": {"source": "unknown"}},
+                       {"ts": "2026-11-13T13:00:00", "type": "sleep", "detail": {}},
+                       {"ts": "2026-11-13T14:00:05", "type": "woken", "detail": {"source": "unknown"}}])
+    _stream(src, "20261113_095950_chat_stream.jsonl", [("2026-11-13T10:00:03", "mcp__m5-puchiko__wake"), ("2026-11-13T10:00:12", "mcp__m5-puchiko__look")])
+    _stream(src, "20261113_115950_chat_stream.jsonl", [("2026-11-13T12:00:03", "mcp__m5-puchiko__speak")])
+    _stream(src, "20261113_133000_chat_stream.jsonl", [("2026-11-13T13:30:03", "mcp__m5-puchiko__wake")])   # 30 分前の wake は別の出来事
+    assert _wakes(src) == ["10:00 自分で起きて、まわりを見た", "12:00 ありさんに起こされた", "14:00 ありさんに起こされた"]
