@@ -48,7 +48,7 @@
 
     <div class="m-card">
       <div class="t-legend" id="legend"></div>
-      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。「自律」「会話」の札は、その場で許されている道具(薄いほうでは渡っていない)。薄い丸は、この期間に手が向いていない道具(180 日にすると、使っていない道具の洗い出しになる)。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
+      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。「自律」の札は ひとりの時間に許されている道具、「会話」の札は 会話につないである部品の道具(会話は権限を全部通すので、つないであれば使える)。薄いほうでは渡っていない。薄い丸は、この期間に手が向いていない道具(180 日にすると、使っていない道具の洗い出しになる)。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
     </div>
 
     <div id="shelves"></div>
@@ -95,7 +95,7 @@
                 <input class="a-input" id="handNote" placeholder="一言(「紫を引いてみる?」など。無くてもいい)" maxlength="200">
                 <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="a-btn a-btn--s" onclick="hand('${esc(t.key)}')">渡す</button><button class="a-btn a-btn--sub a-btn--s" onclick="openForm(null)">やめる</button><span class="t-msg" id="handMsg"></span></div>
               </div>` : "";
-            const where = t.allowed ? `<span class="t-where"><span class="${t.allowed.alone ? "on" : ""}" title="${t.allowed.alone ? "ひとりの時間(自律行動)で使える" : "ひとりの時間では渡していない"}">自律</span><span class="${t.allowed.chat ? "on" : ""}" title="${t.allowed.chat ? "会話で使える" : "会話では渡していない"}">会話</span></span>` : "";
+            const where = t.allowed ? `<span class="t-where"><span class="${t.allowed.alone ? "on" : ""}" title="${t.allowed.alone ? "ひとりの時間(自律行動)で使える" : "ひとりの時間では渡していない"}">自律</span><span class="${t.allowed.chat ? "on" : ""}" title="${t.allowed.chat ? "会話で使える(部品がつないである)" : "会話にはつないでいない"}">会話</span></span>` : "";
             return `<div class="t-row"><span class="lab">${esc(t.label)}${where}<span class="key">${esc(t.key)}</span></span><span class="t-dots">${dots}</span><button class="a-btn a-btn--sub t-hand" onclick="openForm('${esc(t.key)}')">渡す</button>${form}</div>`;
           }).join("") + `</div>`;
       }).join("");

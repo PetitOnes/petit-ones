@@ -60,6 +60,12 @@ def test_allowed_alone_parses_action_script(tmp_path):
     assert tb.allowed_alone(tmp_path / "nope") == set()
     assert tb.allowed_from_names(["mcp__m5-mcp__take_snapshot", "Read"]) == {"m5:take_snapshot", "claude:Read", "claude:ToolSearch"}
     assert "script:write_mailbox" in tb.allowed_from_names(["Bash"]) and "claude:Bash" in tb.allowed_from_names(["Bash"])   # Bash が丸ごとなら台本もぜんぶ
+    cfg = tmp_path / "chat-mcp.json"
+    cfg.write_text(json.dumps({"mcpServers": {"m5-puchi": {}, "memory-puchi": {}, "petit-sns": {}}}), encoding="utf-8")
+    chat = tb.allowed_chat([cfg], {"m5:odd_tool", "weird:thing"})
+    assert {"m5:speak", "memory:recall_divergent", "sns:sns_post", "script:write_mailbox", "claude:Read", "m5:odd_tool"} <= chat
+    assert "notes:write_note" not in chat and "textbook:textbook_read" not in chat and "weird:thing" not in chat
+    assert tb.families_in([tmp_path / "nope.json"]) == set()
 
 
 def test_hand_once_a_day_notice_once_and_felt(tmp_path):
