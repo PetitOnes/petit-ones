@@ -14,7 +14,7 @@
   <script src="/ui/md.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <style>
-    /* ひみつ(手紙を読むページ + わたしている文)。ぷちどうし / みんなのメール を切り替え、だれから・だれあて で絞る。1 通 = 差出人の色の 1 枚 */
+    /* ひみつ(手紙を読むページ + わたしている文 + 行動ログ)。ぷちどうし / みんなのメール を切り替え、だれから・だれあて で絞る。1 通 = 差出人の色の 1 枚 */
     .h-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
     .h-bar label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
     .h-bar select { min-height: var(--ui-ctl-h-s); max-width: 11em; padding: 0 8px; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text); background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-s); }
@@ -56,6 +56,10 @@
     /* わたしている文: その子のプロンプトに入る文とファイルを、1 つずつ開いて読む */
     .h-views { display: flex; gap: 8px; margin-bottom: 12px; }
     [data-view-box][hidden] { display: none; }
+    .h-views { flex-wrap: wrap; }
+    [data-view][hidden] { display: none; }
+    /* 行動ログ: もとのページ(/stream-logs)を、そのままこの中に出す */
+    .l-frame { display: block; width: 100%; height: calc(100dvh - 170px); min-height: 420px; border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); background: #0f0f1a; }
     .w-lead { margin: 0 2px 10px; font-size: var(--ui-fs-s); line-height: 1.6; color: var(--ui-text-sub); }
     .w-group { margin: 16px 2px 6px; font-family: var(--ui-font-head); font-size: 0.95rem; }
     .w-group small { margin-left: 6px; font-family: var(--ui-font); font-size: 0.75rem; font-weight: 400; color: var(--ui-text-sub); }
@@ -81,6 +85,7 @@
     <div class="h-views" id="views">
       <button class="a-pill is-on" aria-pressed="true" data-view="mail">💌 手紙</button>
       <button class="a-pill" aria-pressed="false" data-view="words">📜 わたしている文</button>
+      <button class="a-pill" aria-pressed="false" data-view="logs">🔍 行動ログ</button>
     </div>
     <div data-view-box="mail">
     <div class="h-bar" id="scopes"></div>
@@ -100,6 +105,10 @@
       <div class="h-bar" id="wChars"></div>
       <div id="wList"></div>
       <div class="p-empty" id="wEmpty">読み込み中…</div>
+    </div>
+    <div data-view-box="logs" hidden>
+      <p class="w-lead">ぷちが動いた 1 回ごとの記録(考えたこと・使った道具)。左上の「☰ ログ一覧」から回を選びます。</p>
+      <iframe class="l-frame" id="logFrame" title="行動ログ"></iframe>
     </div>
   </div>
   <script>
@@ -274,10 +283,18 @@
       document.querySelectorAll("[data-view]").forEach(b => { const on = b.dataset.view === v; b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on); });
       document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
       if (v === "words" && !words.loaded) loadWords("");
-      try { history.replaceState(null, "", v === "words" ? "#words" : location.pathname + location.search); } catch (e) {}
+      if (v === "logs" && !$("logFrame").getAttribute("src")) $("logFrame").src = "/stream-logs?embed=1";   // 開いたときに、はじめて読む
+      try { history.replaceState(null, "", v === "mail" ? location.pathname + location.search : "#" + v); } catch (e) {}
     }
     $("views").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
-    if (location.hash === "#words") setView("words");
+    if (["#words", "#logs"].includes(location.hash)) setView(location.hash.slice(1));
+    // 行動ログを見せないことになっている人には、粒を出さない(開いていたら手紙へ戻す)
+    fetch("/api/me").then(r => r.json()).then(me => {
+      if (!(me.hide_tools || []).includes("logs")) return;
+      const b = document.querySelector('[data-view="logs"]');
+      if (b.classList.contains("is-on")) setView("mail");
+      b.hidden = true;
+    }).catch(() => {});
     load(true);
   </script>
 </body>
