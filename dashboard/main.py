@@ -8779,6 +8779,8 @@ HTML = """<!DOCTYPE html>
     /* ポップアップ */
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-end; justify-content: center; }
     .overlay.open { display: flex; }
+    /* メールボックスは手紙の数で高さを変えない(空のとき窓が下に縮んで見えた。2026-11-16 ありさん) */
+    #mailboxOverlay .popup { height: 80vh; height: 80dvh; }
     .popup { background: white; border-radius: 16px 16px 0 0; width: 100%; max-width: 600px; max-height: 80vh; display: flex; flex-direction: column; padding-bottom: env(safe-area-inset-bottom); }
     .popup-header { padding: 14px 16px; border-bottom: 1px solid var(--char-soft); display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
     .popup-title { font-size: 0.9rem; font-weight: 600; color: var(--char-dark); }
