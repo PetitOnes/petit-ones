@@ -4,6 +4,7 @@
 Usage:
     python3 write_mailbox.py <from_id> <to_id> <content>
     python3 write_mailbox.py <from_id> <to_id> --file <path>
+    python3 write_mailbox.py <from_id> <to_id> --tag お願い <content>     # 印(お願い / おしらせ / おしゃべり)。本文の 1 行目に [お願い] と入る。印なしでもよい
 
 例:
     python3 write_mailbox.py puchiteya puchiko "返事だよ！"
@@ -35,6 +36,19 @@ def main() -> int:
 
     from_id = sys.argv[1]
     to_id = sys.argv[2]
+    tag = None
+    args = sys.argv[3:]
+    if args and args[0] == "--tag":   # 印(2026-11-16、ぷちたちと決めた 3 つ。表記ゆれは mail_tags がそろえる)
+        if len(args) < 3:
+            print("Error: --tag <印> <content>", file=sys.stderr)
+            return 1
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import mail_tags
+        tag = mail_tags.normalize(args[1])
+        if tag is None:
+            print("Error: 印は " + " / ".join(mail_tags.TAGS) + " のどれか(付けなくてもよい)", file=sys.stderr)
+            return 1
+        sys.argv = sys.argv[:3] + args[2:]
 
     if not VALID_ID.match(from_id) or not VALID_ID.match(to_id):
         print(f"Error: IDs must be alphanumeric+underscore. got: {from_id}, {to_id}", file=sys.stderr)
@@ -52,6 +66,8 @@ def main() -> int:
     if not content.strip():
         print("Error: content is empty", file=sys.stderr)
         return 1
+    if tag:
+        content = f"[{tag}]\n\n{content}"
 
     MAILBOX_DIR.mkdir(parents=True, exist_ok=True)
 
