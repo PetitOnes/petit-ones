@@ -574,7 +574,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -1911,6 +1911,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts += _sounds().notice(DATA_DIR, character_id, mark=True)   # 音のお願いの行方(2026-11-16)
         except Exception:
             pass
+        try:
+            receipts += _sing().notice(DATA_DIR, character_id, mark=True)   # ほかの子が作った音が届いた(2026-11-16)
+        except Exception:
+            pass
         if receipts:
             effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
@@ -3162,6 +3166,12 @@ def _sounds():
     return sounds
 
 
+def _sing():
+    """うたう(ぷちが自分の音を作る)。作り方・置き場所は scripts/sing.py"""
+    import sing
+    return sing
+
+
 def _sound_keeper(request: Request | None) -> bool:
     """体へ送る・家の音を消す・ぷちのお願いに答えるのは、家の持ち主だけ(2026-11-16 ありさん)"""
     return _is_owner(request) and (_get_username(request) if request is not None else None) in (None, OWNER_USER)
@@ -3511,7 +3521,17 @@ async def api_sounds(request: Request = None):
         except Exception:
             it["shape"] = None
         it["words"] = said.get(it["name"], [])
-    return {"library": library, "bodies": list(bodies), "requests": reqs, "keeper": _sound_keeper(request),
+    made = []   # ぷちが作った音(うたう)
+    try:
+        import sound_shape
+        for m in _sing().made(DATA_DIR):
+            if m.get("by") in mine:
+                f = _sing().path_of(DATA_DIR, m["by"], m["name"])
+                made.append({**m, "line": sound_shape.shape(f)["line"] if f else "",
+                             "given": [g["to"] for g in _sing().gifts(DATA_DIR) if g.get("from") == m["by"] and g.get("name") == m["name"]]})
+    except Exception:
+        made = []
+    return {"library": library, "bodies": list(bodies), "requests": reqs, "made": made, "keeper": _sound_keeper(request),
             "max_seconds": _sounds().MAX_SECONDS,
             "max_title": _sounds().MAX_TITLE, "max_description": _sounds().MAX_DESCRIPTION}
 
@@ -3537,6 +3557,82 @@ def api_sounds_meta(body: SoundMetaRequest, request: Request):
         return JSONResponse({"error": "その音は家にありません"}, status_code=404)
     meta = _sounds().set_meta(DATA_DIR, body.name, body.title, body.description, by=_get_username(request) or OWNER_USER)
     return {"ok": True, "title": meta["title"], "description": meta["description"]}
+
+
+# ---- うたう: ぷちが作った音(scripts/sing.py)。鳴らすのはその子の体で 1 回、その場かぎりの置き場 sing.wav ----
+
+class SingPlayRequest(BaseModel):
+    char_id: str
+    name: str
+    by: str = ""
+
+
+class SingKeepRequest(BaseModel):
+    by: str
+    name: str
+    title: str = ""
+    description: str = ""
+
+
+@app.post("/api/sing/play")
+async def api_sing_play(body: SingPlayRequest, request: Request):
+    """作った音を、その子の体で 1 回鳴らす。からだの使い方で「鳴らす」が切・からだ おやすみ中・眠っているときは鳴らさない"""
+    import requests as req
+    cid = body.char_id
+    if cid not in GROUP_CHAR_IDS or cid not in {c["id"] for c in _my_chars(request)}:
+        return JSONResponse({"error": "その子の体は鳴らせません"}, status_code=403)
+    path = _sing().path_of(DATA_DIR, body.by or cid, body.name)
+    if path is None:
+        return JSONResponse({"error": "その音はありません(sing.py list で見られます)"}, status_code=404)
+    eff = _body().effective(get_settings(cid))
+    if eff["rest"]:
+        return JSONResponse({"error": "いまは からだ おやすみ中なので、鳴らしません。作った音は残っています"}, status_code=409)
+    if not eff["switches"].get("sound", True):
+        return JSONResponse({"error": "からだの使い方で「鳴らす」が切になっているので、鳴らしません。作った音は残っています"}, status_code=409)
+    host = await resolve_m5_host(get_char_config(cid))
+    if not host:
+        return JSONResponse({"error": "体につながっていないので、鳴らせません。作った音は残っています"}, status_code=409)
+    try:
+        if (await asyncio.to_thread(lambda: req.get(f"http://{host}/status", timeout=4).json())).get("is_sleeping"):
+            return JSONResponse({"error": "体が眠っているので、鳴らしません。作った音は残っています"}, status_code=409)
+    except Exception:
+        pass
+    data = path.read_bytes()
+    try:
+        r = await asyncio.to_thread(lambda: req.post(f"http://{host}/upload_wav", files={"file": ("sing.wav", data, "audio/wav")}, timeout=60))
+        if r.status_code != 200:
+            return JSONResponse({"error": f"体に届けられませんでした({r.status_code})"}, status_code=502)
+        await asyncio.to_thread(lambda: req.get(f"http://{host}/se_play", params={"name": "sing.wav"}, timeout=20))
+    except Exception:
+        return JSONResponse({"error": "体に届けられませんでした"}, status_code=502)
+    return {"ok": True, "message": f"鳴らしました: {body.name}"}
+
+
+@app.get("/api/sing/file/{by}/{name}")
+def api_sing_file(by: str, name: str, request: Request):
+    """ぷちが作った音を、ブラウザで聞く"""
+    path = _sing().path_of(DATA_DIR, by, name) if by in {c["id"] for c in _my_chars(request)} else None
+    if path is None:
+        return JSONResponse({"error": "その音はありません"}, status_code=404)
+    return Response(path.read_bytes(), media_type="audio/wav", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/sing/keep")
+def api_sing_keep(body: SingKeepRequest, request: Request):
+    """ぷちが作った音を、家の音に入れる(家の持ち主だけ)。家の音になれば、ほかの子も体に入れてほしいとお願いできる"""
+    if not _sound_keeper(request):
+        return _keeper_only()
+    sd = _sounds()
+    path = _sing().path_of(DATA_DIR, body.by, body.name)
+    if path is None:
+        return JSONResponse({"error": "その音はありません"}, status_code=404)
+    target = sd.library_dir(DATA_DIR) / f"{body.name}.wav"
+    if not sd.is_name(target.name) or target.exists():
+        return JSONResponse({"error": f"{target.name} はもう家の音にあります"}, status_code=409)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(path.read_bytes())
+    sd.set_meta(DATA_DIR, target.name, body.title, body.description or f"{_user_label(body.by, body.by)}が作った音", by=body.by)
+    return {"ok": True, "name": target.name}
 
 
 @app.get("/api/sounds/backup")

@@ -58,7 +58,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TITLE = 40
 MAX_DESCRIPTION = 200
 MAX_WHY = 200
-SYSTEM_SOUNDS = {"tts_speak.wav", "voice_memo.wav"}   # 声とボイスメモの仕組みが使う。外さない
+SYSTEM_SOUNDS = {"tts_speak.wav", "voice_memo.wav", "sing.wav"}   # 声・ボイスメモ・うたう(sing.py)の仕組みが使う。外さない
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,%d}\.wav$" % (MAX_NAME - 1))
 
 
