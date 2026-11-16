@@ -66,6 +66,11 @@ SHELVES: list[tuple[str, str, dict[str, object]]] = [
         "module:get_env": "外付けセンサーの気温・湿度", "module:get_gps": "外付け GPS の位置",
     }),
     ("printer", "プリンター(感熱紙)", {"m5:print_text": "紙に文字を印字する(Phomemo M02S。PRINTER_ADDRESS が要る)", "m5:print_image_text": "紙に絵と文字を印字する"}),
+    ("rover", "ローバー(車輪の台。ROVER_URL が要る)", {
+        "m5:rover_hold": {"label": "操作権を取る・返す(ほかの子が使っていたら取れない)", "keys": ["m5:rover_acquire", "m5:rover_release"]},
+        "m5:rover_move": "進む", "m5:rover_rotate": "回る", "m5:rover_sequence": "動きをまとめて",
+        "m5:rover_set_speed": "速さを決める", "m5:rover_stop": "止まる", "m5:rover_status": "ローバーの様子", "m5:rover_beep": "ローバーのブザーを鳴らす(高さと長さ)",
+    }),
     ("voice", "声", {"m5:speak": "声に出す"}),   # set_voice(自分の声を決める)は、いまは出さない(2026-11-16 ありさん)
     ("memory", "記憶", {
         "memory:remember": "覚える", "memory:recall": "思い出す", "memory:recall_divergent": "記憶を違う方向から引く", "memory:recall_with_associations": "つながりごと思い出す",
