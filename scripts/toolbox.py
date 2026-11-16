@@ -39,10 +39,13 @@ SHELVES: list[tuple[str, str, dict[str, str]]] = [
         "m5:look": "目を動かす", "m5:blink": "まばたき", "m5:show_face": "顔を出す", "m5:play_icon": "アイコンを出す", "m5:play_sound": "音を鳴らす",
         "m5:print_text": "画面に文字を出す", "m5:print_image_text": "絵と文字を出す", "m5:list_album": "アルバムを見る", "m5:view_album_photo": "写真を見る",
         "m5:delete_album_photo": "自分の写真を消す", "m5:save_tts_memo": "ボイスメモを残す", "m5:set_volume": "音量を変える", "m5:get_volume": "音量を見る",
-        "m5:sleep": "眠る", "m5:wake": "起きる", "m5:wait_for_menu_select": "触られるのを待つ", "m5:list_faces": "顔の一覧", "m5:list_sounds": "音の一覧",
+        "m5:sleep": "眠る", "m5:wake": "起きる", "m5:wait_for_menu_select": "触られるのを待つ", "m5:wait_for_touch": "触られるのを待つ(体)", "m5:list_faces": "顔の一覧", "m5:list_sounds": "音の一覧",
+        "m5:list_icons": "アイコンの一覧", "m5:set_face_color": "顔の色を変える", "m5:set_face_draw_mode": "顔の描き方", "m5:set_face_slideshow_mode": "顔を順に出す",
+        "m5:mic_start": "耳を澄ます", "m5:mic_stop": "耳を閉じる", "m5:list_voice_memos": "ボイスメモの一覧", "m5:listen_voice_memo": "ボイスメモを聞く", "m5:lock_voice_memo": "ボイスメモに鍵",
+        "m5:lock_album_photo": "写真に鍵", "m5:conversation_relay": "となりの子に話をつなぐ", "m5:batch_commands": "体の命令をまとめて", "m5:set_power_save": "省エネを切り替える", "m5:get_power_save": "省エネを見る",
         "module:get_env": "外付けの空気を読む", "module:get_gps": "外付けの位置を読む", "module:get_ble_rssi": "近くの電波を読む",
     }),
-    ("voice", "声", {"m5:speak": "声に出す"}),
+    ("voice", "声", {"m5:speak": "声に出す", "m5:set_voice": "自分の声を決める"}),
     ("memory", "記憶", {
         "memory:remember": "覚える", "memory:recall": "思い出す", "memory:recall_divergent": "記憶を違う方向から引く", "memory:recall_with_associations": "つながりごと思い出す",
         "memory:search_memories": "記憶を探す", "memory:list_recent_memories": "最近の記憶を並べる", "memory:create_episode": "出来事のまとまりを作る",
@@ -50,7 +53,7 @@ SHELVES: list[tuple[str, str, dict[str, str]]] = [
         "memory:get_causal_chain": "なぜそうなったかをたどる", "memory:get_working_memory": "いま頭にあること", "memory:refresh_working_memory": "頭の中を入れ替える",
         "memory:tom": "相手の心を考える", "memory:consolidate_memories": "記憶を整理する", "memory:get_memory_stats": "記憶の数を見る",
         "memory:save_visual_memory": "見たものを覚える", "memory:save_audio_memory": "聞いたものを覚える", "memory:recall_by_camera_position": "見た場所から思い出す",
-        "memory:get_association_diagnostics": "つながりの具合を見る",
+        "memory:get_association_diagnostics": "つながりの具合を見る", "memory:sleep": "眠って記憶を整える",
     }),
     ("desire", "欲求", {"desire:get_desires": "いまの欲求を見る", "desire:satisfy_desire": "満たされたと伝える", "desire:boost_desire": "欲求を強める"}),
     ("notes", "ノート", {"notes:write_note": "ノートを書く", "notes:append_note": "ノートに書き足す", "notes:read_note": "ノートを読む", "notes:list_notes": "ノートの一覧", "notes:delete_note": "ノートを消す"}),
@@ -66,7 +69,12 @@ SHELVES: list[tuple[str, str, dict[str, str]]] = [
     ("world", "家と外", {
         "script:sky": "空(月・節気)", "script:room_log": "家の空気", "script:phone_place": "家の人のスマホの部屋", "script:spots": "見に行けるもの", "script:events": "予定",
         "script:anniversaries": "記念日", "script:notices": "受け取る一言を決める", "script:check_usage": "使った量を見る", "script:music": "音楽をいっしょに", "script:whereabouts": "いま どこ",
-        "switchbot:list_devices": "家電の一覧", "switchbot:get_device_status": "家電の様子",
+        "switchbot:list_devices": "家電の一覧", "switchbot:get_device_status": "家電の様子", "switchbot:turn_on": "家電をつける", "switchbot:turn_off": "家電を消す", "switchbot:send_command": "家電に命令",
+    }),
+    ("heart", "心拍(Garmin)", {
+        "garmin-ble:get_realtime_heart_rate": "いまの心拍(スマホの中継)", "garmin-ble:get_hrv_analysis": "心拍のゆらぎ", "garmin-ble:scan_ble_devices": "近くの機器を探す",
+        "garmin-health:get_heart_rate": "心拍の記録", "garmin-health:get_sleep": "眠りの記録", "garmin-health:get_stress": "ストレスの記録", "garmin-health:get_body_battery": "体の電池",
+        "garmin-health:get_steps": "歩数", "garmin-health:get_health_summary": "体の調子のまとめ",
     }),
     ("think", "調べる・読む", {
         "claude:WebSearch": "ウェブで調べる", "claude:WebFetch": "ページを読む", "script:reader": "本文を読み取る", "claude:Skill": "技(本を読む など)", "claude:Read": "ファイルを読む",
@@ -74,7 +82,7 @@ SHELVES: list[tuple[str, str, dict[str, str]]] = [
     }),
 ]
 OTHER_SHELF = ("other", "ほか")
-_FAMILY = [("m5-module", "module"), ("m5", "m5"), ("memory", "memory"), ("desire-system", "desire"), ("notes", "notes"), ("relations", "relations"),
+_FAMILY = [("m5-module", "module"), ("m5_mcp", "m5"), ("m5", "m5"), ("memory", "memory"), ("desire-system", "desire"), ("notes", "notes"), ("relations", "relations"),
            ("textbook", "textbook"), ("petit-sns", "sns"), ("switchbot", "switchbot")]
 _SCRIPT = re.compile(r"scripts/([A-Za-z0-9_]+)\.py")
 _STAMP = re.compile(r"^(\d{8})_(\d{6})")

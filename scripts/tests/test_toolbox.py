@@ -26,7 +26,7 @@ def house(tmp_path: Path) -> Path:
 def test_tool_key():
     assert tb.tool_key("mcp__m5-mcp__speak") == "m5:speak" == tb.tool_key("mcp__m5-puchiko__speak")
     assert tb.tool_key("mcp__memory-puchiru__recall") == "memory:recall" and tb.tool_key("mcp__desire-system-puchiko__get_desires") == "desire:get_desires"
-    assert tb.tool_key("mcp__m5-module__get_env") == "module:get_env" and tb.tool_key("mcp__petit-sns__sns_post") == "sns:sns_post"
+    assert tb.tool_key("mcp__m5-module__get_env") == "module:get_env" == tb.tool_key("mcp__m5-module-mcp__get_env") and tb.tool_key("mcp__m5_mcp__speak") == "m5:speak" and tb.tool_key("mcp__petit-sns__sns_post") == "sns:sns_post"
     assert tb.tool_key("Bash", {"command": "cd x && python3 /a/b/scripts/mail_tags.py pending puchi"}) == "script:mail_tags"
     assert tb.tool_key("Bash", {"command": "ls"}) == "claude:Bash" and tb.tool_key("WebSearch") == "claude:WebSearch"
 
