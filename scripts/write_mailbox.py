@@ -4,7 +4,7 @@
 Usage:
     python3 write_mailbox.py <from_id> <to_id> <content>
     python3 write_mailbox.py <from_id> <to_id> --file <path>
-    python3 write_mailbox.py <from_id> <to_id> --tag お願い <content>     # 印(お願い / おしらせ / おしゃべり)。本文の 1 行目に [お願い] と入る。印なしでもよい
+    python3 write_mailbox.py <from_id> <to_id> --tag お願い <content>     # 印(お願い / おしらせ / おしゃべり / しずかなやつ)。本文の 1 行目に [お願い] と入る。印なしでもよい
 
 例:
     python3 write_mailbox.py puchiteya puchiko "返事だよ！"
@@ -32,6 +32,7 @@ def main() -> int:
     if len(sys.argv) < 4:
         print(f"Usage: {sys.argv[0]} <from_id> <to_id> <content>", file=sys.stderr)
         print(f"       {sys.argv[0]} <from_id> <to_id> --file <path>", file=sys.stderr)
+        print(f"       {sys.argv[0]} <from_id> <to_id> --tag <印> <content>   # 印: お願い(返事がほしい)/ おしらせ(読めば済む)/ おしゃべり(返事はあってもなくてもいい)/ しずかなやつ(急がなくていいけど読んでほしい)。付けなくてもよい", file=sys.stderr)
         return 1
 
     from_id = sys.argv[1]

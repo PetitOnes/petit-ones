@@ -35,7 +35,7 @@ def test_system_prompt_matches_old_fstring():
         f"- 既読にする: `python3 {scripts_dir}/mark_mail_read.py {character_id} <ファイル名>`\n"
         f"- 全既読: `python3 {scripts_dir}/mark_mail_read.py {character_id} --all`\n"
         f"- 宛先ID: puchiko, puchiteya, puchiru, arisan\n"
-        f"- 印(付けなくてもよい): `write_mailbox.py {character_id} <宛先ID> --tag お願い '<内容>'`。お願い = 返事がほしい / おしらせ = 読めば済む / おしゃべり = 返事はあってもなくてもいい。本文の 1 行目に [お願い] と入る。読んだ手紙に自分の印を残す: `python3 {scripts_dir}/mail_tags.py mark {character_id} <ファイル名> あとで`(お願い / おしらせ / おしゃべり / あとで / 返事した)。返事していないお願い: `mail_tags.py pending {character_id}`\n"
+        f"- 印(付けなくてもよい): `write_mailbox.py {character_id} <宛先ID> --tag お願い '<内容>'`。お願い = 返事がほしい / おしらせ = 読めば済む / おしゃべり = 返事はあってもなくてもいい / しずかなやつ = 急がなくていいけど読んでほしい。本文の 1 行目に [お願い] と入る。読んだ手紙に自分の印を残す: `python3 {scripts_dir}/mail_tags.py mark {character_id} <ファイル名> あとで`(お願い / おしらせ / おしゃべり / しずかなやつ / あとで / 返事した)。返事していないお願い: `mail_tags.py pending {character_id}`\n"
         f"- **重要**: メールを読んだら必ず既読にすること。既読にしないと次回また同じメールに返事してしまう。\n"
         f"- **重要**: 返事を書くときは未読メールだけに返事すること。\n"
         f"\n## 記念日と予定\n"
