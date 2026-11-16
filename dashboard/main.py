@@ -3567,7 +3567,14 @@ def api_toolbox(days: int = 14, request: Request = None):
     days = max(1, min(int(days or 14), 180))   # 180 日 = 使っていない道具の洗い出し用
     chars = [{"id": c["id"], "name": c.get("name", c["id"]), "color": c.get("color", "#cab8d9")} for c in list_characters()]
     usages = {c["id"]: tb.usage(DATA_DIR, c["id"], days) for c in chars}
-    out = {"days": days, "chars": chars, "shelves": tb.shelves_with(usages), "today": datetime.now().strftime("%Y-%m-%d")}
+    # どの場で許されているか: 自律 = autonomous-action.sh の一覧、会話 = この家の会話の道具(からだの使い方で止める分は見ない)
+    allowed = {"alone": tb.allowed_alone(PROJECT_DIR), "chat": tb.allowed_from_names(BASE_TOOLS + CAMERA_TOOLS + SOUND_TOOLS + MIC_TOOLS + FILE_TOOLS)}
+    shelves = tb.shelves_with(usages, allowed)
+    # 「消す」(自分の写真・ノート)は、どの子にも許していないあいだは棚に出さない
+    if not any(_body().effective(get_settings(c["id"]))["switches"].get("erase") for c in chars):
+        for s in shelves:
+            s["tools"] = [t for t in s["tools"] if not set(t["keys"]) & tb.ERASE_KEYS]
+    out = {"days": days, "chars": chars, "shelves": shelves, "today": datetime.now().strftime("%Y-%m-%d")}
     out.update(tb.log(DATA_DIR))
     return out
 

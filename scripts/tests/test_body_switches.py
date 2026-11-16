@@ -15,8 +15,9 @@ NOON = datetime(2026, 11, 14, 12, 0)
 
 
 def test_legacy_and_defaults():
-    assert bs.base_switches({}) == {"see": True, "speak": True, "sound": True, "hear": False}
-    assert bs.base_switches({"allow_camera": False, "allow_microphone": True}) == {"see": False, "speak": True, "sound": True, "hear": True}
+    assert bs.base_switches({}) == {"see": True, "speak": True, "sound": True, "hear": False, "erase": False}
+    assert "mcp__m5-mcp__delete_album_photo" in bs.disallowed_tools(bs.base_switches({})) and "mcp__notes__delete_note" in bs.disallowed_tools(bs.base_switches({}))   # 消す は許すまで止める
+    assert bs.base_switches({"allow_camera": False, "allow_microphone": True}) == {"see": False, "speak": True, "sound": True, "hear": True, "erase": False}
     assert bs.base_switches({"allow_camera": False, "body": {"see": True, "speak": False}})["see"] is True   # body が勝つ
     assert bs.base_switches({"body": {"speak": False}})["speak"] is False
 
@@ -35,8 +36,8 @@ def test_rest_until_and_hours():
 
 def test_effective_disallowed_and_rules():
     eff = bs.effective({"body": {"hear": True}, "rest": {"until": "2026-11-14T15:30"}}, NOON)
-    assert eff["switches"] == {"see": False, "speak": False, "sound": False, "hear": True}   # おやすみ中は 聞く だけ残る
-    assert bs.disallowed_tools(eff["switches"]) == ["mcp__m5-mcp__take_snapshot", "mcp__m5-mcp__speak", "mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon"]
+    assert eff["switches"] == {"see": False, "speak": False, "sound": False, "hear": True, "erase": False}   # おやすみ中は 聞く だけ残る
+    assert bs.disallowed_tools(eff["switches"]) == ["mcp__m5-mcp__take_snapshot", "mcp__m5-mcp__speak", "mcp__m5-mcp__play_sound", "mcp__m5-mcp__play_icon", "mcp__m5-mcp__delete_album_photo", "mcp__notes__delete_note"]
     v = bs.template_vars(eff)
     assert v["rest_note"].startswith("いまは からだ おやすみ(15:30 まで。いまから): カメラ・声・効果音は使わない。")
     eff2 = bs.effective({}, NOON)
