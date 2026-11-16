@@ -6381,8 +6381,10 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
 # - 「みんな」は、話しかけるたびに最初の子を 1 人ずつずらす(名前順のまま固定にしない)
 # - 自分が何番目か、先にだれが答えたか、あとでだれが読むかを、毎回その子に知らせる
 # - べつべつに聞く(separate)ときは、ほかの子の返事を見せない。あとで「返事を並べて見せる」ことができる
+# - 前の回で自分のあとに答えた子の返事は、次に呼ばれたときに「まだ読んでいない分」として渡す(2026-11-16)
 _GROUP_TURN_FILE = DATA_DIR / "state" / "group_turn.json"
 _last_separate: dict[str, dict] = {}   # 見ている人 → 直前の「べつべつ」の {question, answers, char_ids, log_type}
+UNSEEN_ROUNDS = 2   # さかのぼる回数(その子がしばらく呼ばれていなかったとき)
 
 
 def _rotate_group(chars: list[dict]) -> list[dict]:
@@ -6402,18 +6404,55 @@ def _rotate_group(chars: list[dict]) -> list[dict]:
     return chars[k:] + chars[:k]
 
 
+def unseen_group_replies(log: list[dict], char_id: str, username: str, rounds: int = UNSEEN_ROUNDS) -> list[str]:
+    """その子がまだ読んでいない、ほかの子の返事(「名前: 文」の並び)。
+    みんなで話すとき、自分のあとに答えた子の返事は、その回には届かない。次に呼ばれたとき、ここで補う。
+    見るのは、同じ人との「みんな」「だれか」の記録。いまの回(最後の問いかけ)は除く(先に答えた子の分は prev で渡る)。
+    「べつべつに聞く」の回は見せない。その子の直前の返事より後ろだけ。その子がいなかった回は、問いかけも添える。
+    さかのぼるのは、いまの回の前 rounds 回まで。"""
+    mine = [m for m in log if m.get("type") in ("group", "select") and (m.get("user") or OWNER_USER) == username]
+    turns: list[list[dict]] = []
+    for m in mine:
+        if m.get("role") == "user":
+            turns.append([m])
+        elif turns:
+            turns[-1].append(m)
+    turns = turns[:-1][-rounds:]   # いまの回を除いた、直近 rounds 回
+    lines: list[str] = []
+    for turn in turns:
+        if turn[0].get("separate"):
+            continue
+        replies = turn[1:]
+        seen_at = max((k for k, r in enumerate(replies) if r.get("role") == char_id), default=None)
+        rest = replies if seen_at is None else replies[seen_at + 1:]
+        rest = [r for r in rest if r.get("role") != char_id]
+        if not rest:
+            continue
+        if seen_at is None:   # その子がいなかった回は、何を聞かれての返事か分かるよう問いかけも
+            lines.append(f"{turn[0].get('name') or username}: {turn[0].get('text', '')}")
+        lines.extend(f"{r.get('name') or r.get('role')}: {r.get('text', '')}" for r in rest)
+    return lines
+
+
 def _group_turn_context(prompt: str, chars: list[dict], i: int, responses: list[dict], separate: bool,
-                        rotating: bool = False) -> str:
-    """i 番目の子に渡す文。ひとりだけに聞くときは、何も足さない。rotating = 順番が毎回変わる場(「みんな」)か"""
+                        rotating: bool = False, username: str | None = None) -> str:
+    """i 番目の子に渡す文。ひとりだけに聞くときは、何も足さない。rotating = 順番が毎回変わる場(「みんな」)か。
+    username を渡すと、その子がまだ読んでいない前の回の返事も添える"""
     if len(chars) < 2:
         return prompt
     if separate:
         return _prompt("group_separate", prompt=prompt).rstrip("\n")
     names = [c.get("name", c["id"]) for c in chars]
+    unseen: list[str] = []
+    if username:
+        try:
+            unseen = unseen_group_replies(load_group_log(), chars[i]["id"], username)
+        except Exception as e:   # 記録が読めなくても、会話は止めない
+            print(f"[group] unseen replies: {e}")
     return _prompt(
         "group_turn", prompt=prompt, order=" → ".join(names), position=i + 1, rotating=rotating,
         before="、".join(names[:i]), after="、".join(names[i + 1:]),
-        prev="\n".join(f"{r['name']}: {r['reply']}" for r in responses),
+        prev="\n".join(f"{r['name']}: {r['reply']}" for r in responses), unseen="\n".join(unseen),
     ).rstrip("\n")
 
 
@@ -6468,7 +6507,7 @@ async def api_group_chat(req: GroupChatRequest, request: Request):
     responses = []
     append_group_log({"user": username, "type": "group", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
     for i, char in enumerate(chars):
-        context = _group_turn_context(req.message, chars, i, responses, req.separate, rotating=True)
+        context = _group_turn_context(req.message, chars, i, responses, req.separate, rotating=True, username=username)
         reply = await call_claude(char["id"], context, username=username)
         append_chat(char["id"], "user", req.message, username, via="group")
         append_chat(char["id"], char["id"], reply, username, via="group")
@@ -6506,7 +6545,7 @@ async def _sequential_chat_job(entry: dict, chars: list[dict], message: str, use
             append_group_log(user_entry)
         responses = []
         for i, char in enumerate(chars):
-            context = _group_turn_context(prep["prompt"], chars, i, responses, separate, rotating=log_type == "group")
+            context = _group_turn_context(prep["prompt"], chars, i, responses, separate, rotating=log_type == "group", username=username)
             reply = await call_claude(char["id"], context, username=username)
             if not retry:
                 append_chat(char["id"], "user", prep["shown"], username, via="group", media=prep["media"], medias=prep["medias"])
@@ -6610,7 +6649,7 @@ async def api_select_chat(req: SelectChatRequest, request: Request):
     responses = []
     append_group_log({"user": username, "type": "select", "role": "user", "name": user_info["name"], "color": user_info["color"], "text": req.message, "timestamp": now})
     for i, char in enumerate(chars):
-        context = _group_turn_context(req.message, chars, i, responses, req.separate)
+        context = _group_turn_context(req.message, chars, i, responses, req.separate, username=username)
         reply = await call_claude(char["id"], context, username=username)
         append_chat(char["id"], "user", req.message, username, via="group")
         append_chat(char["id"], char["id"], reply, username, via="group")
