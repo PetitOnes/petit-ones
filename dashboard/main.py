@@ -13252,7 +13252,6 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>行動ログ</title>
-  <script>if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");</script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { background: #0f0f1a; display: flex; flex-direction: column; height: 100vh; font-family: 'Menlo', 'Monaco', 'Courier New', monospace; color: #d0d0e8; }
@@ -13266,7 +13265,6 @@ STREAM_LOGS_HTML = """<!DOCTYPE html>
     .topbar .back:hover { opacity: 1; }
     .topbar .title { color: #cab8d9; font-size: 0.95rem; font-weight: 600; }
     .topbar .sep { flex: 1; }
-    html.embed .topbar { display: none; }   /* 🔒 ひみつ の中に出すとき(?embed=1)は、題と「戻る」を出さない */
 
     .ctrlbar {
       background: #16213e; padding: 5px 14px;

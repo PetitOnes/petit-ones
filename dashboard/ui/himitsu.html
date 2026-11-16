@@ -58,9 +58,22 @@
     [data-view-box][hidden] { display: none; }
     .h-views { flex-wrap: wrap; }
     [data-view][hidden] { display: none; }
-    .p-wrap.is-wide { max-width: 1280px; }   /* 行動ログは、広い画面なら広く使う */
-    /* 行動ログ: もとのページ(/stream-logs)を、そのままこの中に出す */
-    .l-frame { display: block; width: 100%; height: calc(100dvh - 170px); min-height: 420px; border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); background: #0f0f1a; }
+    /* 行動ログ: ぷちが動いた 1 回ごとの記録。回を押すと、考えたこと・言ったこと・使った道具が時間の順に並ぶ */
+    .g-kind { flex: 0 0 auto; padding: 1px 9px; font-size: 0.72rem; font-weight: 700; color: var(--ui-text-sub); background: var(--ui-surface-soft); border-radius: 999px; }
+    .g-ev { margin-top: 8px; padding: 8px 12px; border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-s); overflow-wrap: anywhere; }
+    .g-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-bottom: 2px; font-size: 0.72rem; font-weight: 700; color: var(--ui-text-sub); }
+    .g-text { margin: 0; white-space: pre-wrap; font-family: inherit; font-size: 0.9rem; line-height: 1.7; }
+    .g-think { background: none; border-style: dashed; }
+    .g-think .g-text { color: var(--ui-text-sub); }
+    .g-tool, .g-res { background: var(--ui-surface-soft); border-color: transparent; }
+    .g-tool .g-text, .g-res .g-text { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; font-size: 0.78rem; line-height: 1.55; }
+    .g-res { margin-top: 2px; margin-left: 14px; }
+    .g-res.is-err { background: var(--ui-danger-soft); }
+    .g-res.is-err .g-label { color: var(--ui-danger); }
+    .g-clamp { max-height: 6.2em; overflow: hidden; }
+    .g-open { margin-top: 2px; padding: 0; font: inherit; font-size: 0.75rem; color: var(--ui-accent-text); background: none; border: none; cursor: pointer; }
+    .g-end { margin-top: 10px; font-size: 0.75rem; line-height: 1.6; color: var(--ui-text-sub); font-variant-numeric: tabular-nums; }
+    .no-think .g-think, .no-res .g-res { display: none; }
     .w-lead { margin: 0 2px 10px; font-size: var(--ui-fs-s); line-height: 1.6; color: var(--ui-text-sub); }
     .w-group { margin: 16px 2px 6px; font-family: var(--ui-font-head); font-size: 0.95rem; }
     .w-group small { margin-left: 6px; font-family: var(--ui-font); font-size: 0.75rem; font-weight: 400; color: var(--ui-text-sub); }
@@ -108,8 +121,16 @@
       <div class="p-empty" id="wEmpty">読み込み中…</div>
     </div>
     <div data-view-box="logs" hidden>
-      <p class="w-lead">ぷちが動いた 1 回ごとの記録(考えたこと・使った道具)。ぷちを選んで、「☰ ログ一覧」から回を選びます。</p>
-      <iframe class="l-frame" id="logFrame" title="行動ログ"></iframe>
+      <p class="w-lead">ぷちが動いた 1 回ごとの記録。回を押すと、考えたこと・言ったこと・使った道具が、時間の順に並びます(新しい 50 回まで)。</p>
+      <div class="h-bar" id="gChars"></div>
+      <div class="h-bar" id="gKinds"></div>
+      <div class="h-bar" id="gShow">
+        <button class="a-pill is-on" aria-pressed="true" data-show="think">考えたこと</button>
+        <button class="a-pill is-on" aria-pressed="true" data-show="res">道具の結果</button>
+      </div>
+      <div class="h-count" id="gCount"></div>
+      <div id="gList"></div>
+      <div class="p-empty" id="gEmpty">読み込み中…</div>
     </div>
   </div>
   <script>
@@ -280,12 +301,106 @@
       const b = e.target.closest("[data-char]");
       if (b && b.dataset.char !== words.character) loadWords(b.dataset.char);
     });
+    // ---- 行動ログ ----
+    // 記録の名前は <年月日>_<時分秒>[_<きっかけ>]_stream.jsonl。きっかけが無いものが、ひとりの時間(自律行動)
+    const logs = { loaded: false, chars: [], character: "", files: [], kind: "all", got: {} };
+    const KINDS = [["all", "すべて"], ["alone", "ひとりの時間"], ["chat", "会話"], ["body", "体のできごと"], ["other", "ほか"]];
+    const SRC = { "": ["alone", "ひとりの時間"], chat: ["chat", "会話"], camera: ["body", "体: カメラ"], sensor: ["body", "体: センサー"], mic: ["body", "体: マイク"] };
+    function parseRun(f) {
+      const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})(?:_(.+))?_stream\.jsonl$/.exec(f);
+      if (!m) return { file: f, kind: "other", label: "ほか", at: f.replace("_stream.jsonl", "") };
+      const [kind, label] = SRC[m[7] || ""] || ["other", m[7]];
+      return { file: f, kind, label, at: `${m[2]}/${m[3]} ${m[4]}:${m[5]}` };
+    }
+    const toolName = n => String(n || "?").replace(/^mcp__/, "").replace(/__/g, " › ");
+    function block(cls, label, text) {   // 長い文は畳んで、押すと全部
+      const t = String(text || "");
+      const long = t.length > 320 || t.split("\n").length > 5;
+      return `<div class="g-ev ${cls}"><div class="g-label">${label}</div><pre class="g-text${long ? " g-clamp" : ""}">${esc(t)}</pre>${long ? `<button class="g-open" data-open>ぜんぶ見る ↓</button>` : ""}</div>`;
+    }
+    function runHtml(events) {
+      if (!events.length) return `<div class="p-empty">記録が、空です</div>`;
+      let last = "";
+      return events.map(ev => {
+        if (ev.kind === "thinking") return block("g-think", "💭 考えたこと", ev.text);
+        if (ev.kind === "text") { last = ev.text; return block("g-say", "💬 言ったこと", ev.text); }
+        if (ev.kind === "user_text") return block("g-think", "📨 渡された文", ev.text);
+        if (ev.kind === "tool_call") {
+          let input = "";
+          try { input = JSON.stringify(ev.input, null, 2); } catch (e) { input = String(ev.input); }
+          return block("g-tool", `🔧 道具を使った <span>${esc(toolName(ev.name))}</span>`, input === "{}" ? "" : input);
+        }
+        if (ev.kind === "tool_result") return block("g-res" + (ev.is_error ? " is-err" : ""), `↩ ${esc(toolName(ev.name))} ${ev.is_error ? "うまくいかなかった" : "の結果"}`, ev.text);
+        if (ev.kind === "result") {
+          const u = ev.usage || {}, n = v => (v || 0).toLocaleString();
+          const denied = (ev.permission_denials || []).length ? `<br>使えなかった道具: ${ev.permission_denials.map(d => esc(toolName(d))).join("、")}` : "";
+          const bad = ev.subtype && ev.subtype !== "success" ? `<br>終わり方: ${esc(ev.subtype)}` : "";
+          const fin = ev.result && ev.result.trim() !== String(last).trim() ? block("g-say", "💬 さいごの返事", ev.result) : "";
+          return `${fin}<div class="g-end">やりとり ${n(ev.turns)} 回 ・ $${(ev.cost_usd || 0).toFixed(4)} ・ 入力 ${n(u.input)} / 出力 ${n(u.output)} / キャッシュ書き ${n(u.cache_creation)} / キャッシュ読み ${n(u.cache_read)}${bad}${denied}</div>`;
+        }
+        if (ev.kind === "init") return `<div class="g-end">モデル: ${esc(ev.model || "?")}</div>`;
+        return "";
+      }).join("");
+    }
+    function showRuns() {
+      const rows = logs.files.filter(r => logs.kind === "all" || r.kind === logs.kind);
+      const has = new Set(logs.files.map(r => r.kind));
+      $("gKinds").innerHTML = KINDS.filter(([id]) => id === "all" || has.has(id)).map(([id, label]) =>
+        `<button class="a-pill${id === logs.kind ? " is-on" : ""}" aria-pressed="${id === logs.kind}" data-kind="${id}">${label}</button>`).join("");
+      $("gList").innerHTML = rows.map(r => `<details class="w-sec" data-file="${esc(r.file)}"><summary><span class="g-kind">${esc(r.label)}</span><span>${esc(r.at)}</span></summary><div class="w-body"><div class="p-empty">読み込み中…</div></div></details>`).join("");
+      $("gCount").textContent = rows.length ? `${rows.length} 回(新しい順)` : "";
+      $("gEmpty").style.display = rows.length ? "none" : "";
+      $("gEmpty").textContent = "記録は、ありません";
+    }
+    async function loadRuns(cid) {
+      logs.character = cid; logs.files = []; logs.got = {};
+      $("gChars").innerHTML = logs.chars.map(c => `<button class="a-pill${c.id === cid ? " is-on" : ""}" aria-pressed="${c.id === cid}" data-char="${esc(c.id)}"><span class="h-dot" style="background:${esc(c.color || "#d9cdbf")}"></span> ${esc(c.name)}</button>`).join("");
+      $("gList").innerHTML = ""; $("gCount").textContent = ""; $("gEmpty").style.display = ""; $("gEmpty").textContent = "読み込み中…";
+      try {
+        const res = await fetch(`/api/stream-logs/${encodeURIComponent(cid)}`);
+        if (!res.ok) throw new Error(res.status);
+        logs.files = (await res.json()).map(parseRun);
+      } catch (e) { $("gEmpty").textContent = "読み込めませんでした"; return; }
+      if (!logs.files.some(r => r.kind === logs.kind)) logs.kind = "all";
+      showRuns();
+    }
+    async function loadLogChars() {
+      logs.loaded = true;
+      try { logs.chars = (await (await fetch("/api/secret_prompts")).json()).characters || []; } catch (e) { logs.chars = []; }
+      if (!logs.chars.length) { $("gEmpty").textContent = "見られる子が、いません"; return; }
+      loadRuns(logs.chars[0].id);
+    }
+    $("gChars").addEventListener("click", e => { const b = e.target.closest("[data-char]"); if (b && b.dataset.char !== logs.character) loadRuns(b.dataset.char); });
+    $("gKinds").addEventListener("click", e => { const b = e.target.closest("[data-kind]"); if (b && b.dataset.kind !== logs.kind) { logs.kind = b.dataset.kind; showRuns(); } });
+    $("gShow").addEventListener("click", e => {
+      const b = e.target.closest("[data-show]");
+      if (!b) return;
+      const on = !b.classList.contains("is-on");
+      b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on);
+      $("gList").classList.toggle("no-" + b.dataset.show, !on);
+    });
+    $("gList").addEventListener("toggle", async e => {   // 1 回の中身は、開いたときに取りに行く
+      const el = e.target;
+      if (!el.matches || !el.matches(".w-sec") || !el.open || logs.got[el.dataset.file]) return;
+      const box = el.querySelector(".w-body");
+      try {
+        const res = await fetch(`/api/stream-logs/${encodeURIComponent(logs.character)}/${encodeURIComponent(el.dataset.file)}`);
+        if (!res.ok) throw new Error(res.status);
+        logs.got[el.dataset.file] = true;
+        box.innerHTML = runHtml(await res.json());
+      } catch (err) { box.innerHTML = `<div class="p-empty">読み込めませんでした</div>`; }
+    }, true);
+    $("gList").addEventListener("click", e => {
+      const b = e.target.closest("[data-open]");
+      if (!b) return;
+      const shut = b.previousElementSibling.classList.toggle("g-clamp");
+      b.textContent = shut ? "ぜんぶ見る ↓" : "たたむ ↑";
+    });
     function setView(v) {
       document.querySelectorAll("[data-view]").forEach(b => { const on = b.dataset.view === v; b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on); });
       document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
       if (v === "words" && !words.loaded) loadWords("");
-      document.querySelector(".p-wrap").classList.toggle("is-wide", v === "logs");
-      if (v === "logs" && !$("logFrame").getAttribute("src")) $("logFrame").src = "/stream-logs?embed=1";   // 開いたときに、はじめて読む
+      if (v === "logs" && !logs.loaded) loadLogChars();
       try { history.replaceState(null, "", v === "mail" ? location.pathname + location.search : "#" + v); } catch (e) {}
     }
     $("views").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
