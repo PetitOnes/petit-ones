@@ -6,7 +6,7 @@
 
 Claude API の使いすぎを防ぐ設定:
 
-- **自律行動の頻度調整**: `autonomous-action.sh` のスケジュール制御で、アクティブ時間帯（毎回実行）と非アクティブ時間帯（確率実行）を制御。`characters/{id}/settings.json` の `active_hours` で時間帯を設定
+- **自律行動の頻度調整**: `autonomous-action.sh` のスケジュール制御で、アクティブ時間帯（毎回実行）と非アクティブ時間帯（実行しない）を制御。`characters/{id}/settings.json` の `active_hours` で時間帯を設定
 - **自律行動の停止**: crontab の該当行をコメントアウト（`#` を先頭に付ける）すれば即停止
 - **ダッシュボードの日記生成**: 手動ボタン or 1日1回（23:50）のみ。自動では頻繁に呼ばない
 - **Anthropic Console**: https://console.anthropic.com/settings/usage で利用量を確認、spending limit を設定できる
@@ -26,8 +26,6 @@ crontab -l | sed 's/^#\(.*autonomous-action\)/\1/' | crontab -
 | 種別 | 頻度 | 回数/日 | 備考 |
 |------|------|---------|------|
 | 自律行動（アクティブ時間帯） | 30分毎 | ~16回/キャラ | 8h × 2回/h |
-| 自律行動（昼間非アクティブ） | 毎時:00、30%確率 | ~3回/キャラ | 9h × 0.3 |
-| 自律行動（深夜） | 毎時:00、10%確率 | ~1回/キャラ | 7h × 0.1 |
 | 日記生成 | 23:50 | 1回/キャラ | |
 | desire_updater | 5分毎 | 0回 | SQLite直接読み、API不使用 |
 | **合計（2キャラ）** | | **~58回/日** | |
@@ -44,7 +42,6 @@ crontab -l | sed 's/^#\(.*autonomous-action\)/\1/' | crontab -
 ### 節約方法
 
 - **`active_hours` を狭める**: `[[18,23]]` のみにすれば半分以下
-- **非アクティブ確率を下げる**: `autonomous-action.sh` の昼間30%→10%、深夜10%→0% に変更
 - **キャラ数を減らす**: 1キャラなら半額
 - **Anthropic Console で上限設定**: https://console.anthropic.com/settings/usage
 

@@ -273,28 +273,10 @@ if [ "$SKIP_SCHEDULE" = false ]; then
   fi
 
   if [ "$IS_ACTIVE" = false ]; then
-    # 非アクティブ時間帯: 毎時:00のみ（:20, :40 はスキップ）
-    if [ "$MINUTE" -ne 0 ]; then
-      echo "非アクティブ時間帯 :${MINUTE} スキップ" >> "$LOG_FILE"
-      exit 0
-    fi
-
-    RAND=$(( $(od -An -tu2 -N2 /dev/urandom | tr -d ' ') % 100 ))
-    if [ "$HOUR" -ge 8 ] && [ "$HOUR" -lt 18 ]; then
-      # 昼間: 30% の確率で実行
-      if [ "$RAND" -ge 30 ]; then
-        echo "昼間スキップ (RAND=$RAND >= 30)" >> "$LOG_FILE"
-        exit 0
-      fi
-      echo "昼間実行 (RAND=$RAND < 30)" >> "$LOG_FILE"
-    else
-      # 深夜: 10% の確率で実行
-      if [ "$RAND" -ge 10 ]; then
-        echo "深夜スキップ (RAND=$RAND >= 10)" >> "$LOG_FILE"
-        exit 0
-      fi
-      echo "深夜実行 (RAND=$RAND < 10)" >> "$LOG_FILE"
-    fi
+    # 非アクティブ時間帯は動かない。子ごとの起動の分のずれ(:00 / :05 / :10)は
+    # 3 人を同時に動かさないためのもので、時間外に動く枠ではない。
+    echo "非アクティブ時間帯 ${HOUR}:$(printf '%02d' "$MINUTE") スキップ" >> "$LOG_FILE"
+    exit 0
   fi
 fi
 
