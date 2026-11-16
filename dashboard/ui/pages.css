@@ -149,3 +149,12 @@ details.m-card[data-fold][open] > summary::after { content: "▾"; }
 .o-try-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 10px; }
 .o-try-num { width: 7em; }
 .o-try-text { white-space: pre-wrap; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text-sub); margin: 6px 0; }
+.o-knob { display: grid; gap: 2px; }
+.o-knob input[type="range"] { width: 100%; accent-color: var(--ui-accent); min-height: var(--ui-ctl-h-s); }
+.o-knob-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.o-knob-head b { font-size: var(--ui-fs-s); }
+.o-knob-ends { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ui-text-mute); }
+.o-try-bar { position: relative; height: 8px; border-radius: 999px; background: var(--ui-line-soft); overflow: hidden; }
+.o-try-bar span { position: absolute; top: 0; bottom: 0; background: var(--ui-accent); border-radius: 999px; }
+.o-try-fine summary { cursor: pointer; font-size: var(--ui-fs-s); color: var(--ui-accent-text); }
+.o-try-grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
