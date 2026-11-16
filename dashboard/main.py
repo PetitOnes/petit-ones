@@ -3735,6 +3735,9 @@ def api_toolbox(days: int = 14, request: Request = None):
             t["gate"] = tb.effective(t["key"], base_alone, reg, g)
             t["allowed"] = {"alone": t["gate"]["alone"]["on"], "chat": t["gate"]["chat"]["on"]}
             t["desc"] = [desc[k] for k in t["keys"] if k in desc]
+        if s["id"] == "other" and desc:   # 記録にだけある名前のうち、部品が知らないもの(言い間違い)は出さない
+            s["tools"] = [t for t in s["tools"] if t["desc"] or t["key"].startswith(("script:", "claude:"))]
+    shelves = [s for s in shelves if s["tools"]]
     # 「消す」(自分の写真・ノート)は、どの子にも許していないあいだは棚に出さない
     if not any(_body().effective(get_settings(c["id"]))["switches"].get("erase") for c in chars):
         for s in shelves:

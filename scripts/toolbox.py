@@ -121,6 +121,7 @@ BUILTIN_DOCS = {
     "claude:PushNotification": "人の端末に通知を送る",
 }
 _KNOWN_FAMILIES = {"m5", "module", "memory", "desire", "notes", "relations", "textbook", "sns", "switchbot", "garmin-ble", "garmin-health"}
+HIDDEN_KEYS = {"module:get_ble_rssi", "m5:set_voice"}   # 道具箱に出さないと決めたもの(2026-11-16 ありさん: 電波はいま使えない、声は決めてある)
 _FAMILY = [("m5-module", "module"), ("m5_mcp", "m5"), ("m5", "m5"), ("memory", "memory"), ("desire-system", "desire"), ("notes", "notes"), ("relations", "relations"),
            ("textbook", "textbook"), ("petit-sns", "sns"), ("switchbot", "switchbot")]
 _SCRIPT = re.compile(r"scripts/([A-Za-z0-9_]+)\.py")
@@ -246,6 +247,8 @@ def _merge(u: dict[str, dict], keys: list[str]) -> dict | None:
 def _is_real(key: str, project_dir: Path | None) -> bool:
     """記録にだけある鍵が、本物の道具か。昔の記録には、言い間違いの名前(claude:desires.json など)も残っている"""
     fam, _, name = key.partition(":")
+    if key in HIDDEN_KEYS:
+        return False
     if fam == "claude":
         return key in BUILTIN_DOCS
     if fam == "script":
