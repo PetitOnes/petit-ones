@@ -2815,8 +2815,11 @@ def api_beacons_report(body: BeaconReport, request: Request):
     user = _beacon_user(request)
     if not user:
         return JSONResponse({"error": "鍵が合いません"}, status_code=401)
-    cur = _phone_place().report(user, body.seen, DATA_DIR)
-    return {"room": cur["room"], "since": cur["since"], "levels": cur["levels"]}
+    pp = _phone_place()
+    # 家のネットワークから届いたか(PC から見た送り元)。印が見えないとき、お外か印の無い部屋かを分ける
+    home = pp.home_net(request.client.host if request.client else None)
+    cur = pp.report(user, body.seen, DATA_DIR, home=home)
+    return {"room": cur["room"], "since": cur["since"], "levels": cur["levels"], "home": home}
 
 
 # ---- 🎧 音楽を一緒に感じる(scripts/music.py)。回を始める・終える(人)、数字を足す(スマホ・PC)、いまの様子 ----
