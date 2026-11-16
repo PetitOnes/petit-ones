@@ -489,12 +489,19 @@ if [ -f "${PROJECT_DIR}/scripts/spots.py" ]; then
   SPOT_CHANGE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/spots.py" changes --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# ぷちSNS のお知らせ(手紙が来た・自分の投稿に返事が付いた): 前に伝えてから増えたときだけ 1 行。中身は載せない。
+# 受け取る種類と静かな時間は、その子が決める(scripts/notices.py)。つなぎ先(その子の MCP 設定の petit-sns)が無ければ何も足さない
+SNS_NOTICE=""
+if [ -f "${PROJECT_DIR}/scripts/sns_notice.py" ]; then
+  SNS_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sns_notice.py" line --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
+
 # user prompt の全体は prompts/autonomous/user.md。各節はここまでで作った変数を渡す
 PROMPT="$(render autonomous/user \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var spot_change="$SPOT_CHANGE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
 
 # プロジェクトディレクトリに移動

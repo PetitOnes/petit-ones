@@ -1866,6 +1866,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         room_change=_room_change_text(character_id),
         phone_change=_phone_change_text(character_id),
         spot_change=_spot_change_text(character_id),
+        sns_notice=_sns_notice_text(character_id),
     )
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
@@ -2445,6 +2446,53 @@ def api_optional_mcp_set(body: OptionalMcpBody, request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"servers": om.status(DATA_DIR, fresh=True)}
+
+
+def _sns_notice():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import sns_notice
+    return sns_notice
+
+
+def _sns_notice_text(character_id: str) -> str:
+    """ぷちSNS のお知らせ(手紙・返事)が、前に伝えてから増えたときだけの 1 行(伝えたら覚える)。無ければ空"""
+    try:
+        return _sns_notice().line(DATA_DIR, character_id, mark=True)
+    except Exception:
+        return ""
+
+
+SNS_NOTICE_FRESH_S = 600   # 画面のための確かめ直しは、10 分に 1 回まで
+
+
+@app.get("/api/sns_notice")
+def api_sns_notice(request: Request):
+    """ぷちSNS のお知らせ: 子ごとに、まだ読んでいない手紙の数と相手・その子が受け取ると決めている種類・静かな時間。
+
+    本文は返さない。見られるのは家の世話人だけ(見られる子が決まっている人には空)。決めるのはその子で、ここからは変えられない
+    """
+    if _is_limited(request):
+        return {"characters": []}
+    sn, nt = _sns_notice(), _notices()
+    out = []
+    for cid, cname in [(c["id"], c.get("name") or c["id"]) for c in list_characters()]:
+        if not sn.sns_env(DATA_DIR, cid):
+            continue
+        state = sn._load(DATA_DIR, cid)
+        try:
+            old = (datetime.now() - datetime.fromisoformat(state.get("checked", ""))).total_seconds() > SNS_NOTICE_FRESH_S
+        except (TypeError, ValueError):
+            old = True
+        if old:
+            state = sn.check(DATA_DIR, cid) or state
+        want = nt.enabled(cid, DATA_DIR)
+        quiet = nt.quiet(cid, DATA_DIR)
+        out.append({"id": cid, "name": cname, **sn.summary(state, want),
+                    "kinds": [{"kind": k, "label": nt.KINDS[k], "on": want[k]} for k in sorted(nt.PETIT_ONLY, key=list(nt.KINDS).index)],
+                    "quiet": list(quiet) if quiet else None})
+    return {"characters": out}
 
 
 def _spot_change_text(character_id: str) -> str:
@@ -6169,7 +6217,7 @@ def api_save_settings(character_id: str, data: dict, request: Request = None):
             if _cannot(request, key) and any(f in data and data[f] != now.get(f) for f in fields):
                 return _cannot_response(key)
     if "notices" in data:   # 知っている種類だけ、bool で
-        data["notices"] = _notices().clean(data["notices"])
+        data["notices"] = _notices().clean(data["notices"], keep=get_settings(character_id).get("notices"))
     save_settings(character_id, data)
     return {"ok": True}
 
@@ -8440,6 +8488,7 @@ HTML = """<!DOCTYPE html>
           <button class="mailbox-tab" id="mailTabArchived" onclick="switchMailTab('archived')">📦</button>
         </div>
         <button class="mail-read-all" id="mailReadAllBtn" onclick="markAllMailRead()">ぜんぶ既読にする</button>
+        <div id="snsNoticeLine" style="display:none;margin:0 0 8px;padding:6px 10px;border-radius:10px;background:rgba(0,0,0,0.04);font-size:0.8rem;line-height:1.6"></div>
         <div id="mailboxBody"></div>
       </div>
     </div>
@@ -10097,7 +10146,26 @@ HTML = """<!DOCTYPE html>
       body.parentElement.appendChild(btn);
     }
 
+    // ぷちSNS のお知らせ(よその家の子からの手紙など): 子ごとに「だれから・何通・まだ」だけ。中身は出さない
+    async function loadSnsNotice() {
+      const box = document.getElementById("snsNoticeLine");
+      if (!box) return;
+      let rows = [];
+      try { rows = (await (await fetch("/api/sns_notice")).json()).characters || []; } catch (e) {}
+      const word = {sns_reply: "返事", sns_mention: "呼ばれた", sns_like: "いいね", sns_touch: "なでなで"};
+      const text = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const lines = rows.map(r => {
+        const parts = [];
+        if (r.letters) parts.push(`${r.from ? text(r.from) + "から" : ""}手紙 ${r.letters} 通`);
+        Object.keys(r.events || {}).forEach(k => parts.push(`${word[k] || text(k)} ${r.events[k]} 件`));
+        return parts.length ? `<div>📮 <b>${text(r.name || r.id)}</b> に ぷちSNS で: ${parts.join("、")}(まだ見ていない)</div>` : "";
+      }).filter(Boolean);
+      box.innerHTML = lines.join("");
+      box.style.display = lines.length ? "" : "none";
+    }
+
     async function loadMailbox() {
+      loadSnsNotice();
       _mailboxOffset = 0; _mailboxTotal = 0;
       const body = document.getElementById("mailboxBody");
       body.innerHTML = "<div class='empty'>読み込み中...</div>";

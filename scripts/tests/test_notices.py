@@ -20,7 +20,7 @@ def _set(base: Path, cid: str, d: dict):
 
 
 def test_defaults_and_clean(tmp_path):
-    assert notices.enabled("puchiko", tmp_path) == {k: True for k in notices.KINDS}
+    assert notices.enabled("puchiko", tmp_path) == {k: k not in notices.OFF_AT_FIRST for k in notices.KINDS}
     _set(tmp_path, "puchiko", {"pressure": False, "unknown": False})
     e = notices.enabled("puchiko", tmp_path)
     assert e["pressure"] is False and e["temperature"] is True and "unknown" not in e
@@ -90,3 +90,16 @@ def test_co2_crossing(tmp_path):
     _set(tmp_path, "puchiru", {"co2": False}); snap(1300)
     assert rl.change_line(tmp_path, "puchiru", mark=True) == ""                    # はじめて(覚えるだけ)
     snap(1400); assert rl.change_line(tmp_path, "puchiru", mark=True) == ""        # 受け取らない子
+
+
+def test_sns_kinds_are_petit_only_and_quiet(tmp_path):
+    """ぷちSNS の種類: いいね・なでなでは、はじめは受け取らない。画面からは変わらず、その子が決めた値が残る。静かな時間"""
+    e = notices.enabled("puchiko", tmp_path)
+    assert e["sns_letter"] and e["sns_reply"] and e["sns_mention"] and not e["sns_like"] and not e["sns_touch"]
+    notices.set_kind("puchiko", "sns_mention", False, tmp_path)
+    assert notices.clean({"sky": False, "sns_mention": True, "sns_like": True}, keep={"sns_mention": False, "sky": True}) == {
+        "sky": False, "sns_mention": False}
+    assert notices.quiet("puchiko", tmp_path) == (0, 7)
+    assert notices.set_quiet("puchiko", (23, 6), tmp_path) == (23, 6)
+    assert notices.set_quiet("puchiko", None, tmp_path) is None
+    assert notices.enabled("puchiko", tmp_path)["sns_mention"] is False   # 静かな時間を書いても、ほかは残る
