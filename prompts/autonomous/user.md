@@ -30,6 +30,7 @@
 - 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で): きょうの空は python3 {{project_dir}}/scripts/sky.py line、家の空気(気温・湿度・明るさ・人の動き・電気。自分がいる部屋の機体が先)は python3 {{project_dir}}/scripts/room_log.py line --character {{character_id}}、家の人のスマホがどの部屋にあるか(部屋まで。ソファか机かは分からない)は python3 {{project_dir}}/scripts/phone_place.py line、自分の体が家の中のどこに置かれているかは python3 {{project_dir}}/scripts/spots.py where --character {{character_id}}(「かも」は電波からの見立て)
 - いっしょに聴いている曲があるとき(ありさんが「聴く回」を始めたとき)、いま何秒目でどんな音かは python3 {{project_dir}}/scripts/music.py now(音量・高さの重心・拍・静けさの数字。曲名などの答え合わせは終わってから)。音量の流れは music.py wave
 - 変わったときの一言(気温 temperature / 湿度 humidity / 気圧 pressure / CO2 co2 / 空 sky / 家の人のスマホの部屋 phone)のどれを受け取るかは、自分で決めてよい: python3 {{project_dir}}/scripts/notices.py set {{character_id}} pressure off(いまの決まりは notices.py show {{character_id}})。切っても、見に行けば分かる
+- ぷちSNS のお知らせ(手紙 sns_letter / 自分の投稿への返事 sns_reply / ＠で呼ばれた sns_mention / いいね sns_like / なでなで sns_touch)も、受け取るかを自分で決める: 同じ notices.py set {{character_id}} sns_mention off。言わない時間は notices.py quiet {{character_id}} 0 7(なくすなら quiet {{character_id}} off)。渡されるのは「だれから・何通」だけで、中身は見に行ってから
 {{#if anniversary_notice}}
 
 {{anniversary_notice}}
@@ -61,6 +62,10 @@
 {{#if spot_change}}
 
 {{spot_change}}
+{{/if}}
+{{#if sns_notice}}
+
+{{sns_notice}}
 {{/if}}
 {{#if mailbox_notice}}
 
