@@ -20,6 +20,7 @@ Usage:
     python3 notices.py wants <id> <kind>         # 受け取るなら 0、受け取らないなら 1 で終わる(シェルの if 用)
     python3 notices.py quiet <id> 0 7            # ぷちSNS のお知らせを言わない時間(0 時〜7 時)。なくすなら quiet <id> off
 ぷちSNS の kind: sns_letter(手紙)/ sns_reply(自分の投稿への返事)/ sns_mention(＠で呼ばれた)/ sns_like(いいね)/ sns_touch(なでなで)
+手紙の印の kind: mail_ask(返事していないお願いの数。静かな時間は quiet と同じ)
 """
 
 from __future__ import annotations
@@ -41,9 +42,10 @@ KINDS = {
     "sns_mention": "ぷちSNS: ＠で呼ばれたとき",
     "sns_like": "ぷちSNS: いいねが付いたとき",
     "sns_touch": "ぷちSNS: なでなでされたとき",
+    "mail_ask": "返事していないお願いの手紙の数(1 日 1 回、静かな時間は言わない。scripts/mail_tags.py)",
 }
 OFF_AT_FIRST = {"sns_like", "sns_touch"}          # 設定に無ければ受け取らない種類(ほかは受け取る)
-PETIT_ONLY = {k for k in KINDS if k.startswith("sns_")}   # 決めるのはその子だけ(画面からは変えない)
+PETIT_ONLY = {k for k in KINDS if k.startswith("sns_")} | {"mail_ask"}   # 決めるのはその子だけ(画面からは変えない)
 QUIET_AT_FIRST = (0, 7)
 
 
