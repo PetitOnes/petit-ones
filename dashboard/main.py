@@ -534,7 +534,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "kairanban": ("/kairanban",),
     "library": ("/library",),
     "relations": ("/relations",),
-    "kankei": ("/kankei", "/api/secret_mails", "/api/mailbox/all"),   # 手紙をぜんぶ返す入口も、いっしょに閉じる
+    "kankei": ("/kankei", "/api/secret_mails", "/api/secret_prompts", "/api/mailbox/all"),   # 手紙をぜんぶ返す入口も、いっしょに閉じる
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
     "logs": ("/stream-logs", "/api/stream-logs"),
@@ -1794,6 +1794,36 @@ def append_trio_log(entry: dict) -> None:
         json.dump(log[-500:], f, ensure_ascii=False, indent=2)
 
 
+def _chat_system_prompt(character_id: str, username: str | None, restriction_text: str, *, soul: str | None = None, preview: bool = False) -> str:
+    """会話の system prompt(prompts/dashboard/system.md)。
+
+    preview=True は 🔒 ひみつ の「わたしている文」用: 「伝えたら覚える」知らせ(空・部屋・スマホ・体の場所が変わった)を入れない
+    """
+    cfg = get_char_config(character_id)
+    user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
+    now_jst = datetime.now(timezone.utc).astimezone(
+        __import__("zoneinfo", fromlist=["ZoneInfo"]).ZoneInfo("Asia/Tokyo")
+    )
+    all_ids = [c["id"] for c in list_characters()]
+    other_ids = [cid for cid in all_ids if cid != character_id]
+    return _prompt(
+        "system",
+        char_name=cfg.get("name", character_id), character_id=character_id,
+        soul=get_soul(character_id) if soul is None else soul,
+        now=now_jst.strftime("%Y-%m-%d %H:%M (JST)"), user_display_name=user_display_name,
+        char_data_dir=str(char_dir(character_id)), mailbox_dir=str(DATA_DIR / "mailbox"), scripts_dir=str(PROJECT_DIR / "scripts"),
+        mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
+        relay_example_id=(other_ids[0] if other_ids else character_id),
+        restriction_text=restriction_text,
+        whereabouts=_whereabouts_text(character_id),
+        events=_events_text(character_id),
+        sky_change="" if preview else _sky_change_text(character_id),
+        room_change="" if preview else _room_change_text(character_id),
+        phone_change="" if preview else _phone_change_text(character_id),
+        spot_change="" if preview else _spot_change_text(character_id),
+    )
+
+
 async def call_claude(character_id: str, message: str, m5_online: bool | None = None, username: str | None = None, model: str | None = None, allow_sound_override: bool = False, source: str = "chat", use_session: bool = True) -> str:
     # 接点: 人がこの子に話しかけた、を残す(中身は残さない)。欲求の「話したい」が読む(Issue #67)。
     # 会話はログインしている人が確か。体のマイクは、だれの声かは分からないので、体の設定(CAM TO)だけ
@@ -1842,31 +1872,9 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         pass
     # 制限の各行は自律行動と同じ prompts/autonomous/permission_rules.md
     restriction_text = _render_prompt.render("autonomous/permission_rules", _bs.template_vars(body_eff), data_dir=DATA_DIR, project_dir=PROJECT_DIR).strip()
-    mailbox_dir = DATA_DIR / "mailbox"
-    char_data_dir = char_dir(character_id)
-    scripts_dir = PROJECT_DIR / "scripts"
     user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
-    char_name = cfg.get("name", character_id)
-    now_jst = datetime.now(timezone.utc).astimezone(
-        __import__("zoneinfo", fromlist=["ZoneInfo"]).ZoneInfo("Asia/Tokyo")
-    )
-    now_str = now_jst.strftime("%Y-%m-%d %H:%M (JST)")
-    all_ids = [c["id"] for c in list_characters()]
-    other_ids = [cid for cid in all_ids if cid != character_id]
-    system_prompt = _prompt(
-        "system",
-        char_name=char_name, character_id=character_id, soul=soul, now=now_str, user_display_name=user_display_name,
-        char_data_dir=str(char_data_dir), mailbox_dir=str(mailbox_dir), scripts_dir=str(scripts_dir),
-        mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
-        relay_example_id=(other_ids[0] if other_ids else character_id),
-        restriction_text=restriction_text,
-        whereabouts=_whereabouts_text(character_id),
-        events=_events_text(character_id),
-        sky_change=_sky_change_text(character_id),
-        room_change=_room_change_text(character_id),
-        phone_change=_phone_change_text(character_id),
-        spot_change=_spot_change_text(character_id),
-    )
+    system_prompt = _chat_system_prompt(character_id, username, restriction_text, soul=soul)
+    now_str = datetime.now(__import__("zoneinfo", fromlist=["ZoneInfo"]).ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M (JST)")
 
     # resume時はsystem promptが渡せないので、メッセージに話者情報を付加
     effective_message = message
@@ -7541,6 +7549,59 @@ def api_secret_mails(request: Request, scope: str = "petit", sender: str = "", t
             "pairs": [{"from": a, "to": b, "count": v} for (a, b), v in pairs.most_common()],
             "senders": [{"id": k, "count": v} for k, v in count_from.most_common()],
             "recipients": [{"id": k, "count": v} for k, v in count_to.most_common()]}
+
+
+def _prompt_view():
+    import prompt_view
+    return prompt_view
+
+
+def _secret_prompt_chars(request: Request) -> list[dict]:
+    """「わたしている文」を見られる子。見られる子が決まっている人は、自分の子だけ(SOUL や TODO はその子の内側のこと)"""
+    allowed = _get_allowed_characters(request)
+    return [c for c in list_characters() if allowed is None or c["id"] in allowed]
+
+
+@app.get("/api/secret_prompts")
+def api_secret_prompts(request: Request, character: str = ""):
+    """🔒 ひみつ の「わたしている文」: その子のプロンプトに入る文とファイルの一覧(中身は /api/secret_prompts/content)と、欲求のいまの値"""
+    chars = _secret_prompt_chars(request)
+    ids = [c["id"] for c in chars]
+    people = [{"id": cid, "name": _char_display_name(cid), "color": get_char_config(cid).get("color", "")} for cid in ids]
+    if not ids:
+        return {"characters": [], "character": "", "sections": [], "desires": {"rows": []}}
+    cid = character if character in ids else ids[0]
+    pv = _prompt_view()
+    warn_kb = int(os.getenv("PROMPT_FILE_WARN_KB", "40"))
+    sections = [{"key": key, "kind": "prompt", "title": title, "when": "always"} for key, title in pv.PROMPTS]
+    sections += pv.file_rows(DATA_DIR, cid, warn_kb)
+    return {"characters": people, "character": cid, "sections": sections, "warn_kb": warn_kb, "drop_kb": pv.DROP_KB,
+            "desires": pv.desire_rows(get_desires(cid))}
+
+
+@app.get("/api/secret_prompts/content")
+def api_secret_prompts_content(request: Request, character: str, key: str):
+    """「わたしている文」の 1 つの中身。読むだけで、家には何も書かない"""
+    if character not in [c["id"] for c in _secret_prompt_chars(request)]:
+        return JSONResponse({"error": "この子の文は、見られません"}, status_code=403)
+    pv = _prompt_view()
+    if key in ("auto_prompt", "chat_prompt"):
+        _bs = _body()
+        restriction = _render_prompt.render("autonomous/permission_rules", _bs.template_vars(_bs.effective(get_settings(character))),
+                                            data_dir=DATA_DIR, project_dir=PROJECT_DIR).strip()
+        if key == "chat_prompt":
+            return {"format": "text", "content": _chat_system_prompt(character, _get_username(request), restriction, preview=True)}
+        others = [c["id"] for c in list_characters() if c["id"] != character]
+        text = pv.autonomous_preview(
+            DATA_DIR, PROJECT_DIR, character, now=datetime.now(), user_name=os.getenv("COMPANION_NAME", "あなた"),
+            mail_targets=", ".join(others + [os.getenv("COMPANION_ID", "owner")]), permission_rules=restriction,
+            whereabouts=_whereabouts_text(character), event_notice=_events_text(character),
+            warn_kb=int(os.getenv("PROMPT_FILE_WARN_KB", "40")))
+        return {"format": "text", "content": text}
+    text = pv.read_file(DATA_DIR, character, key)
+    if text is None:
+        return JSONResponse({"error": "そのファイルは、ありません"}, status_code=404)
+    return {"format": "md", "content": text}
 
 
 @app.get("/api/mailbox/all")

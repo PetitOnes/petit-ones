@@ -14,7 +14,7 @@
   <script src="/ui/md.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <style>
-    /* ひみつ(手紙を読むページ)。ぷちどうし / みんなのメール を切り替え、だれから・だれあて で絞る。1 通 = 差出人の色の 1 枚 */
+    /* ひみつ(手紙を読むページ + わたしている文)。ぷちどうし / みんなのメール を切り替え、だれから・だれあて で絞る。1 通 = 差出人の色の 1 枚 */
     .h-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; }
     .h-bar label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
     .h-bar select { min-height: var(--ui-ctl-h-s); max-width: 11em; padding: 0 8px; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text); background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-s); }
@@ -53,11 +53,36 @@
     .h-legend { margin-top: 8px; font-size: 0.72rem; color: var(--ui-text-mute); }
     .h-more { display: block; margin: 12px auto; }
     .h-more[hidden] { display: none; }
+    /* わたしている文: その子のプロンプトに入る文とファイルを、1 つずつ開いて読む */
+    .h-views { display: flex; gap: 8px; margin-bottom: 12px; }
+    [data-view-box][hidden] { display: none; }
+    .w-lead { margin: 0 2px 10px; font-size: var(--ui-fs-s); line-height: 1.6; color: var(--ui-text-sub); }
+    .w-group { margin: 16px 2px 6px; font-family: var(--ui-font-head); font-size: 0.95rem; }
+    .w-group small { margin-left: 6px; font-family: var(--ui-font); font-size: 0.75rem; font-weight: 400; color: var(--ui-text-sub); }
+    .w-sec { margin-bottom: 8px; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); }
+    .w-sec > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 10px 14px; cursor: pointer; font-weight: 700; font-size: 0.92rem; }
+    .w-meta { margin-left: auto; font-size: 0.75rem; font-weight: 400; color: var(--ui-text-sub); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .w-heavy { flex-basis: 100%; font-size: 0.78rem; font-weight: 400; color: var(--ui-danger); }
+    .w-body { padding: 4px 14px 12px; border-top: var(--ui-line-w) dashed var(--ui-line-soft); }
+    .w-body .h-body pre, .w-body .h-body code { background: var(--ui-surface-soft); }
+    .w-raw { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; font-size: 0.88rem; line-height: 1.7; }
+    .w-note { margin: 8px 0 0; font-size: 0.75rem; line-height: 1.6; color: var(--ui-text-mute); }
+    .w-tools { display: flex; justify-content: flex-end; margin-top: 6px; }
+    .w-desires { padding: 12px 14px; background: var(--ui-surface); border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); }
+    .w-desire { display: grid; grid-template-columns: minmax(6em, 11em) 1fr 3em; align-items: center; gap: 8px; padding: 3px 0; font-size: 0.88rem; }
+    .w-bar { height: 8px; overflow: hidden; background: var(--ui-surface-soft); border-radius: 999px; }
+    .w-bar > i { display: block; height: 100%; border-radius: 999px; }
+    .w-desire .v { text-align: right; font-size: 0.78rem; color: var(--ui-text-sub); font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔒 ひみつ</h1></div>
+    <div class="h-views" id="views">
+      <button class="a-pill is-on" aria-pressed="true" data-view="mail">💌 手紙</button>
+      <button class="a-pill" aria-pressed="false" data-view="words">📜 わたしている文</button>
+    </div>
+    <div data-view-box="mail">
     <div class="h-bar" id="scopes"></div>
     <details class="h-sum" id="sum" open><summary>📊 だれと、何通</summary><div class="h-people" id="people"></div>
       <div class="h-legend">「→」は送った数、「←」はもらった数。数を押すと、その組み合わせの手紙だけになります。家のメールボックスの手紙を数えています(ぷちSNS の手紙は入りません)。</div></details>
@@ -69,6 +94,13 @@
     <div id="list"></div>
     <button class="a-btn a-btn--sub h-more" id="more" hidden>もっと見る ↓</button>
     <div class="p-empty" id="empty">読み込み中…</div>
+    </div>
+    <div data-view-box="words" hidden>
+      <p class="w-lead">ぷちが動くたびに、どんな文とファイルを受け取っているか。ここでは読むだけで、直すことはできません。</p>
+      <div class="h-bar" id="wChars"></div>
+      <div id="wList"></div>
+      <div class="p-empty" id="wEmpty">読み込み中…</div>
+    </div>
   </div>
   <script>
     const { esc } = PetitPage;
@@ -169,6 +201,83 @@
       $("sum").addEventListener("toggle", () => { try { localStorage.setItem("himitsuSumClosed", $("sum").open ? "0" : "1"); } catch (e) {} });
     } catch (e) {}
     $("more").addEventListener("click", () => load(false));
+
+    // ---- わたしている文 ----
+    const words = { character: "", loaded: false, text: {} };
+    const kb = n => n >= 1024 ? `${(n / 1024).toFixed(n >= 10240 ? 0 : 1)} KB` : `${n} B`;
+    const when = t => t ? t.replace(/^\d{4}-(\d{2})-(\d{2})T/, "$1/$2 ") : "";
+    const NOTES = {
+      auto_prompt: "いま組み立てたら、の形です(通常回。5 回に 1 回ほどのルーチン回は「ROUTINES.md から一つ選んで」という一文に変わります)。@ で始まる行は、そのファイルの中身がまるごと付く印です。記念日・手紙やノートが読まれた・体の出来事・空や部屋が変わった、などの知らせは、その回にあったときだけ足されるので、ここには出ません。",
+      chat_prompt: "ダッシュボードで話しかけたとき、会話のはじめに渡す文です。SOUL がまるごと入ります。空や部屋が変わった知らせは、あったときだけ足されるので、ここには出ません。",
+    };
+    function section(s, d) {
+      const meta = s.kind === "file" ? `${esc(s.name)} ・ ${kb(s.size)} ・ ${esc(when(s.mtime))}` : "";
+      const heavy = s.heavy === "drop" ? `⚠️ ${d.drop_kb} KB を超えています。自律行動には付いていないかもしれません`
+        : s.heavy === "warn" ? `⚠️ 重くなっています(目安 ${d.warn_kb} KB。${d.drop_kb} KB を超えると付かなくなります)` : "";
+      return `<details class="w-sec" data-key="${esc(s.key)}" data-kind="${esc(s.kind)}"><summary><span>${esc(s.title)}</span><span class="w-meta">${meta}</span>${heavy ? `<span class="w-heavy">${heavy}</span>` : ""}</summary><div class="w-body"><div class="p-empty">読み込み中…</div></div></details>`;
+    }
+    function desires(d) {
+      const rows = (d.desires || {}).rows || [];
+      if (!rows.length) return "";
+      const max = Math.max(1, ...rows.map(r => r.level));   // 値は 0〜1(古い形は 0〜100)
+      const at = when((d.desires.updated_at || "").slice(0, 16));
+      return `<h2 class="w-group">欲求 <small>ぷちが道具(get_desires)で見に行く、いまの値${at ? `。${esc(at)} 時点` : ""}</small></h2><div class="w-desires">` +
+        rows.map(r => `<div class="w-desire"><span>${esc(r.label)}</span><span class="w-bar"><i style="width:${Math.round(100 * r.level / max)}%;background:${esc(r.color || "#d9cdbf")}"></i></span><span class="v">${(max <= 1 ? Math.round(r.level * 100) : Math.round(r.level))}</span></div>`).join("") + `</div>`;
+    }
+    async function loadWords(cid) {
+      $("wEmpty").style.display = ""; $("wEmpty").textContent = "読み込み中…"; $("wList").innerHTML = "";
+      let d;
+      try {
+        const res = await fetch("/api/secret_prompts?" + new URLSearchParams({ character: cid || "" }));
+        if (!res.ok) throw new Error(res.status);
+        d = await res.json();
+      } catch (e) { $("wEmpty").textContent = "読み込めませんでした"; return; }
+      words.loaded = true; words.character = d.character; words.text = {};
+      if (!d.characters.length) { $("wChars").innerHTML = ""; $("wEmpty").textContent = "見られる子が、いません"; return; }
+      $("wChars").innerHTML = d.characters.map(c => `<button class="a-pill${c.id === d.character ? " is-on" : ""}" aria-pressed="${c.id === d.character}" data-char="${esc(c.id)}"><span class="h-dot" style="background:${esc(c.color || "#d9cdbf")}"></span> ${esc(c.name)}</button>`).join("");
+      const of = (kind, w) => d.sections.filter(s => s.kind === kind && s.when === w).map(s => section(s, d)).join("");
+      const group = (title, sub, html) => html ? `<h2 class="w-group">${title} <small>${sub}</small></h2>${html}` : "";
+      $("wList").innerHTML = group("毎回わたす文", "動くたびに、はじめに渡す", of("prompt", "always"))
+        + group("毎回付くファイル", "上の文といっしょに、中身がまるごと付く", of("file", "always"))
+        + desires(d)
+        + group("自分で読みに行くファイル", "毎回は付かない。その子が要るときに開く", of("file", "self"));
+      $("wEmpty").style.display = "none";
+    }
+    function showText(box, key, raw) {
+      const t = words.text[key];
+      const body = t.format === "md" && !raw ? `<div class="h-body">${md(t.content)}</div>` : `<pre class="w-raw">${esc(t.content)}</pre>`;
+      const tools = t.format === "md" ? `<div class="w-tools"><button class="a-btn a-btn--sub a-btn--s" data-raw="${raw ? "" : "1"}">${raw ? "整えて読む" : "もとの文字のまま"}</button></div>` : "";
+      box.innerHTML = tools + body + (NOTES[key] ? `<p class="w-note">${NOTES[key]}</p>` : "");
+    }
+    $("wList").addEventListener("toggle", async e => {   // 中身は、開いたときに取りに行く(大きいファイルがあるので)
+      const el = e.target;
+      if (!el.matches || !el.matches(".w-sec") || !el.open || words.text[el.dataset.key]) return;
+      const key = el.dataset.key, box = el.querySelector(".w-body");
+      try {
+        const res = await fetch("/api/secret_prompts/content?" + new URLSearchParams({ character: words.character, key }));
+        if (!res.ok) throw new Error(res.status);
+        words.text[key] = await res.json();
+        showText(box, key, false);
+      } catch (err) { box.innerHTML = `<div class="p-empty">読み込めませんでした</div>`; }
+    }, true);
+    $("wList").addEventListener("click", e => {
+      const b = e.target.closest("[data-raw]");
+      if (!b) return;
+      const el = b.closest(".w-sec");
+      showText(el.querySelector(".w-body"), el.dataset.key, b.dataset.raw === "1");
+    });
+    $("wChars").addEventListener("click", e => {
+      const b = e.target.closest("[data-char]");
+      if (b && b.dataset.char !== words.character) loadWords(b.dataset.char);
+    });
+    function setView(v) {
+      document.querySelectorAll("[data-view]").forEach(b => { const on = b.dataset.view === v; b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on); });
+      document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
+      if (v === "words" && !words.loaded) loadWords("");
+      try { history.replaceState(null, "", v === "words" ? "#words" : location.pathname + location.search); } catch (e) {}
+    }
+    $("views").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
+    if (location.hash === "#words") setView("words");
     load(true);
   </script>
 </body>
