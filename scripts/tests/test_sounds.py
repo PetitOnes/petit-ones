@@ -197,3 +197,10 @@ def test_delete_clears_meta_and_requests(tmp_path):
     sounds.want(tmp_path, "puchiru", "bell")
     assert sounds.delete(tmp_path, "bell.wav")
     assert sounds.load_meta(tmp_path) == {} and sounds.requests(tmp_path) == []
+
+
+def test_system_sounds_cannot_be_dropped(tmp_path):
+    sounds.remember_body(tmp_path, "puchiteya", ["tts_speak.wav", "voice_memo.wav"])
+    for n in ("tts_speak", "voice_memo.wav"):
+        with pytest.raises(sounds.SoundError):
+            sounds.drop(tmp_path, "puchiteya", n)
