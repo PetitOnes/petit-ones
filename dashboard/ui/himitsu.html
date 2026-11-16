@@ -73,7 +73,11 @@
     .g-clamp { max-height: 6.2em; overflow: hidden; }
     .g-open { margin-top: 2px; padding: 0; font: inherit; font-size: 0.75rem; color: var(--ui-accent-text); background: none; border: none; cursor: pointer; }
     .g-end { margin-top: 10px; font-size: 0.75rem; line-height: 1.6; color: var(--ui-text-sub); font-variant-numeric: tabular-nums; }
-    .no-think .g-think, .no-res .g-res { display: none; }
+    .no-think .g-think, .no-res .g-res, .no-given .g-given { display: none; }
+    .g-given { background: var(--ui-accent-soft); border-color: transparent; }
+    .g-none { margin-top: 8px; font-size: 0.78rem; color: var(--ui-text-mute); }
+    .all-open .g-clamp { max-height: none; }
+    .all-open [data-open] { display: none; }
     .w-lead { margin: 0 2px 10px; font-size: var(--ui-fs-s); line-height: 1.6; color: var(--ui-text-sub); }
     .w-group { margin: 16px 2px 6px; font-family: var(--ui-font-head); font-size: 0.95rem; }
     .w-group small { margin-left: 6px; font-family: var(--ui-font); font-size: 0.75rem; font-weight: 400; color: var(--ui-text-sub); }
@@ -121,12 +125,14 @@
       <div class="p-empty" id="wEmpty">読み込み中…</div>
     </div>
     <div data-view-box="logs" hidden>
-      <p class="w-lead">ぷちが動いた 1 回ごとの記録。回を押すと、考えたこと・言ったこと・使った道具が、時間の順に並びます(新しい 50 回まで)。</p>
+      <p class="w-lead">ぷちが動いた 1 回ごとの記録。回を押すと、渡した文・考えたこと・言ったこと・使った道具・さいごの結果が、時間の順に並びます(新しい 50 回まで)。</p>
       <div class="h-bar" id="gChars"></div>
       <div class="h-bar" id="gKinds"></div>
       <div class="h-bar" id="gShow">
+        <button class="a-pill is-on" aria-pressed="true" data-show="given">渡した文</button>
         <button class="a-pill is-on" aria-pressed="true" data-show="think">考えたこと</button>
         <button class="a-pill is-on" aria-pressed="true" data-show="res">道具の結果</button>
+        <button class="a-pill" aria-pressed="false" data-all>長い文もぜんぶ開く</button>
       </div>
       <div class="h-count" id="gCount"></div>
       <div id="gList"></div>
@@ -320,11 +326,14 @@
     }
     function runHtml(events) {
       if (!events.length) return `<div class="p-empty">記録が、空です</div>`;
-      let last = "";
-      return events.map(ev => {
-        if (ev.kind === "thinking") return (ev.text || "").trim() ? block("g-think", "💭 考えたこと", ev.text) : "";   // 中身が残っていない回は、出さない
-        if (ev.kind === "text") { last = ev.text; return block("g-say", "💬 言ったこと", ev.text); }
-        if (ev.kind === "user_text") return block("g-think", "📨 渡された文", ev.text);
+      // 渡した文は、2026-11-16 から記録の隣に残している。それより前の回には無い
+      const given = events.some(ev => ev.kind === "user_text" || ev.kind === "system_prompt") ? "" : `<div class="g-none g-given">📨 渡した文は、この回には残っていません(残すようにする前の記録です)</div>`;
+      return given + events.map(ev => {
+        if (ev.kind === "system_prompt") return block("g-given", "📜 はじめに渡した文(system prompt)", ev.text);
+        // 考えたことの中身は、いまのモデルでは記録に入らないことが多い(量だけ、終わりの行に出る)
+        if (ev.kind === "thinking") return (ev.text || "").trim() ? block("g-think", "💭 考えたこと", ev.text) : `<div class="g-none g-think">💭 考えた(中身は、記録に入っていません)</div>`;
+        if (ev.kind === "text") return block("g-say", "💬 言ったこと", ev.text);
+        if (ev.kind === "user_text") return block("g-given", "📨 渡した文", ev.text);
         if (ev.kind === "tool_call") {
           let input = "";
           try { input = JSON.stringify(ev.input, null, 2); } catch (e) { input = String(ev.input); }
@@ -334,9 +343,11 @@
         if (ev.kind === "result") {
           const u = ev.usage || {}, n = v => (v || 0).toLocaleString();
           const denied = (ev.permission_denials || []).length ? `<br>使えなかった道具: ${ev.permission_denials.map(d => esc(toolName(d))).join("、")}` : "";
-          const bad = ev.subtype && ev.subtype !== "success" ? `<br>終わり方: ${esc(ev.subtype)}` : "";
-          const fin = ev.result && ev.result.trim() !== String(last).trim() ? block("g-say", "💬 さいごの返事", ev.result) : "";
-          return `${fin}<div class="g-end">やりとり ${n(ev.turns)} 回 ・ $${(ev.cost_usd || 0).toFixed(4)} ・ 入力 ${n(u.input)} / 出力 ${n(u.output)} / キャッシュ書き ${n(u.cache_creation)} / キャッシュ読み ${n(u.cache_read)}${bad}${denied}</div>`;
+          const secs = ev.duration_ms ? ` ・ ${Math.round(ev.duration_ms / 1000)} 秒` : "";
+          const think = ev.thinking_tokens ? ` ・ 考えた量 およそ ${n(ev.thinking_tokens)} トークン` : "";
+          const how = `<br>終わり方: ${esc(ev.subtype || "?")}${ev.stop_reason ? `(${esc(ev.stop_reason)})` : ""}`;
+          const fin = ev.result ? block("g-say", "📦 さいごの結果(result)", ev.result) : "";
+          return `${fin}<div class="g-end">やりとり ${n(ev.turns)} 回${secs} ・ $${(ev.cost_usd || 0).toFixed(4)}${think}<br>入力 ${n(u.input)} / 出力 ${n(u.output)} / キャッシュ書き ${n(u.cache_creation)} / キャッシュ読み ${n(u.cache_read)}${how}${denied}</div>`;
         }
         if (ev.kind === "init") return `<div class="g-end">モデル: ${esc(ev.model || "?")}</div>`;
         return "";
@@ -373,11 +384,12 @@
     $("gChars").addEventListener("click", e => { const b = e.target.closest("[data-char]"); if (b && b.dataset.char !== logs.character) loadRuns(b.dataset.char); });
     $("gKinds").addEventListener("click", e => { const b = e.target.closest("[data-kind]"); if (b && b.dataset.kind !== logs.kind) { logs.kind = b.dataset.kind; showRuns(); } });
     $("gShow").addEventListener("click", e => {
-      const b = e.target.closest("[data-show]");
+      const b = e.target.closest("[data-show], [data-all]");
       if (!b) return;
       const on = !b.classList.contains("is-on");
       b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on);
-      $("gList").classList.toggle("no-" + b.dataset.show, !on);
+      if ("all" in b.dataset) $("gList").classList.toggle("all-open", on);
+      else $("gList").classList.toggle("no-" + b.dataset.show, !on);
     });
     $("gList").addEventListener("toggle", async e => {   // 1 回の中身は、開いたときに取りに行く
       const el = e.target;

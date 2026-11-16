@@ -68,3 +68,15 @@ def test_autonomous_preview_writes_nothing(tmp_path: Path):
     assert "## 現在の制限\n- カメラは使わない" in text and "いま: 家" in text
     assert "{{" not in text
     assert before == sorted((str(p), p.stat().st_mtime_ns) for p in house.rglob("*"))
+
+
+def test_sidecar_roundtrip(tmp_path: Path):
+    chat = tmp_path / "20261116_150000_chat_stream.jsonl"
+    assert pv.sidecar_events(chat) == []                       # 残す前の記録は、空
+    pv.save_sidecar(chat, "あなたは…", "こんにちは")
+    assert (tmp_path / "20261116_150000_chat_prompt.json").is_file()
+    assert pv.sidecar_events(chat) == [{"kind": "system_prompt", "text": "あなたは…"}, {"kind": "user_text", "text": "こんにちは"}]
+    alone = tmp_path / "20261116_153000_stream.jsonl"
+    (tmp_path / "20261116_153000_prompt.md").write_text("自律行動タイム\n", encoding="utf-8")   # autonomous-action.sh が置く形
+    assert pv.sidecar_events(alone) == [{"kind": "user_text", "text": "自律行動タイム"}]
+    pv.save_sidecar(tmp_path / "no_such_dir" / "x_stream.jsonl", "a", "b")   # 書けなくても落ちない

@@ -740,6 +740,9 @@ else
   }
 
   STREAM_FILE="${LOG_FILE%.log}_stream.jsonl"
+  # 渡した文を、記録の隣に残す(stream-json の出力には入らないため。🔒 ひみつ の行動ログで読む。2026-11-16)。
+  # 書けなくても自律行動は止めない
+  printf '%s\n' "$PROMPT" > "${LOG_FILE%.log}_prompt.md" 2>/dev/null || true
 
   # stream-json の出力から最終結果JSON行を取得し、ログを整形して追記する
   process_stream() {

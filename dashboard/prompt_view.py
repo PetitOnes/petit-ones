@@ -158,3 +158,47 @@ def autonomous_preview(data_dir: Path, project_dir: Path, character_id: str, *, 
         heavy_section=render("heavy_files", heavy_files_note="\n".join(heavy_lines)).strip() if heavy_lines else "",
         mailbox_notice=mailbox_notice.strip(), permission_rules=permission_rules, whereabouts=whereabouts, event_notice=event_notice,
     )
+
+
+# ---- 行動ログ: その回に渡した文を、記録(…_stream.jsonl)の隣に残す(2026-11-16) ----
+# claude の stream-json の出力には、渡した文が入らない。なので、呼ぶ側が隣に置く:
+#   会話・体のできごと(ダッシュボード) → …_prompt.json {"system": system prompt, "message": 渡した文}
+#   ひとりの時間(autonomous-action.sh)  → …_prompt.md  (user prompt そのまま)
+STREAM_SUFFIX = "_stream.jsonl"
+
+
+def sidecar_base(stream_path: Path) -> str:
+    name = str(stream_path)
+    return name[: -len(STREAM_SUFFIX)] if name.endswith(STREAM_SUFFIX) else name
+
+
+def save_sidecar(stream_path: Path, system: str, message: str) -> None:
+    """会話で渡した文を残す。書けなくても、会話は止めない"""
+    try:
+        Path(sidecar_base(stream_path) + "_prompt.json").write_text(
+            json.dumps({"system": system, "message": message}, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def sidecar_events(stream_path: Path) -> list[dict]:
+    """その回に渡した文を、行動ログの並びの形で(system_prompt → user_text)。残っていなければ空"""
+    base = sidecar_base(stream_path)
+    out: list[dict] = []
+    try:
+        d = json.loads(Path(base + "_prompt.json").read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            if d.get("system"):
+                out.append({"kind": "system_prompt", "text": str(d["system"])})
+            if d.get("message"):
+                out.append({"kind": "user_text", "text": str(d["message"])})
+    except (OSError, json.JSONDecodeError):
+        pass
+    if not out:
+        try:
+            text = Path(base + "_prompt.md").read_text(encoding="utf-8", errors="replace").strip()
+            if text:
+                out.append({"kind": "user_text", "text": text})
+        except OSError:
+            pass
+    return out

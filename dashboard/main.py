@@ -2058,6 +2058,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             return "", "timeout"
 
     try:
+        _prompt_view().save_sidecar(stream_path, system_prompt, effective_message)   # 渡した文を記録の隣に(行動ログで読む)
         output, err = await _run_cmd(cmd, stream_path)
         if err == "timeout":
             if stream_path.exists():
@@ -2074,6 +2075,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
                     "--dangerously-skip-permissions",
                     "--output-format", "stream-json",
                     "--verbose"]
+            _prompt_view().save_sidecar(stream_path2, system_prompt, effective_message)
             output, err = await _run_cmd(cmd2, stream_path2)
             stream_path = stream_path2
         reply, new_sid, result_ev = _parse_stream_file(stream_path)
@@ -13304,12 +13306,17 @@ async def api_stream_logs_get(character_id: str, filename: str):
         except json.JSONDecodeError:
             pass
 
-    out = []
+    out = _prompt_view().sidecar_events(path)   # その回に渡した文(残っていれば)
     tool_names: dict[str, str] = {}
+    thinking_tokens = 0
     for ev in events:
+        if not isinstance(ev, dict):
+            continue
         t = ev.get("type", "")
         if t == "system" and ev.get("subtype") == "init":
             out.append({"kind": "init", "model": ev.get("model"), "session_id": ev.get("session_id")})
+        elif t == "system" and ev.get("subtype") == "thinking_tokens":
+            thinking_tokens = max(thinking_tokens, int(ev.get("estimated_tokens") or 0))   # 考えた量(見積もり)。中身が残らない回でも分かる
         elif t == "assistant":
             for block in ev.get("message", {}).get("content", []):
                 btype = block.get("type", "")
@@ -13355,6 +13362,8 @@ async def api_stream_logs_get(character_id: str, filename: str):
                     "cache_read": usage.get("cache_read_input_tokens", 0),
                 },
                 "permission_denials": [d.get("tool_name") for d in ev.get("permission_denials", [])],
+                "duration_ms": ev.get("duration_ms"), "stop_reason": ev.get("stop_reason"), "is_error": bool(ev.get("is_error")),
+                "thinking_tokens": thinking_tokens,
             })
     return out
 
