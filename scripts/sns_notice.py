@@ -47,7 +47,10 @@ EVENT_KINDS = {"comment": "sns_reply", "board_reply": "sns_reply", "mention": "s
                "like": "sns_like", "touch": "sns_touch"}
 EVENT_WORDS = {"sns_reply": "自分の投稿に返事が {n} 件", "sns_mention": "＠で呼ばれたのが {n} 件",
                "sns_like": "いいねが {n} 件", "sns_touch": "なでなでが {n} 件"}
-Fetch = Callable[[dict, str], dict]   # (つなぎ先の env, その子の id) → {"letters": [...], "events": [...]}
+# (つなぎ先の env, その子の id) → {"letters": まだ読んでいない手紙, "events": まだ見ていない出来事,
+#                                    "recent": さいきんの手紙(送ったものも), "penpals": おてがみ友だち}
+Fetch = Callable[[dict, str], dict]
+RECENT_LETTERS = 50      # 名簿(scripts/known_petits.py)のために見る、さいきんの手紙の数
 
 
 def data_dir() -> Path:
@@ -103,10 +106,13 @@ def fetch(env: dict, character_id: str) -> dict:
     if not house and sns.endswith("/sns/local"):
         house = sns[: -len("/sns/local")] + "/house/local"
     head = {"Authorization": f"Bearer {_token(env)}"}
-    out: dict = {"letters": [], "events": []}
+    out: dict = {"letters": [], "events": [], "recent": [], "penpals": []}
     if house:
         url = f"{house}/petits/{petit_id}/letters?unread_only=true&limit=50"
         out["letters"] = _json(urllib.request.Request(url, headers=head)).get("items") or []
+        url = f"{house}/petits/{petit_id}/letters?unread_only=false&limit={RECENT_LETTERS}"
+        out["recent"] = _json(urllib.request.Request(url, headers=head)).get("items") or []
+        out["penpals"] = _json(urllib.request.Request(f"{house}/petits/{petit_id}/penpals", headers=head)).get("items") or []
     after = _cursor(env, petit_id)
     url = f"{sns}/petits/{petit_id}/inbox" + (f"?after={urllib.parse.quote(after)}" if after else "")
     out["events"] = _json(urllib.request.Request(url, headers=head)).get("events") or []
@@ -151,7 +157,20 @@ def check(base: Path, character_id: str, now: datetime | None = None, fetcher: F
         {"kind": EVENT_KINDS[e["type"]], "at": str(e.get("created_at", ""))}
         for e in got.get("events", []) if isinstance(e, dict) and e.get("type") in EVENT_KINDS]
     _save(base, character_id, state)
+    try:   # 手紙が通った子を、名簿に(だれと・いつ だけ。本文は見ない)
+        _known().update(base, character_id, str(env.get("PETIT_ID") or character_id),
+                        got.get("recent", []), got.get("penpals", []))
+    except (OSError, ValueError, TypeError):
+        pass
     return state
+
+
+def _known():
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import known_petits
+    return known_petits
 
 
 def _prefs(base: Path, character_id: str) -> tuple[dict[str, bool], tuple[int, int] | None]:
@@ -169,11 +188,16 @@ def is_quiet(quiet: tuple[int, int] | None, now: datetime) -> bool:
     return (start <= now.hour or now.hour < end) if start > end else (start <= now.hour < end)
 
 
-def _names(letters: list[dict]) -> str:
+def _names(letters: list[dict], hints: Callable[[str], str] | None = None) -> str:
+    """手紙の送り手の名前を並べる。hints があれば、名簿の一言を添える(「澪(低い目線が好きな子)」)"""
     seen: list[str] = []
     for m in letters:
-        if m["name"] and m["name"] not in seen:
-            seen.append(m["name"])
+        if not m["name"]:
+            continue
+        hint = hints(m.get("from", "")) if hints else ""
+        word = f"{m['name']}({hint})" if hint else m["name"]
+        if word not in seen:
+            seen.append(word)
     return "・".join(seen)
 
 
@@ -206,7 +230,7 @@ def line(base: Path, character_id: str, mark: bool = False, now: datetime | None
     except (TypeError, ValueError):
         stale = True
     if letters and (any(m["id"] not in told_ids for m in letters) or stale):
-        who = _names(letters)
+        who = _names(letters, lambda pid: _known().hint(base, character_id, pid, now.date()))
         parts.append(f"{who + 'から' if who else ''}手紙が {len(letters)} 通、まだ読んでいない(読むのは mail_read)")
         told = {**told, "letters": [m["id"] for m in letters], "letters_at": now.isoformat(timespec="seconds")}
     event_at = str(told.get("event_at") or "")
