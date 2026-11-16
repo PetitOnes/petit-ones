@@ -20,7 +20,7 @@
     <div class="m-card" id="reqCard" style="display:none">
       <span class="a-heading">ぷちのお願い</span>
       <div id="requests"></div>
-      <p class="a-label">ぷちが家の音を選んで「体に入れてほしい」と言っています。「入れる」でその子の体へ送ります。どちらでも、その子に一言で伝わります。</p>
+      <p class="a-label">ぷちが「体に入れてほしい」「外してほしい」「こういう音がほしい」と言っています。答えられるのは家の持ち主だけ。どう答えても、その子に一言で伝わります。「こういう音がほしい」は、合う音を取り込んでから、選んで入れます。</p>
     </div>
 
     <!-- 取り込む: 家の音のライブラリに足す。体が鳴らせる形に変換される -->
@@ -45,7 +45,7 @@
     <!-- 家の音: 聞く・体へ送る・消す -->
     <div class="m-card">
       <span class="a-heading">家の音</span>
-      <p class="a-label">ぷちはこの一覧(題・説明・秒数)を見て、体に入れてほしい音を選べます。</p>
+      <p class="a-label">ぷちはこの一覧(題・説明・秒数)を見て、体に入れてほしい音を選べます。体へ送る・消すは家の持ち主だけ。</p>
       <div id="library"></div>
       <div class="p-empty" id="libEmpty" style="display:none">まだ音はありません。上から取り込めます</div>
     </div>
@@ -82,7 +82,7 @@
       const sending = sendingFor === it.name;
       const targets = bodies.map(b => `<label class="o-sound-pick${b.online ? "" : " is-off"}">
           <input type="checkbox" data-pick="${esc(b.id)}" ${b.online ? "checked" : "disabled"}>${dot(b)}${esc(b.name)}${b.online ? "" : "(つながっていない)"}</label>`).join("");
-      const asked = requests.filter(r => r.name === it.name).map(r => bodies.find(b => b.id === r.who)).filter(Boolean);
+      const asked = requests.filter(r => r.name === it.name && r.kind === "add").map(r => bodies.find(b => b.id === r.who)).filter(Boolean);
       const dropped = bodies.filter(b => (b.removed || []).includes(it.name));
       const editing = editingFor === it.name;
       return `<div class="o-sound" data-name="${esc(it.name)}">
@@ -90,9 +90,9 @@
           ${it.description ? `<div class="o-sound-desc">${esc(it.description)}</div>` : ""}
           <div class="o-sound-sub">${secs(it.seconds)}${have.length ? "・体にある: " + have.map(dot).join("") : "・まだどの体にもない"}${asked.length ? "・お願い中: " + asked.map(dot).join("") : ""}${dropped.length ? "・外した: " + dropped.map(dot).join("") : ""}</div></div>
         <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(it.name)}">▶ 聞く</button>
-        ${canEdit ? `<button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>
-        <button class="a-btn a-btn--ghost a-btn--s" data-edit="${esc(it.name)}">${editing ? "やめる" : "題・説明"}</button>
-        <button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>` : ""}
+        ${keeper ? `<button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>` : ""}
+        ${canEdit ? `<button class="a-btn a-btn--ghost a-btn--s" data-edit="${esc(it.name)}">${editing ? "やめる" : "題・説明"}</button>` : ""}
+        ${keeper ? `<button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>` : ""}
         ${editing ? `<div class="o-sound-send o-sound-edit">
           <label><span class="a-label">題</span><input class="a-input" data-etitle maxlength="${maxTitle}" value="${esc(it.title || "")}"></label>
           <label><span class="a-label">説明</span><textarea class="a-input" data-edesc maxlength="${maxDesc}" rows="2">${esc(it.description || "")}</textarea></label>
@@ -107,7 +107,7 @@
       const inLib = new Set(library.map(x => x.name)), removed = new Set(b.removed || []);
       const chips = b.sounds.map(n => `<button class="o-sound-chip${inLib.has(n) ? "" : " is-only"}${removed.has(n) ? " is-removed" : ""}" data-play="${esc(n)}" data-char="${esc(b.id)}"
           title="${removed.has(n) ? "この子が外した音(体には残っている)。体で鳴らす" : inLib.has(n) ? "体で鳴らす" : "体にだけある音。体で鳴らす"}">${esc(n.replace(/\.wav$/, ""))}</button>`).join("");
-      const back = canEdit && removed.size ? `<div class="o-sound-removed"><span class="a-label">外した音:</span>${[...removed].map(n =>
+      const back = keeper && removed.size ? `<div class="o-sound-removed"><span class="a-label">外した音:</span>${[...removed].map(n =>
           `<button class="a-btn a-btn--ghost a-btn--s" data-undrop="${esc(n)}" data-char="${esc(b.id)}" title="また使ってよい音に戻す">${esc(n.replace(/\.wav$/, ""))} を戻す</button>`).join("")}</div>` : "";
       return `<div class="o-sound-body">
         <div class="o-sound-body-head">${dot(b)}<b>${esc(b.name)}</b>
@@ -117,15 +117,20 @@
       </div>`;
     }
 
-    // ぷちのお願いの 1 行
+    // ぷちのお願いの 1 行。add = 入れてほしい / remove = 外してほしい / wish = こういう音がほしい(家に無い)
+    const KIND = { add: "入れてほしい", remove: "外してほしい", wish: "こういう音がほしい" };
     function reqRow(r) {
       const b = bodies.find(x => x.id === r.who) || { name: r.who }, it = library.find(x => x.name === r.name) || { name: r.name };
-      return `<div class="o-sound" data-req="${esc(r.id)}">
-        <div class="o-sound-main">${dot(b)} <b>${esc(b.name)}</b>: ${esc(it.title || it.name)}${secs(it.seconds) ? `(${secs(it.seconds)})` : ""}
-          ${r.why ? `<div class="o-sound-desc">「${esc(r.why)}」</div>` : ""}
+      const what = r.kind === "wish" ? `「${esc(r.why)}」` : `${esc(it.title || it.name)}${secs(it.seconds) ? `(${secs(it.seconds)})` : ""}`;
+      const pick = r.kind === "wish" ? `<select class="a-input o-sound-select" data-wishpick><option value="">取り込んだ音から選ぶ…</option>${
+          library.map(x => `<option value="${esc(x.name)}">${esc(x.title || x.name)}</option>`).join("")}</select>` : "";
+      const okLabel = r.kind === "remove" ? "外す" : r.kind === "wish" ? "これで入れる" : "入れる";
+      return `<div class="o-sound" data-req="${esc(r.id)}" data-kind="${esc(r.kind)}">
+        <div class="o-sound-main">${dot(b)} <b>${esc(b.name)}</b> <span class="o-sound-kind is-${esc(r.kind)}">${KIND[r.kind] || ""}</span> ${what}
+          ${r.why && r.kind !== "wish" ? `<div class="o-sound-desc">「${esc(r.why)}」</div>` : ""}
           <div class="o-sound-sub">${esc((r.at || "").replace("T", " "))}</div></div>
-        <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(r.name)}">▶ 聞く</button>
-        ${canEdit ? `<button class="a-btn a-btn--s" data-answer="send">入れる</button>
+        ${r.kind !== "wish" && library.some(x => x.name === r.name) ? `<button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(r.name)}">▶ 聞く</button>` : ""}
+        ${keeper ? `${pick}<button class="a-btn a-btn--s" data-answer="ok">${okLabel}</button>
         <button class="a-btn a-btn--ghost a-btn--s" data-answer="decline">ことわる</button>` : ""}
         <span class="o-sound-msg" data-reqmsg></span>
       </div>`;
@@ -140,7 +145,7 @@
     }
 
     // 家の持ち主が「音を取り込む・消す・体へ送る」を外している人には、聞く・鳴らすだけを出す
-    let canEdit = true, maxTitle = 40, maxDesc = 200;
+    let canEdit = true, keeper = false, maxTitle = 40, maxDesc = 200;
     async function load() {
       try {
         if (!load.asked) { load.asked = true; try { const me = await call("GET", "/api/me"); canEdit = !me.can || me.can.sounds !== false; } catch (e) {} }
@@ -149,6 +154,7 @@
         library = res.library || [];
         bodies = res.bodies || [];
         requests = res.requests || [];
+        keeper = !!res.keeper;   // 体へ送る・消す・お願いに答えるのは、家の持ち主だけ
         maxTitle = res.max_title || 40; maxDesc = res.max_description || 200;
         $("hint").textContent = `WAV・MP3・M4A などを入れられます。体が鳴らせる形(モノラル・16 kHz)に変換します。${res.max_seconds || 20} 秒までです。`;
         render();
@@ -196,10 +202,11 @@
       const listen = e.target.closest("[data-listen]"), ans = e.target.closest("[data-answer]");
       if (listen) { listenTo(listen.dataset.listen); return; }
       if (!ans) return;
-      const row = ans.closest("[data-req]"), msg = row.querySelector("[data-reqmsg]");
+      const row = ans.closest("[data-req]"), msg = row.querySelector("[data-reqmsg]"), sel = row.querySelector("[data-wishpick]");
+      if (ans.dataset.answer === "ok" && sel && !sel.value) { msg.textContent = "先に、合う音を取り込んで選んでください"; return; }
       row.querySelectorAll("button").forEach(x => x.disabled = true);
-      msg.textContent = ans.dataset.answer === "send" ? "体へ送っています…" : "";
-      try { await call("POST", "/api/sounds/requests/" + encodeURIComponent(row.dataset.req), { action: ans.dataset.answer }); await load(); }
+      msg.textContent = ans.dataset.answer === "ok" && row.dataset.kind !== "remove" ? "体へ送っています…" : "";
+      try { await call("POST", "/api/sounds/requests/" + encodeURIComponent(row.dataset.req), { action: ans.dataset.answer, name: sel ? sel.value : "" }); await load(); }
       catch (e2) { msg.textContent = e2.message; row.querySelectorAll("button").forEach(x => x.disabled = false); }
     });
 

@@ -557,7 +557,7 @@ CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("notes_delete", "自分のノートを消す"),
     ("notebook", "交換日記に書く"),
     ("anniv", "よてい: 予定・記念日を足す・直す・消す(自分が足したもの)"),
-    ("sounds", "音を取り込む・消す・{kids}の体へ送る"),
+    ("sounds", "音を取り込む・題と説明を直す(体へ送る・消す・ぷちのお願いに答えるのは、家の持ち主だけ)"),
     ("schedule", "設定: {kids}のアクティブタイムを変える"),
     ("autonomous", "設定: {kids}の自律行動を変える"),
     ("switches", "設定: {kids}のからだの使い方を変える"),
@@ -3156,6 +3156,15 @@ def _sounds():
     return sounds
 
 
+def _sound_keeper(request: Request | None) -> bool:
+    """体へ送る・家の音を消す・ぷちのお願いに答えるのは、家の持ち主だけ(2026-11-16 ありさん)"""
+    return _is_owner(request) and (_get_username(request) if request is not None else None) in (None, OWNER_USER)
+
+
+def _keeper_only() -> JSONResponse:
+    return JSONResponse({"error": "これは家の持ち主だけができます"}, status_code=403)
+
+
 class SoundSendRequest(BaseModel):
     name: str
     char_ids: list[str]
@@ -3173,7 +3182,8 @@ class SoundMetaRequest(BaseModel):
 
 
 class SoundAnswerRequest(BaseModel):
-    action: str          # send(体に入れる)/ decline(ことわる)
+    action: str          # ok(入れる・外す。send も ok と同じ)/ decline(ことわる)
+    name: str = ""       # 「こういう音がほしい」に、家の音のどれで答えるか
     note: str = ""
 
 
@@ -3474,7 +3484,8 @@ async def api_sounds(request: Request = None):
     bodies = await asyncio.gather(*[_body_sounds(c) for c in chars])
     mine = {c["id"] for c in chars}
     reqs = [r for r in _sounds().requests(DATA_DIR) if r.get("who") in mine]   # ぷちの「体に入れてほしい」(まだ答えていない分)
-    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "requests": reqs, "max_seconds": _sounds().MAX_SECONDS,
+    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "requests": reqs, "keeper": _sound_keeper(request),
+            "max_seconds": _sounds().MAX_SECONDS,
             "max_title": _sounds().MAX_TITLE, "max_description": _sounds().MAX_DESCRIPTION}
 
 
@@ -3516,7 +3527,9 @@ async def _send_sound(cid: str, path: Path, data: bytes) -> str:
 
 @app.post("/api/sounds/requests/{request_id}")
 async def api_sounds_answer(request_id: str, body: SoundAnswerRequest, request: Request):
-    """ぷちのお願いに答える。send = 体に入れる(送れたらかなったことに)/ decline = ことわる。行方は、その子に 1 行で伝わる"""
+    """ぷちのお願いに答える(家の持ち主だけ)。ok = 入れる(体へ送れたら)・外す / decline = ことわる。行方は、その子に 1 行で伝わる"""
+    if not _sound_keeper(request):
+        return _keeper_only()
     sd = _sounds()
     r = next((x for x in sd.requests(DATA_DIR) if x.get("id") == request_id), None)
     if r is None:
@@ -3527,21 +3540,27 @@ async def api_sounds_answer(request_id: str, body: SoundAnswerRequest, request: 
     if body.action == "decline":
         sd.resolve(DATA_DIR, request_id, "declined", by=by, note=body.note)
         return {"ok": True}
-    if body.action != "send":
+    if body.action not in ("ok", "send"):
         return JSONResponse({"error": "答え方が分かりません"}, status_code=400)
-    path = sd.path_of(DATA_DIR, r["name"])
+    if r["kind"] == "remove":   # 体は消せないので、家の側で「使わない音」と覚える
+        sd.resolve(DATA_DIR, request_id, "done", by=by, note=body.note)
+        return {"ok": True}
+    name = body.name if r["kind"] == "wish" else r["name"]   # 「こういう音がほしい」は、取り込んだ音を選んで答える
+    path = sd.path_of(DATA_DIR, name)
     if path is None:
-        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+        return JSONResponse({"error": "その音は家にありません" if name else "入れる音を選んでください"}, status_code=404)
     result = await _send_sound(r["who"], path, path.read_bytes())
     if result != "ok":
         return JSONResponse({"error": result}, status_code=502)
-    sd.resolve(DATA_DIR, request_id, "done", by=by, note=body.note)
+    sd.resolve(DATA_DIR, request_id, "done", by=by, note=body.note, name=path.name)
     return {"ok": True}
 
 
 @app.post("/api/sounds/removed")
 def api_sounds_unremove(body: SoundRemovedRequest, request: Request):
-    """ぷちが外した印を取る(また使ってよい音に戻す)"""
+    """ぷちが外した印を取る(また使ってよい音に戻す。家の持ち主だけ)"""
+    if not _sound_keeper(request):
+        return _keeper_only()
     if body.char_id not in {c["id"] for c in _my_chars(request)}:
         return JSONResponse({"error": "この子の体は変えられません"}, status_code=403)
     _sounds().undrop(DATA_DIR, body.char_id, body.name)
@@ -3558,8 +3577,10 @@ def api_sounds_file(name: str):
 
 
 @app.delete("/api/sounds/{name}")
-def api_sounds_delete(name: str):
-    """家の音を消す(体の SD に送った分は残る。体からは消せない)"""
+def api_sounds_delete(name: str, request: Request):
+    """家の音を消す(家の持ち主だけ。体の SD に送った分は残る。体からは消せない)"""
+    if not _sound_keeper(request):
+        return _keeper_only()
     if not _sounds().delete(DATA_DIR, name):
         return JSONResponse({"error": "その音は家にありません"}, status_code=404)
     return {"ok": True}
@@ -3567,7 +3588,9 @@ def api_sounds_delete(name: str):
 
 @app.post("/api/sounds/send")
 async def api_sounds_send(req_body: SoundSendRequest, request: Request = None):
-    """家の音を、選んだ子の体(SD)へ送る。同じ名前が体にあれば置き換わる"""
+    """家の音を、選んだ子の体(SD)へ送る(家の持ち主だけ)。同じ名前が体にあれば置き換わる"""
+    if not _sound_keeper(request):
+        return _keeper_only()
     mine = {c["id"] for c in _my_chars(request)}
     req_body.char_ids = [cid for cid in req_body.char_ids if cid in mine]   # 見られる子が決まっている人は、その子にだけ
     path = _sounds().path_of(DATA_DIR, req_body.name)

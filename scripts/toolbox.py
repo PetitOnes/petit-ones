@@ -72,7 +72,7 @@ SHELVES: list[tuple[str, str, dict[str, object]]] = [
     ("textbook", "教科書", {"textbook:textbook_read": "教科書を読む", "textbook:textbook_search": "教科書を探す", "textbook:textbook_index": "教科書の目次", "textbook:textbook_propose": "教科書に提案する", "textbook:textbook_version": "教科書の版"}),
     ("world", "家と外", {
         "script:sky": "空(月・節気)", "script:room_log": "家の空気", "script:phone_place": "家の人のスマホの部屋", "script:spots": "見に行けるもの", "script:events": "予定",
-        "script:anniversaries": "記念日", "script:notices": "受け取る一言を決める", "script:check_usage": "使った量を見る", "script:music": "音楽をいっしょに", "script:sounds": "家の音のライブラリ(体に入れてほしい音をお願い・外す)", "script:whereabouts": "いま どこ",
+        "script:anniversaries": "記念日", "script:notices": "受け取る一言を決める", "script:check_usage": "使った量を見る", "script:music": "音楽をいっしょに", "script:sounds": "家の音のライブラリ(入れてほしい・外してほしい・こういう音がほしい、をお願い)", "script:whereabouts": "いま どこ",
         "switchbot:list_devices": "家電の一覧", "switchbot:get_device_status": "家電の様子", "switchbot:turn_on": "家電をつける", "switchbot:turn_off": "家電を消す", "switchbot:send_command": "家電に命令",
     }),
     ("heart", "心拍(Garmin)", {
