@@ -6599,7 +6599,7 @@ def _group_chars(request: Request | None) -> list[dict]:
 
 
 def _pin_targets(request: Request | None, key: str) -> list[dict]:
-    """📍 の「ここにいるよ」(hello_to)・「からだ おやすみ」(rest_to)が届く子。
+    """📍 の「ここにいるよ」(hello_to)・「からだ おやすみ」(rest_to)・「時間外も起きている」(awake_to)が届く子。
 
     その人が設定(🏠 家 → 📍 から送る相手)で選んだ子。選んでいなければ、動かしてよい子ぜんぶ
     """
@@ -6639,6 +6639,31 @@ def api_switches_rest_all(body: RestBody, request: Request = None):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return api_switches_rest_all_get(request)
+
+
+class AwakeAllBody(BaseModel):
+    hours: float | None = None   # いまから何時間 時間外も起きているか(None・0 でやめる)
+
+
+@app.get("/api/switches/awake")
+def api_switches_awake_all_get(request: Request = None):
+    """みんなの「時間外も起きている」の様子(📍 のメニュー用)。targets は、📍 のボタンが効く子"""
+    out = {}
+    for c in _my_chars(request):
+        v = _awake().view(get_settings(c["id"]))
+        out[c["id"]] = {"name": c.get("name", c["id"]), "on": v["on"], "until": v["until"]}
+    return {"chars": out, "targets": [c["id"] for c in _pin_targets(request, "awake_to")]}
+
+
+@app.post("/api/switches/awake")
+def api_switches_awake_all(body: AwakeAllBody, request: Request = None):
+    """📍 から、いまから n 時間 時間外も起きている(0 でやめる)。効くのは、その人が設定で選んだ子(選んでいなければ、動かしてよい子ぜんぶ)"""
+    try:
+        for c in _pin_targets(request, "awake_to"):
+            _awake().set_awake(c["id"], body.hours, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return api_switches_awake_all_get(request)
 
 
 @app.get("/api/{character_id}/switches")
@@ -6724,6 +6749,7 @@ def _load_ui_settings(user: str = OWNER_USER) -> dict:
     base.pop("calendar_show", None)   # 📅 よてい で見せるものも、人ごと
     base.pop("hello_to", None)   # 📍 から送る相手も、人ごと
     base.pop("rest_to", None)
+    base.pop("awake_to", None)
     base.pop("house_title", None)   # 題も引き継がない(その人の呼び名から作る)
     return base
 
@@ -6746,6 +6772,7 @@ class UiSettings(BaseModel):
     topbar_saved: str | None = None   # 取っておいた色(1 色だけ)。ぷちの色に戻したあとでも、この色に戻せる
     hello_to: list[str] | None = None   # 📍 の「ここにいるよ」が届く子。空・null なら、みんな(自分が送ってよい子ぜんぶ)
     rest_to: list[str] | None = None    # 📍 の「からだ おやすみ」が効く子。空・null なら、みんな
+    awake_to: list[str] | None = None   # 📍 の「時間外も起きている」が効く子。空・null なら、みんな
     now_presets: list[str] | None = None   # 📍 わたしのいま の候補(4 つまで、5 字まで)。空・null なら、はじめの候補(自室・お外・会社)
     house_title: str | None = None    # トップバーの題。既定は「<COMPANION_NAME>ち」
     send_key: str | None = None       # 話しかける欄の送り方: "enter"(Enter で送信)か "ctrl_enter"(Ctrl+Enter で送信、Enter は改行)
@@ -6769,7 +6796,7 @@ def api_ui_set(req: UiSettings, request: Request = None):
     if req.topbar_saved and re.fullmatch(r"#[0-9a-fA-F]{6}", req.topbar_saved):
         cur["topbar_saved"] = req.topbar_saved
     # 📍 から送る相手: 送られてきたときだけ変える。空の並びは「みんな」に戻す
-    for key in ("hello_to", "rest_to"):
+    for key in ("hello_to", "rest_to", "awake_to"):
         if key in req.model_fields_set:
             ids = [c for c in (getattr(req, key) or []) if isinstance(c, str) and re.fullmatch(r"[a-zA-Z0-9_]+", c)]
             cur[key] = ids or None
@@ -9591,6 +9618,8 @@ HTML = """<!DOCTYPE html>
     function _hm(iso) { const t = iso ? new Date(iso) : null; return t && !isNaN(t) ? `${t.getHours()}:${String(t.getMinutes()).padStart(2, "0")}` : ""; }
     let _restAll = {};   // みんなの からだ おやすみ(/api/switches/rest)
     let _restTargets = null;   // 📍 の からだ おやすみ が効く子(設定で選んだ子。null は分からない)
+    let _awakeAll = {};   // みんなの「時間外も起きている」(/api/switches/awake)
+    let _awakeTargets = null;
     // 📍 から送る相手の名前(「ぷちる」「ぷちてゃ・ぷちこ」)。みんな(選んでいない)なら "みんな"
     function pinNames(ids) {
       const all = (window._allChars || characters);
@@ -9600,6 +9629,7 @@ HTML = """<!DOCTYPE html>
     async function loadMeNow() {
       try { _meNow = await fetch("/api/whereabouts").then(r => r.json()); } catch (e) { return; }
       try { const r = await fetch("/api/switches/rest").then(x => x.json()); _restAll = r.chars || {}; _restTargets = r.targets || null; } catch (e) {}
+      try { const r = await fetch("/api/switches/awake").then(x => x.json()); _awakeAll = r.chars || {}; _awakeTargets = r.targets || null; } catch (e) {}
       document.getElementById("meNowText").textContent = _meNow.mine || "";
       document.getElementById("meNowBtn").title = _meNow.mine ? `わたしのいま: ${_meNow.mine}` : "わたしのいま";
       if (document.getElementById("meNowMenu").style.display !== "none") renderMeNow();
@@ -9631,7 +9661,12 @@ HTML = """<!DOCTYPE html>
         (Array.isArray(_restTargets) && _restTargets.length < Object.keys(_restAll).length ? `<div class="others">→ ${esc(pinNames(_restTargets))} に</div>` : "") +
         // からだ おやすみ を使えないことになっている人には、様子だけを出して、押すところは出さない
         (canDo("rest") ? `<div class="chips small">${[[30, "30 分"], [60, "1 時間"], [180, "3 時間"]].map(([m, l]) => `<button class="chip" onclick="setRestAll(${m})">${l}</button>`).join("")}` +
-        (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>` : "");
+        (Object.values(_restAll).some(r => r.on) ? `<button class="chip" onclick="setRestAll(0)">やめる</button>` : "") + `</div>` : "") +
+        // 時間外も起きている: 3 人まとめて、いまから n 時間、アクティブタイムの外でも自律行動してよい
+        `<div class="others" style="margin-top:8px">☀️ 時間外も起きている(自律行動): ${awakeWords()}</div>` +
+        (Array.isArray(_awakeTargets) && _awakeTargets.length < Object.keys(_awakeAll).length ? `<div class="others">→ ${esc(pinNames(_awakeTargets))} に</div>` : "") +
+        (canDo("schedule") ? `<div class="chips small">${[[1, "1 時間"], [3, "3 時間"], [6, "6 時間"]].map(([h, l]) => `<button class="chip" onclick="setAwakeAll(${h})">${l}</button>`).join("")}` +
+        (Object.values(_awakeAll).some(r => r.on) ? `<button class="chip" onclick="setAwakeAll(0)">やめる</button>` : "") + `</div>` : "");
       const inp = document.getElementById("meNowInput");
       inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); setMeNow(inp.value); } });
     }
@@ -9643,6 +9678,14 @@ HTML = """<!DOCTYPE html>
     function restWords() {
       const on = Object.values(_restAll).filter(r => r.on);
       return on.length ? on.map(r => `${r.name} ${r.until} まで`).join(" / ") : "なし";
+    }
+    function awakeWords() {
+      const on = Object.values(_awakeAll).filter(r => r.on);
+      return on.length ? on.map(r => `${r.name} ${r.until} まで`).join(" / ") : "なし";
+    }
+    async function setAwakeAll(hours) {
+      try { _awakeAll = (await fetch("/api/switches/awake", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({hours})}).then(r => r.json())).chars || {}; } catch (e) { return; }
+      renderMeNow();
     }
     async function setRestAll(minutes) {
       try { _restAll = (await fetch("/api/switches/rest", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({minutes})}).then(r => r.json())).chars || {}; } catch (e) { return; }
