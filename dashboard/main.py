@@ -574,7 +574,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -3187,6 +3187,16 @@ class SoundMetaRequest(BaseModel):
     description: str = ""
 
 
+class SoundImportItem(BaseModel):
+    name: str
+    title: str = ""
+    description: str = ""
+
+
+class SoundImportRequest(BaseModel):
+    items: list[SoundImportItem]
+
+
 class SoundAnswerRequest(BaseModel):
     action: str          # ok(入れる・外す。send も ok と同じ)/ decline(ことわる)
     name: str = ""       # 「こういう音がほしい」に、家の音のどれで答えるか
@@ -3516,6 +3526,36 @@ def api_sounds_meta(body: SoundMetaRequest, request: Request):
         return JSONResponse({"error": "その音は家にありません"}, status_code=404)
     meta = _sounds().set_meta(DATA_DIR, body.name, body.title, body.description, by=_get_username(request) or OWNER_USER)
     return {"ok": True, "title": meta["title"], "description": meta["description"]}
+
+
+@app.get("/api/sounds/backup")
+def api_sounds_backup():
+    """体の SD のバックアップ(PETIT_DATA_DIR/sd_backups/)にあって、家の音にまだ無い音。題は下書き"""
+    return {"items": _sounds().backup_candidates(DATA_DIR)}
+
+
+@app.get("/api/sounds/backup_file/{name}")
+def api_sounds_backup_file(name: str):
+    """バックアップの音を聞く(取り込む前に)"""
+    path = _sounds().backup_path(DATA_DIR, name)
+    if path is None:
+        return JSONResponse({"error": "その音はバックアップにありません"}, status_code=404)
+    return Response(path.read_bytes(), media_type="audio/wav", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/sounds/import")
+async def api_sounds_import(body: SoundImportRequest, request: Request):
+    """バックアップの音を、題・説明をつけて家の音に入れる。名前ごとに ok か理由"""
+    sd = _sounds()
+    by = _get_username(request) or OWNER_USER
+    results = {}
+    for it in body.items[:100]:
+        try:
+            await asyncio.to_thread(sd.import_backup, DATA_DIR, it.name, it.title, it.description, by)
+            results[it.name] = "ok"
+        except sd.SoundError as e:
+            results[it.name] = str(e)
+    return {"ok": all(v == "ok" for v in results.values()), "results": results}
 
 
 async def _send_sound(cid: str, path: Path, data: bytes) -> str:
