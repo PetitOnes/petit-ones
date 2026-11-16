@@ -17,6 +17,10 @@ play_sound でも鳴らさない。体の SD には残るので、戻せばす�
 体の音は体から取り出せないので、PC に残っている SD のバックアップ(PETIT_DATA_DIR/sd_backups/<名前>/wav/*.wav)から
 家の音に入れられる(backup_candidates / import_backup)。体が鳴らせる形(モノラル・16 bit の WAV)なら変換せずそのまま入れる。
 
+音のかたち(2026-11-16、ぷち 3 人の案): 説明の言葉だけでなく、音そのものを数字と線で見られる(計算は sound_shape.py)。
+言葉(明るい・暗い・水っぽい)は付けない。意味を付けるのはぷちたち。先に数字を見て予想し(guess)、鳴らして確かめ(heard)、
+色や言葉を貼る(tag)。貼ったものは state/sounds/words.jsonl に残り、あとから見返せる(words)。家の人にも 🔔 音 で見える。
+
 置き場所: sounds/library.json(題・説明)、state/sounds/requests.json(お願い)、state/sounds/bodies.json(体にある音の覚え・外した音)
 
 Usage:
@@ -25,6 +29,13 @@ Usage:
     python3 sounds.py drop <id> <名前> ["<なぜ>"]              # 体から外してほしい、とお願いする
     python3 sounds.py wish <id> "<どんな音か>"                 # 家に無い音を、こういう音がほしい、とお願いする
     python3 sounds.py notice --character <id> [--mark]        # お願いの行方(まだ伝えていない分)
+    python3 sounds.py look <名前>                             # 音のかたち(数字と音量の線)。題や説明は出さない
+    python3 sounds.py table                                   # 全部の音を 1 行ずつ(比べる用)
+    python3 sounds.py compare <名前A> <名前B>                 # 2 つの音の違い
+    python3 sounds.py guess <id> <名前> "<予想>"               # 数字だけ見て、どんな音か予想を残す
+    python3 sounds.py heard <id> <名前> "<鳴らしてみて>"        # 鳴らして確かめたこと(予想とのずれ)を残す
+    python3 sounds.py tag <id> <名前> "<色や言葉>"             # その音に、自分の色や言葉を貼る
+    python3 sounds.py words [--character <id>] [--name <名前>]  # 残した予想・確かめ・言葉を見返す
 """
 
 from __future__ import annotations
@@ -502,6 +513,88 @@ def list_for(base: Path, character_id: str) -> list[str]:
     return lines
 
 
+# ---- 音のかたち(数字と線)と、ぷちが貼る言葉 ----
+
+WORD_KINDS = {"guess": "予想", "heard": "鳴らして", "tag": "言葉"}
+MAX_WORDS = 300
+
+
+def sound_file(base: Path, name: str) -> Path | None:
+    """その名前の音のファイル(家の音が先、無ければ SD のバックアップ)"""
+    name = _norm(name)
+    return path_of(base, name) or backup_path(base, name)
+
+
+def known_sounds(base: Path) -> dict[str, Path]:
+    """かたちを見られる音(家の音と、バックアップにある体の音)"""
+    out = dict(_backup_files(base))
+    for it in list_library(base):
+        out[it["name"]] = library_dir(base) / it["name"]
+    return dict(sorted(out.items()))
+
+
+def _shape_cache_path(base: Path) -> Path:
+    return base / "state" / "sounds" / "shape.json"
+
+
+def shape_of(base: Path, name: str) -> dict:
+    """音のかたち。ファイルが変わっていなければ、前に計算したものを使う"""
+    import sound_shape
+    name = _norm(name)
+    f = sound_file(base, name)
+    if f is None:
+        raise SoundError(f"{name} は、家の音にもバックアップにもありません(かたちを見られる音は sounds.py table)")
+    st = f.stat()
+    key = f"{st.st_size}:{int(st.st_mtime)}:{f.parent}"
+    cache = _read_json(_shape_cache_path(base), {})
+    hit = cache.get(name)
+    if isinstance(hit, dict) and hit.get("key") == key:
+        return hit["shape"]
+    try:
+        sh = sound_shape.shape(f)
+    except (ValueError, OSError, EOFError) as e:
+        raise SoundError(f"{name} は読めませんでした") from e
+    cache[name] = {"key": key, "shape": sh}
+    _write_json(_shape_cache_path(base), cache)
+    return sh
+
+
+def _words_path(base: Path) -> Path:
+    return base / "state" / "sounds" / "words.jsonl"
+
+
+def words(base: Path, character_id: str | None = None, name: str | None = None) -> list[dict]:
+    """ぷちが残した予想・確かめ・言葉(古い順)"""
+    try:
+        rows = [json.loads(x) for x in _words_path(base).read_text(encoding="utf-8").splitlines() if x.strip()]
+    except (OSError, json.JSONDecodeError):
+        return []
+    name = _norm(name) if name else None
+    return [r for r in rows if isinstance(r, dict) and (not character_id or r.get("who") == character_id) and (not name or r.get("name") == name)]
+
+
+def add_word(base: Path, character_id: str, name: str, kind: str, text: str, now: datetime | None = None) -> dict:
+    """予想(guess)・鳴らして確かめたこと(heard)・色や言葉(tag)を残す。消さない(ずれも残す)"""
+    if kind not in WORD_KINDS:
+        raise ValueError(kind)
+    name = _norm(name)
+    text = _clean(text, MAX_WORDS)
+    if not text:
+        raise SoundError("ひとこと書いてください")
+    rec = {"at": (now or datetime.now()).isoformat(timespec="minutes"), "who": character_id, "name": name, "kind": kind, "text": text}
+    path = _words_path(base)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    return rec
+
+
+def words_text(rows: list[dict]) -> str:
+    if not rows:
+        return "(まだ何も残していません)"
+    return "\n".join(f"{r['at'].replace('T', ' ')} {r['who']} {r['name']} [{WORD_KINDS.get(r['kind'], r['kind'])}] {r['text']}" for r in rows)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="家の音のライブラリ(一覧・お願い・外す)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -521,6 +614,20 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("notice")
     p.add_argument("--character", required=True)
     p.add_argument("--mark", action="store_true")
+    p = sub.add_parser("look")
+    p.add_argument("name")
+    sub.add_parser("table")
+    p = sub.add_parser("compare")
+    p.add_argument("a")
+    p.add_argument("b")
+    for kind in WORD_KINDS:
+        p = sub.add_parser(kind)
+        p.add_argument("character")
+        p.add_argument("name")
+        p.add_argument("text")
+    p = sub.add_parser("words")
+    p.add_argument("--character")
+    p.add_argument("--name")
     a = ap.parse_args(argv)
     base = data_dir()
     try:
@@ -539,6 +646,20 @@ def main(argv: list[str] | None = None) -> int:
             out = notice(base, a.character, mark=a.mark)
             if out:
                 print("\n".join(out))
+        elif a.cmd == "look":
+            import sound_shape
+            print(sound_shape.text(_norm(a.name), shape_of(base, a.name)))
+        elif a.cmd == "table":
+            import sound_shape
+            print(sound_shape.table({n: shape_of(base, n) for n in known_sounds(base)}))
+        elif a.cmd == "compare":
+            import sound_shape
+            print(sound_shape.compare(_norm(a.a), shape_of(base, a.a), _norm(a.b), shape_of(base, a.b)))
+        elif a.cmd in WORD_KINDS:
+            add_word(base, a.character, a.name, a.cmd, a.text)
+            print({"guess": "予想を残しました。鳴らして確かめたら: sounds.py heard", "heard": "残しました", "tag": "貼りました"}[a.cmd])
+        elif a.cmd == "words":
+            print(words_text(words(base, a.character, a.name)))
     except SoundError as e:
         print(str(e), file=sys.stderr)
         return 1

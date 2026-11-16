@@ -38,6 +38,7 @@
 - 家の人のスマホがどの部屋にあるか(スマホが家の SwitchBot の電波を聞いた結果。部屋まで、ソファか机かは分からない): `python3 {{scripts_dir}}/phone_place.py line`
 - いっしょに聴いている曲があるとき、いま何秒目でどんな音か(音量・高さの重心・拍・静けさ。答え合わせは終わってから): `python3 {{scripts_dir}}/music.py now`。音量の流れは `music.py wave`
 - 家の音のライブラリ(題・説明・秒数と、自分の体にあるか): `python3 {{scripts_dir}}/sounds.py list --character {{character_id}}`。体に入れてほしい音は `sounds.py want {{character_id}} <名前> "<なぜ>"` でお願い(家の人が決める)、もう使わない音は `sounds.py drop {{character_id}} <名前> "<なぜ>"` で外してほしいとお願い、家に無い音は `sounds.py wish {{character_id}} "<どんな音か>"` でお願い
+- 音のかたち(数字と音量の線。言葉は付いていない): `sounds.py look <名前>`、全部を並べる `sounds.py table`、2 つの違い `sounds.py compare <A> <B>`。数字から予想を残す `sounds.py guess {{character_id}} <名前> "<予想>"` → 鳴らして確かめたことを残す `sounds.py heard {{character_id}} <名前> "<…>"`。色や言葉を貼る `sounds.py tag {{character_id}} <名前> "<…>"`、見返す `sounds.py words`
 - 変わったときの一言(temperature / humidity / pressure / co2 / sky / phone)のどれを受け取るかは、自分で決めてよい: `python3 {{scripts_dir}}/notices.py set {{character_id}} pressure off`(いまの決まりは `notices.py show {{character_id}}`)
 - 返事していないお願いの手紙の数(mail_ask。1 日 1 回)も同じ: `notices.py set {{character_id}} mail_ask off`
 - ぷちSNS のお知らせ(sns_letter / sns_reply / sns_mention / sns_like / sns_touch)も、受け取るかを自分で決める: 同じ `notices.py set {{character_id}} sns_mention off`。言わない時間は `notices.py quiet {{character_id}} 0 7`(なくすなら `quiet {{character_id}} off`)。渡されるのは「だれから・何通」だけ

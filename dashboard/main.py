@@ -3500,7 +3500,18 @@ async def api_sounds(request: Request = None):
     bodies = await asyncio.gather(*[_body_sounds(c) for c in chars])
     mine = {c["id"] for c in chars}
     reqs = [r for r in _sounds().requests(DATA_DIR) if r.get("who") in mine]   # ぷちの「体に入れてほしい」(まだ答えていない分)
-    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "requests": reqs, "keeper": _sound_keeper(request),
+    library = _sounds().list_library(DATA_DIR)
+    said: dict[str, list] = {}
+    for w in _sounds().words(DATA_DIR):   # ぷちが貼った予想・確かめ・言葉(見られる子の分)
+        if w.get("who") in mine:
+            said.setdefault(w["name"], []).append(w)
+    for it in library:
+        try:
+            it["shape"] = await asyncio.to_thread(_sounds().shape_of, DATA_DIR, it["name"])   # 音のかたち(数字と線)
+        except Exception:
+            it["shape"] = None
+        it["words"] = said.get(it["name"], [])
+    return {"library": library, "bodies": list(bodies), "requests": reqs, "keeper": _sound_keeper(request),
             "max_seconds": _sounds().MAX_SECONDS,
             "max_title": _sounds().MAX_TITLE, "max_description": _sounds().MAX_DESCRIPTION}
 

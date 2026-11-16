@@ -136,3 +136,8 @@ details.m-card[data-fold] > summary { list-style: none; display: flex; align-ite
 details.m-card[data-fold] > summary::-webkit-details-marker { display: none; }
 details.m-card[data-fold] > summary::after { content: "▸"; margin-left: auto; color: var(--ui-text-sub); }
 details.m-card[data-fold][open] > summary::after { content: "▾"; }
+.o-sound-shape { font-size: var(--ui-fs-s); color: var(--ui-text-sub); overflow-wrap: anywhere; }
+.o-sound-line { font-family: monospace; letter-spacing: -1px; color: var(--ui-accent-text); }
+.o-sound-words { flex: 0 0 100%; font-size: var(--ui-fs-s); }
+.o-sound-words summary { cursor: pointer; color: var(--ui-accent-text); }
+.o-sound-word { padding: 3px 0; overflow-wrap: anywhere; }
