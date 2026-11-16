@@ -10,7 +10,8 @@
 
 音ライブラリ(2026-11-16): 家の音には、題と説明を付けられる(sounds/library.json)。ぷちは一覧を見て、
 「体に入れてほしい」「体から外してほしい」、家に無い音でも「こういう音がほしい」とお願いできる。答えるのは家の持ち主だけ(ダッシュボードで、入れる・外す・ことわる)。
-体は音を消せないので、「外す」は家の側の覚え(その子はもう使わない)。体の SD には残る。
+体は音を消せないので、「外す」は家の側の覚え。外した音は、体の部品(m5-petit-mcp)が list_sounds に出さず、
+play_sound でも鳴らさない。体の SD には残るので、戻せばすぐまた使える。
 お願いの行方は、その子の次の自律行動か会話の頭に 1 行(notice)。
 
 置き場所: sounds/library.json(題・説明)、state/sounds/requests.json(お願い)、state/sounds/bodies.json(体にある音の覚え・外した音)
@@ -43,6 +44,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 MAX_TITLE = 40
 MAX_DESCRIPTION = 200
 MAX_WHY = 200
+SYSTEM_SOUNDS = {"tts_speak.wav", "voice_memo.wav"}   # 声とボイスメモの仕組みが使う。外さない
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,%d}\.wav$" % (MAX_NAME - 1))
 
 
@@ -299,6 +301,8 @@ def want(base: Path, character_id: str, name: str, why: str = "", now: datetime 
 def drop(base: Path, character_id: str, name: str, why: str = "", now: datetime | None = None) -> dict:
     """体から外してほしい、とお願いする(答えるのは家の持ち主)。外すと、体の SD には残るが使わない音になる"""
     name = _norm(name)
+    if name in SYSTEM_SOUNDS:
+        raise SoundError(f"{name} は声やボイスメモの仕組みが使う音なので、外せません")
     if name in removed_of(base, character_id):
         raise SoundError(f"{name} は、もう外してあります")
     if name not in on_body_of(base, character_id):
@@ -397,7 +401,7 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
         elif r.get("kind") == "wish":
             parts.append(f"{label}を{who}が作って体に入れてくれた{note}")
         elif r.get("kind", "add") == "remove":
-            parts.append(f"{label}は{who}が外してくれた(もう使わない音){note}")
+            parts.append(f"{label}は{who}が外してくれた(もう list_sounds に出ない){note}")
         else:
             parts.append(f"{label}は{who}が体に入れてくれた{note}")
     line = "(音のお願い: " + "。".join(parts) + "。体の音は list_sounds / play_sound で)"
@@ -463,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"お願いしました: {r['name']}(家の人がダッシュボードで見て、体に入れるか決めます)")
         elif a.cmd == "drop":
             r = drop(base, a.character, a.name, a.why)
-            print(f"お願いしました: {r['name']} を外す(家の人がダッシュボードで見て決めます。外しても体の中のファイルは残り、使わない音として覚えます)")
+            print(f"お願いしました: {r['name']} を外す(家の人がダッシュボードで見て決めます。外すと list_sounds に出なくなり、鳴らせなくなります)")
         elif a.cmd == "wish":
             wish(base, a.character, a.text)
             print("お願いしました(家の人が、合う音をさがして取り込めたら体に入れます。見つからないこともあります)")

@@ -21,7 +21,7 @@ repositories:
   m5-petit-mcp:
     type: git
     url: https://github.com/PetitOnes/m5-petit-mcp.git
-    version: 955edb932ff5a62ebb4c5cacff097a6fcc4156bb
+    version: 2091e4f1d6db5e24aa72a04000462cbae1d8129e
   m5-petit-app:
     type: git
     url: https://github.com/PetitOnes/m5-petit-app.git

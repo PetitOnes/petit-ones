@@ -106,7 +106,7 @@
     function bodyBlock(b) {
       const inLib = new Set(library.map(x => x.name)), removed = new Set(b.removed || []);
       const chips = b.sounds.map(n => `<button class="o-sound-chip${inLib.has(n) ? "" : " is-only"}${removed.has(n) ? " is-removed" : ""}" data-play="${esc(n)}" data-char="${esc(b.id)}"
-          title="${removed.has(n) ? "この子が外した音(体には残っている)。体で鳴らす" : inLib.has(n) ? "体で鳴らす" : "体にだけある音。体で鳴らす"}">${esc(n.replace(/\.wav$/, ""))}</button>`).join("");
+          title="${removed.has(n) ? "この子が外した音。ぷちの一覧に出ず、ぷちからは鳴らせない(体の SD には残っている)。ここからは鳴らせる" : inLib.has(n) ? "体で鳴らす" : "体にだけある音。体で鳴らす"}">${esc(n.replace(/\.wav$/, ""))}</button>`).join("");
       const back = keeper && removed.size ? `<div class="o-sound-removed"><span class="a-label">外した音:</span>${[...removed].map(n =>
           `<button class="a-btn a-btn--ghost a-btn--s" data-undrop="${esc(n)}" data-char="${esc(b.id)}" title="また使ってよい音に戻す">${esc(n.replace(/\.wav$/, ""))} を戻す</button>`).join("")}</div>` : "";
       return `<div class="o-sound-body">
