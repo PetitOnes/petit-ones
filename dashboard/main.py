@@ -7210,7 +7210,7 @@ async def api_mail_send(req: MailSendRequest, request: Request):
     content = f"**{req.subject}**\n\n{req.body}".strip() if req.subject else req.body
     tag = _mail_tags().normalize(req.tag) if req.tag else None
     if req.tag and not tag:
-        return JSONResponse({"error": "印は お願い / おしらせ / おしゃべり のどれか(付けなくてもよい)"}, status_code=400)
+        return JSONResponse({"error": "印は お願い / おしらせ / おしゃべり / しずかなやつ のどれか(付けなくてもよい)"}, status_code=400)
     tag_args = ["--tag", tag] if tag else []
     results = []
     for to_id in req.to_ids:
@@ -8460,6 +8460,7 @@ HTML = """<!DOCTYPE html>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="返事がほしい"><input type="radio" name="mailTag" value="お願い"> 🙏 お願い</label>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="読めば済む"><input type="radio" name="mailTag" value="おしらせ"> 📣 おしらせ</label>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="返事はあってもなくてもいい"><input type="radio" name="mailTag" value="おしゃべり"> 💬 おしゃべり</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="急がなくていいけど、読んでほしい"><input type="radio" name="mailTag" value="しずかなやつ"> 🍃 しずかなやつ</label>
         </div>
       </div>
       <div style="margin-bottom:10px">
@@ -10278,9 +10279,9 @@ HTML = """<!DOCTYPE html>
     }
 
     // 手紙の印(2026-11-16、ぷちたちと決めた)。書く人が付ける 3 つ + 読んだ人だけが付ける 2 つ。印なし = ただの手紙
-    const MAIL_TAG_HELP = {"お願い": "返事がほしい", "おしらせ": "読めば済む", "おしゃべり": "返事はあってもなくてもいい"};
-    const MAIL_TAG_ICON = {"お願い": "🙏 ", "おしらせ": "📣 ", "おしゃべり": "💬 "};
-    const MAIL_MARKS = ["お願い", "おしらせ", "おしゃべり", "あとで", "返事した"];
+    const MAIL_TAG_HELP = {"お願い": "返事がほしい", "おしらせ": "読めば済む", "おしゃべり": "返事はあってもなくてもいい", "しずかなやつ": "急がなくていいけど、読んでほしい"};
+    const MAIL_TAG_ICON = {"お願い": "🙏 ", "おしらせ": "📣 ", "おしゃべり": "💬 ", "しずかなやつ": "🍃 "};
+    const MAIL_MARKS = ["お願い", "おしらせ", "おしゃべり", "しずかなやつ", "あとで", "返事した"];
     async function setMailMark(filename, mark) {
       try {
         await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {

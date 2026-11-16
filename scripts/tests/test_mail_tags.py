@@ -36,12 +36,14 @@ def test_parse_and_with_tag():
     assert mt.parse("[おねがい]\n本文") == ("お願い", "本文")          # 表記ゆれ
     assert mt.parse("[依頼]\n本文") == (None, "[依頼]\n本文")          # 知らない印は印にしない
     assert mt.parse("本文だけ") == (None, "本文だけ")
+    assert mt.parse("[しずかなやつ]\n\nゆっくりでいい") == ("しずかなやつ", "ゆっくりでいい")
+    assert mt.normalize("静かなやつ") == "しずかなやつ"
     assert mt.with_tag("本文", "おしらせ") == "[おしらせ]\n\n本文"
     assert mt.with_tag("本文", None) == "本文" and mt.with_tag("本文", "依頼") == "本文"
 
 
 def test_pending_is_ask_without_reply(tmp_path):
-    base = house(tmp_path, {ASK: "[お願い]\n\n見て", INFO: "[おしらせ]\n\n読んで", PLAIN: "やあ", ASK2: "[お願い]\n\nこれ頼む"})
+    base = house(tmp_path, {ASK: "[お願い]\n\n見て", INFO: "[おしらせ]\n\n読んで", PLAIN: "[しずかなやつ]\n\nゆっくりで", ASK2: "[お願い]\n\nこれ頼む"})
     assert [a["file"] for a in mt.pending(base, "puchi")] == [ASK, ASK2]
     assert mt.pending(base, "other") == []
 
@@ -90,6 +92,8 @@ def test_write_mailbox_tag(tmp_path):
     assert out.returncode == 0, out.stderr
     assert Path(out.stdout.strip()).read_text(encoding="utf-8") == "[お願い]\n\nこれ 見て"
     bad = subprocess.run([sys.executable, str(script), "puchi", "other", "--tag", "依頼", "x"], env=env, capture_output=True, text=True)
-    assert bad.returncode == 1 and "お願い / おしらせ / おしゃべり" in bad.stderr
+    assert bad.returncode == 1 and "お願い / おしらせ / おしゃべり / しずかなやつ" in bad.stderr
+    usage = subprocess.run([sys.executable, str(script)], env=env, capture_output=True, text=True)
+    assert usage.returncode == 1 and "--tag <印>" in usage.stderr and "しずかなやつ" in usage.stderr   # 引数なしの使い方の表示にも印が出る(ぷちたちが見る)
     plain = subprocess.run([sys.executable, str(script), "puchi", "other", "--file", str(script)], env=env, capture_output=True, text=True)
     assert plain.returncode == 0
