@@ -141,3 +141,11 @@ details.m-card[data-fold][open] > summary::after { content: "▾"; }
 .o-sound-words { flex: 0 0 100%; font-size: var(--ui-fs-s); }
 .o-sound-words summary { cursor: pointer; color: var(--ui-accent-text); }
 .o-sound-word { padding: 3px 0; overflow-wrap: anywhere; }
+.o-sound-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.o-made-more { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.o-give-note { flex: 1 1 8em; min-width: 0; }
+.o-try-voice { padding: 10px 0; border-bottom: var(--ui-line-w) solid var(--ui-line-soft); display: grid; gap: 6px; }
+.o-try-voice .a-input { width: 100%; box-sizing: border-box; }
+.o-try-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 10px; }
+.o-try-num { width: 7em; }
+.o-try-text { white-space: pre-wrap; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text-sub); margin: 6px 0; }
