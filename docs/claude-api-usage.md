@@ -36,7 +36,7 @@ echo "$PROMPT" | claude -p \
 ```
 
 - cron で 30 分毎に全キャラ分実行（3キャラ × 30分 = 最大6回/時）
-- アクティブ時間帯は毎回実行、非アクティブ帯は確率制御でスキップ
+- アクティブ時間帯は毎回実行、それ以外はスキップ
 - `--resume` でセッションを日内継続（日付が変わるとリセット）
 - ログ: `~/petit_claude/.autonomous-logs/<char_id>/`
 - **代替済み**: `autonomous-action-goose.sh`（Gemini 2.5 Flash / GPT-4o）
