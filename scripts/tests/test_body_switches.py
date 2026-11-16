@@ -41,7 +41,7 @@ def test_effective_disallowed_and_rules():
     v = bs.template_vars(eff)
     assert v["rest_note"].startswith("いまは からだ おやすみ(15:30 まで。いまから): カメラ・声・効果音は使わない。")
     eff2 = bs.effective({}, NOON)
-    assert bs.disallowed_tools(eff2["switches"]) == ["mcp__m5-mcp__mic_start", "mcp__m5-mcp__mic_stop"]   # 既定はマイクだけ止まる
+    assert bs.disallowed_tools(eff2["switches"]) == ["mcp__m5-mcp__mic_start", "mcp__m5-mcp__mic_stop", "mcp__m5-mcp__delete_album_photo", "mcp__notes__delete_note"]   # 既定はマイクと、消す が止まる
     assert bs.template_vars(eff2)["rest_note"] == ""
 
 

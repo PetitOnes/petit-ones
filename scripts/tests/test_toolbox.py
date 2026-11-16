@@ -56,9 +56,10 @@ def test_allowed_alone_parses_action_script(tmp_path):
         'x\nALLOWED_TOOLS=$(cat <<TOOLS\nRead($ALLOWED_DIR/**),\nWebSearch,\nBash(uv run scripts/reader.py:*),\n'
         'Bash(python3 $ALLOWED_DIR/scripts/write_mailbox.py *),\nmcp__m5-mcp__speak,\nmcp__memory__recall_divergent\nTOOLS\n)\n', encoding="utf-8")
     got = tb.allowed_alone(tmp_path)
-    assert got == {"claude:Read", "claude:WebSearch", "script:reader", "script:write_mailbox", "m5:speak", "memory:recall_divergent"}
+    assert got == {"claude:Read", "claude:WebSearch", "script:reader", "script:write_mailbox", "m5:speak", "memory:recall_divergent", "claude:ToolSearch"}
     assert tb.allowed_alone(tmp_path / "nope") == set()
-    assert tb.allowed_from_names(["mcp__m5-mcp__take_snapshot", "Read"]) == {"m5:take_snapshot", "claude:Read"}
+    assert tb.allowed_from_names(["mcp__m5-mcp__take_snapshot", "Read"]) == {"m5:take_snapshot", "claude:Read", "claude:ToolSearch"}
+    assert "script:write_mailbox" in tb.allowed_from_names(["Bash"]) and "claude:Bash" in tb.allowed_from_names(["Bash"])   # Bash が丸ごとなら台本もぜんぶ
 
 
 def test_hand_once_a_day_notice_once_and_felt(tmp_path):
