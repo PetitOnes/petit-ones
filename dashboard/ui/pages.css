@@ -117,4 +117,10 @@ html.embed .p-head { display: none; }
 .o-sound-chip:hover { background: var(--ui-accent-soft); border-color: var(--ui-accent-line); }
 .o-sound-chip:disabled { opacity: 0.5; cursor: default; }
 .o-sound-chip.is-only { border-style: dashed; color: var(--ui-text-sub); }
+.o-sound-chip.is-removed { opacity: 0.55; text-decoration: line-through; }
+.o-sound-file { font-size: var(--ui-fs-s); color: var(--ui-text-mute); }
+.o-sound-desc { font-size: var(--ui-fs-s); color: var(--ui-text); margin: 2px 0; }
+.o-sound-edit { display: grid; gap: 6px; }
+.o-sound-edit .a-input { width: 100%; box-sizing: border-box; }
+.o-sound-removed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 @media (max-width: 520px) { .o-sound-main { flex-basis: 100%; } }   /* スマホ幅: 名前を 1 段、ボタンを次の段にそろえる */

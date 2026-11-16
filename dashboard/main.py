@@ -574,7 +574,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -1901,6 +1901,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts += _toolbox().notice(DATA_DIR, character_id, mark=True)   # 道具箱から渡されたもの(2026-11-16)
         except Exception:
             pass
+        try:
+            receipts += _sounds().notice(DATA_DIR, character_id, mark=True)   # 音のお願いの行方(2026-11-16)
+        except Exception:
+            pass
         if receipts:
             effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
@@ -3162,6 +3166,22 @@ class SoundPlayRequest(BaseModel):
     char_id: str
 
 
+class SoundMetaRequest(BaseModel):
+    name: str
+    title: str = ""
+    description: str = ""
+
+
+class SoundAnswerRequest(BaseModel):
+    action: str          # send(体に入れる)/ decline(ことわる)
+    note: str = ""
+
+
+class SoundRemovedRequest(BaseModel):
+    char_id: str
+    name: str            # 外した印を取る(戻す)
+
+
 async def _body_sounds(char: dict) -> dict:
     """その子の体にある音の一覧。つながっていなければ online: false"""
     import requests as req
@@ -3174,8 +3194,10 @@ async def _body_sounds(char: dict) -> dict:
         names = r.json()
         out["online"] = True
         out["sounds"] = sorted(str(n) for n in names if isinstance(n, str)) if isinstance(names, list) else []
+        _sounds().remember_body(DATA_DIR, char["id"], out["sounds"])   # ぷちが sounds.py list で「体にある」を見られるように
     except Exception:
         pass
+    out["removed"] = _sounds().removed_of(DATA_DIR, char["id"])
     return out
 
 
@@ -3450,19 +3472,80 @@ async def api_sounds(request: Request = None):
     """家の音の一覧と、ぷちそれぞれの体にある音の一覧(見られる子が決まっている人には、その子の体だけ)"""
     chars = [c for c in _my_chars(request) if c["id"] in GROUP_CHAR_IDS]
     bodies = await asyncio.gather(*[_body_sounds(c) for c in chars])
-    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "max_seconds": _sounds().MAX_SECONDS}
+    mine = {c["id"] for c in chars}
+    reqs = [r for r in _sounds().requests(DATA_DIR) if r.get("who") in mine]   # ぷちの「体に入れてほしい」(まだ答えていない分)
+    return {"library": _sounds().list_library(DATA_DIR), "bodies": list(bodies), "requests": reqs, "max_seconds": _sounds().MAX_SECONDS,
+            "max_title": _sounds().MAX_TITLE, "max_description": _sounds().MAX_DESCRIPTION}
 
 
 @app.post("/api/sounds/upload")
-async def api_sounds_upload(file: UploadFile = File(...), name: str = Form("")):
-    """音を取り込む。体が鳴らせる形(モノラル・16 kHz・16 bit の WAV)にして家に置く"""
+async def api_sounds_upload(request: Request, file: UploadFile = File(...), name: str = Form(""), title: str = Form(""), description: str = Form("")):
+    """音を取り込む。体が鳴らせる形(モノラル・16 kHz・16 bit の WAV)にして家に置く。題と説明も付けられる"""
     sd = _sounds()
     raw = await file.read()
+    by = _get_username(request) or OWNER_USER
     try:
-        item = await asyncio.to_thread(lambda: sd.save(DATA_DIR, name or file.filename or "", raw, Path(file.filename or "").suffix))
+        item = await asyncio.to_thread(lambda: sd.save(DATA_DIR, name or file.filename or "", raw, Path(file.filename or "").suffix,
+                                                       title=title, description=description, by=by))
     except sd.SoundError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "item": item}
+
+
+@app.post("/api/sounds/meta")
+def api_sounds_meta(body: SoundMetaRequest, request: Request):
+    """家の音の題と説明を直す"""
+    if _sounds().path_of(DATA_DIR, body.name) is None:
+        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+    meta = _sounds().set_meta(DATA_DIR, body.name, body.title, body.description, by=_get_username(request) or OWNER_USER)
+    return {"ok": True, "title": meta["title"], "description": meta["description"]}
+
+
+async def _send_sound(cid: str, path: Path, data: bytes) -> str:
+    """家の音を 1 人の体へ送る。"ok" か、人に見せる理由"""
+    import requests as req
+    host = await resolve_m5_host(get_char_config(cid))
+    if not host:
+        return "体につながっていません"
+    try:
+        r = await asyncio.to_thread(lambda: req.post(f"http://{host}/upload_wav", files={"file": (path.name, data, "audio/wav")}, timeout=60))
+        return "ok" if r.status_code == 200 else f"送れませんでした({r.status_code})"
+    except Exception:
+        return "送れませんでした"
+
+
+@app.post("/api/sounds/requests/{request_id}")
+async def api_sounds_answer(request_id: str, body: SoundAnswerRequest, request: Request):
+    """ぷちのお願いに答える。send = 体に入れる(送れたらかなったことに)/ decline = ことわる。行方は、その子に 1 行で伝わる"""
+    sd = _sounds()
+    r = next((x for x in sd.requests(DATA_DIR) if x.get("id") == request_id), None)
+    if r is None:
+        return JSONResponse({"error": "そのお願いは、もうありません"}, status_code=404)
+    if r["who"] not in {c["id"] for c in _my_chars(request)}:
+        return JSONResponse({"error": "この子のお願いには答えられません"}, status_code=403)
+    by = _get_username(request) or OWNER_USER
+    if body.action == "decline":
+        sd.resolve(DATA_DIR, request_id, "declined", by=by, note=body.note)
+        return {"ok": True}
+    if body.action != "send":
+        return JSONResponse({"error": "答え方が分かりません"}, status_code=400)
+    path = sd.path_of(DATA_DIR, r["name"])
+    if path is None:
+        return JSONResponse({"error": "その音は家にありません"}, status_code=404)
+    result = await _send_sound(r["who"], path, path.read_bytes())
+    if result != "ok":
+        return JSONResponse({"error": result}, status_code=502)
+    sd.resolve(DATA_DIR, request_id, "done", by=by, note=body.note)
+    return {"ok": True}
+
+
+@app.post("/api/sounds/removed")
+def api_sounds_unremove(body: SoundRemovedRequest, request: Request):
+    """ぷちが外した印を取る(また使ってよい音に戻す)"""
+    if body.char_id not in {c["id"] for c in _my_chars(request)}:
+        return JSONResponse({"error": "この子の体は変えられません"}, status_code=403)
+    _sounds().undrop(DATA_DIR, body.char_id, body.name)
+    return {"ok": True}
 
 
 @app.get("/api/sounds/file/{name}")
@@ -3485,7 +3568,6 @@ def api_sounds_delete(name: str):
 @app.post("/api/sounds/send")
 async def api_sounds_send(req_body: SoundSendRequest, request: Request = None):
     """家の音を、選んだ子の体(SD)へ送る。同じ名前が体にあれば置き換わる"""
-    import requests as req
     mine = {c["id"] for c in _my_chars(request)}
     req_body.char_ids = [cid for cid in req_body.char_ids if cid in mine]   # 見られる子が決まっている人は、その子にだけ
     path = _sounds().path_of(DATA_DIR, req_body.name)
@@ -3493,18 +3575,12 @@ async def api_sounds_send(req_body: SoundSendRequest, request: Request = None):
         return JSONResponse({"error": "その音は家にありません"}, status_code=404)
     data = path.read_bytes()
     results = {}
+    by = _get_username(request) or OWNER_USER
 
     async def _one(cid: str) -> None:
-        host = await resolve_m5_host(get_char_config(cid))
-        if not host:
-            results[cid] = "体につながっていません"
-            return
-        try:
-            r = await asyncio.to_thread(lambda: req.post(
-                f"http://{host}/upload_wav", files={"file": (path.name, data, "audio/wav")}, timeout=60))
-            results[cid] = "ok" if r.status_code == 200 else f"送れませんでした({r.status_code})"
-        except Exception:
-            results[cid] = "送れませんでした"
+        results[cid] = await _send_sound(cid, path, data)
+        if results[cid] == "ok":
+            _sounds().sent(DATA_DIR, cid, path.name, by=by)   # その子のお願いがあれば、かなったことに
 
     await asyncio.gather(*[_one(cid) for cid in req_body.char_ids if cid in GROUP_CHAR_IDS])
     return {"ok": all(v == "ok" for v in results.values()) and bool(results), "results": results}
