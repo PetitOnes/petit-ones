@@ -125,7 +125,7 @@ def autonomous_preview(data_dir: Path, project_dir: Path, character_id: str, *, 
     """自律行動の user prompt を、いま組み立てたらどうなるか(prompts/autonomous/user.md)。
 
     通常回(8 割)の形で作る。その回にあったときだけ足される知らせ(記念日・手紙やノートが読まれた・体の出来事・
-    空や部屋やスマホや体の場所が変わった)は、伝えると「伝えた」と覚える作りなので、ここでは入れない
+    空や部屋やスマホや体の場所が変わった・ぷちSNS のお知らせ)は、伝えると「伝えた」と覚える作りなので、ここでは入れない
     """
     scripts = str(Path(project_dir) / "scripts")
     if scripts not in sys.path:

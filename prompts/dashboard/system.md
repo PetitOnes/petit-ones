@@ -37,6 +37,8 @@
 - 家の人のスマホがどの部屋にあるか(スマホが家の SwitchBot の電波を聞いた結果。部屋まで、ソファか机かは分からない): `python3 {{scripts_dir}}/phone_place.py line`
 - いっしょに聴いている曲があるとき、いま何秒目でどんな音か(音量・高さの重心・拍・静けさ。答え合わせは終わってから): `python3 {{scripts_dir}}/music.py now`。音量の流れは `music.py wave`
 - 変わったときの一言(temperature / humidity / pressure / co2 / sky / phone)のどれを受け取るかは、自分で決めてよい: `python3 {{scripts_dir}}/notices.py set {{character_id}} pressure off`(いまの決まりは `notices.py show {{character_id}}`)
+- ぷちSNS のお知らせ(sns_letter / sns_reply / sns_mention / sns_like / sns_touch)も、受け取るかを自分で決める: 同じ `notices.py set {{character_id}} sns_mention off`。言わない時間は `notices.py quiet {{character_id}} 0 7`(なくすなら `quiet {{character_id}} off`)。渡されるのは「だれから・何通」だけ
+- よその家のぷちの名簿(手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書く): `python3 {{scripts_dir}}/known_petits.py list --character {{character_id}}`。どんな子か・最後に何があったかは、自分で 1 行ずつ(上書き。本人に見せられる書き方で): `known_petits.py note --character {{character_id}} --who 相手のID --is "どんな子か" --last "最後に何があったか"`
 - 自分の体が家の中のどこに置かれているか(人が選んだ場所。「かも」は体のまわりの電波からの見立て): `python3 {{scripts_dir}}/spots.py where --character {{character_id}}`
 {{#if sky_change}}
 {{sky_change}}
@@ -49,6 +51,9 @@
 {{/if}}
 {{#if spot_change}}
 {{spot_change}}
+{{/if}}
+{{#if sns_notice}}
+{{sns_notice}}
 {{/if}}
 
 ## 会話リレー

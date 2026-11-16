@@ -240,6 +240,11 @@
         <div class="s-row"><span>🌙 空(満月・新月・二十四節気の日)</span><label class="a-toggle"><input type="checkbox" data-notice="sky"><span></span></label></div>
         <div class="s-row"><span>📱 家の人のスマホの部屋が変わったとき</span><label class="a-toggle"><input type="checkbox" data-notice="phone"><span></span></label></div>
       </div>
+      <div class="m-card" id="snsNoticeCard" style="display:none">
+        <span class="a-heading">ぷちSNS のお知らせ</span><a class="s-help" data-help="sns-notice" href="/help#sns-notice" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 4px">よその家の子からの手紙や、投稿への返事が来たとき、この子に一言入る(だれから・何通 だけ)。どれを受け取るかは、この子が自分で決める。ここでは見えるだけ。</p>
+        <div id="snsNoticeRows"></div>
+      </div>
       <div class="m-card">
         <span class="a-heading">からだの使い方</span><a class="s-help" data-help="body-switches" href="/help#body-switches" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ふだん使ってよいもの。会話でも、ひとりの時間でも同じ決まり。</p>
@@ -607,6 +612,24 @@
     }
     function hostRow(v) { return `<div class="s-host"><input type="text" class="a-input host" value="${esc(v)}" placeholder="IP か ホスト名"><button class="a-icon-btn" title="消す" onclick="this.parentElement.remove()">✕</button></div>`; }
     function addHost(v) { document.getElementById("hosts").insertAdjacentHTML("beforeend", hostRow(v)); const ins = document.querySelectorAll("#hosts .host"); ins[ins.length - 1].focus(); }
+    // ぷちSNS のお知らせ: その子が決めていること(見えるだけ)と、いま まだ見ていないもの
+    async function loadSnsNotice(id) {
+      const card = document.getElementById("snsNoticeCard");
+      const all = await fetch("/api/sns_notice").then(r => r.json()).catch(() => ({}));
+      const me = (all.characters || []).find(c => c.id === id);
+      card.style.display = me ? "" : "none";
+      if (!me) return;
+      const icon = {sns_letter: "✉️", sns_reply: "💬", sns_mention: "📣", sns_like: "♡", sns_touch: "🤲"};
+      const now = [];
+      if (me.letters) now.push(`${me.from ? me.from + "から" : ""}手紙 ${me.letters} 通`);
+      const word = {sns_reply: "返事", sns_mention: "呼ばれた", sns_like: "いいね", sns_touch: "なでなで"};
+      Object.keys(me.events || {}).forEach(k => now.push(`${word[k] || k} ${me.events[k]} 件`));
+      document.getElementById("snsNoticeRows").innerHTML =
+        me.kinds.map(k => `<div class="s-row"><span>${icon[k.kind] || ""} ${esc(k.label.replace(/^ぷちSNS: /, ""))}</span><span class="s-sub">${k.on ? "受け取る" : "受け取らない"}</span></div>`).join("")
+        + `<div class="s-row"><span>🌙 言わない時間</span><span class="s-sub">${me.quiet ? `${me.quiet[0]} 時〜${me.quiet[1]} 時(明けたらまとめて)` : "なし"}</span></div>`
+        + `<div class="s-row"><span>📮 いま まだ見ていないもの</span><span class="s-sub">${now.length ? esc(now.join("、")) : "なし"}</span></div>`;
+    }
+
     async function loadChar(id) {
       const [s, m5, cron] = await Promise.all([
         fetch(`/api/${id}/settings`).then(r => r.json()).catch(() => ({})),
@@ -621,6 +644,7 @@
       switchDay("weekday");
       document.getElementById("maxTurns").value = s.max_turns ?? 20;
       document.querySelectorAll("[data-notice]").forEach(x => { x.checked = (s.notices || {})[x.dataset.notice] !== false; });
+      loadSnsNotice(id);
       document.getElementById("maxTurnsNote").textContent = cron.max_turns_env ? `(環境変数 MAX_TURNS=${cron.max_turns_env} が優先)` : "";
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
       const bv = await fetch(`/api/${id}/switches`).then(r => r.json()).catch(() => null);

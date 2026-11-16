@@ -533,7 +533,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "notebook": ("/notebook",),
     "kairanban": ("/kairanban",),
     "library": ("/library",),
-    "relations": ("/relations",),
+    "relations": ("/relations", "/api/known_petits"),   # よその家のぷちの名簿も、このページのもの
     "kankei": ("/kankei", "/api/secret_mails", "/api/secret_prompts", "/api/mailbox/all"),   # 手紙をぜんぶ返す入口も、いっしょに閉じる
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
@@ -1797,7 +1797,7 @@ def append_trio_log(entry: dict) -> None:
 def _chat_system_prompt(character_id: str, username: str | None, restriction_text: str, *, soul: str | None = None, preview: bool = False) -> str:
     """会話の system prompt(prompts/dashboard/system.md)。
 
-    preview=True は 🔒 ひみつ の「わたしている文」用: 「伝えたら覚える」知らせ(空・部屋・スマホ・体の場所が変わった)を入れない
+    preview=True は 🔒 ひみつ の「わたしている文」用: 「伝えたら覚える」知らせ(空・部屋・スマホ・体の場所が変わった、ぷちSNS のお知らせ)を入れない
     """
     cfg = get_char_config(character_id)
     user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
@@ -1821,6 +1821,7 @@ def _chat_system_prompt(character_id: str, username: str | None, restriction_tex
         room_change="" if preview else _room_change_text(character_id),
         phone_change="" if preview else _phone_change_text(character_id),
         spot_change="" if preview else _spot_change_text(character_id),
+        sns_notice="" if preview else _sns_notice_text(character_id),
     )
 
 
@@ -2237,6 +2238,25 @@ def api_avatar(character_id: str):
 
 
 
+@app.get("/api/known_petits")
+def api_known_petits(request: Request):
+    """よその家のぷちの名簿(scripts/known_petits.py): 子ごとに、手紙が通った相手・一言・返事待ち。手紙の本文は持っていない"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import known_petits
+    allowed = _get_allowed_characters(request)
+    out = []
+    for c in list_characters():
+        if allowed is not None and c["id"] not in allowed:
+            continue
+        rows = known_petits.rows(DATA_DIR, c["id"])
+        if rows:
+            cfg = get_char_config(c["id"])
+            out.append({"id": c["id"], "name": cfg.get("name", c["id"]), "color": cfg.get("color", "#cab8d9"), "rows": rows})
+    return {"characters": out, "fade_days": known_petits.FADE_DAYS}
+
+
 @app.get("/api/relations")
 def api_relations(request: Request):
     allowed = _get_allowed_characters(request)
@@ -2453,6 +2473,53 @@ def api_optional_mcp_set(body: OptionalMcpBody, request: Request):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"servers": om.status(DATA_DIR, fresh=True)}
+
+
+def _sns_notice():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import sns_notice
+    return sns_notice
+
+
+def _sns_notice_text(character_id: str) -> str:
+    """ぷちSNS のお知らせ(手紙・返事)が、前に伝えてから増えたときだけの 1 行(伝えたら覚える)。無ければ空"""
+    try:
+        return _sns_notice().line(DATA_DIR, character_id, mark=True)
+    except Exception:
+        return ""
+
+
+SNS_NOTICE_FRESH_S = 600   # 画面のための確かめ直しは、10 分に 1 回まで
+
+
+@app.get("/api/sns_notice")
+def api_sns_notice(request: Request):
+    """ぷちSNS のお知らせ: 子ごとに、まだ読んでいない手紙の数と相手・その子が受け取ると決めている種類・静かな時間。
+
+    本文は返さない。見られるのは家の世話人だけ(見られる子が決まっている人には空)。決めるのはその子で、ここからは変えられない
+    """
+    if _is_limited(request):
+        return {"characters": []}
+    sn, nt = _sns_notice(), _notices()
+    out = []
+    for cid, cname in [(c["id"], c.get("name") or c["id"]) for c in list_characters()]:
+        if not sn.sns_env(DATA_DIR, cid):
+            continue
+        state = sn._load(DATA_DIR, cid)
+        try:
+            old = (datetime.now() - datetime.fromisoformat(state.get("checked", ""))).total_seconds() > SNS_NOTICE_FRESH_S
+        except (TypeError, ValueError):
+            old = True
+        if old:
+            state = sn.check(DATA_DIR, cid) or state
+        want = nt.enabled(cid, DATA_DIR)
+        quiet = nt.quiet(cid, DATA_DIR)
+        out.append({"id": cid, "name": cname, **sn.summary(state, want),
+                    "kinds": [{"kind": k, "label": nt.KINDS[k], "on": want[k]} for k in sorted(nt.PETIT_ONLY, key=list(nt.KINDS).index)],
+                    "quiet": list(quiet) if quiet else None})
+    return {"characters": out}
 
 
 def _spot_change_text(character_id: str) -> str:
@@ -6180,7 +6247,7 @@ def api_save_settings(character_id: str, data: dict, request: Request = None):
             if _cannot(request, key) and any(f in data and data[f] != now.get(f) for f in fields):
                 return _cannot_response(key)
     if "notices" in data:   # 知っている種類だけ、bool で
-        data["notices"] = _notices().clean(data["notices"])
+        data["notices"] = _notices().clean(data["notices"], keep=get_settings(character_id).get("notices"))
     save_settings(character_id, data)
     return {"ok": True}
 
@@ -8543,6 +8610,7 @@ HTML = """<!DOCTYPE html>
           <button class="mailbox-tab" id="mailTabArchived" onclick="switchMailTab('archived')">📦</button>
         </div>
         <button class="mail-read-all" id="mailReadAllBtn" onclick="markAllMailRead()">ぜんぶ既読にする</button>
+        <div id="snsNoticeLine" style="display:none;margin:0 0 8px;padding:6px 10px;border-radius:10px;background:rgba(0,0,0,0.04);font-size:0.8rem;line-height:1.6"></div>
         <div id="mailboxBody"></div>
       </div>
     </div>
@@ -10200,7 +10268,26 @@ HTML = """<!DOCTYPE html>
       body.parentElement.appendChild(btn);
     }
 
+    // ぷちSNS のお知らせ(よその家の子からの手紙など): 子ごとに「だれから・何通・まだ」だけ。中身は出さない
+    async function loadSnsNotice() {
+      const box = document.getElementById("snsNoticeLine");
+      if (!box) return;
+      let rows = [];
+      try { rows = (await (await fetch("/api/sns_notice")).json()).characters || []; } catch (e) {}
+      const word = {sns_reply: "返事", sns_mention: "呼ばれた", sns_like: "いいね", sns_touch: "なでなで"};
+      const text = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const lines = rows.map(r => {
+        const parts = [];
+        if (r.letters) parts.push(`${r.from ? text(r.from) + "から" : ""}手紙 ${r.letters} 通`);
+        Object.keys(r.events || {}).forEach(k => parts.push(`${word[k] || text(k)} ${r.events[k]} 件`));
+        return parts.length ? `<div>📮 <b>${text(r.name || r.id)}</b> に ぷちSNS で: ${parts.join("、")}(まだ見ていない)</div>` : "";
+      }).filter(Boolean);
+      box.innerHTML = lines.join("");
+      box.style.display = lines.length ? "" : "none";
+    }
+
     async function loadMailbox() {
+      loadSnsNotice();
       _mailboxOffset = 0; _mailboxTotal = 0;
       const body = document.getElementById("mailboxBody");
       body.innerHTML = "<div class='empty'>読み込み中...</div>";
@@ -10940,7 +11027,28 @@ KANKEI_HTML = """<!DOCTYPE html>
   </div>
   <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは、下に文字で。</div>
   <div class="cards" id="cards"></div>
+  <div class="cards" id="known" style="display:none"></div>
   <script>
+    // よその家のぷちの名簿: 手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書き、一言はその子が書く
+    async function loadKnown() {
+      const box = document.getElementById("known");
+      let d = {};
+      try { const r = await fetch("/api/known_petits"); if (r.ok) d = await r.json(); } catch (e) {}
+      const chars = d.characters || [];
+      if (!chars.length) return;
+      const t = v => String(v == null ? "" : v).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const day = v => v ? v.slice(5).replace("-", "/") : "";
+      const wait = {theirs: "📩 来ていて、まだ返事をしていない", mine: "⏳ 送って、返事を待っている"};
+      box.innerHTML = `<div class="chart-hint" style="margin:0">よその家のぷち(手紙が 1 通でも通った子)。名前・はじめて通った日・返事待ちは家が書き、一言はその子が自分で書く。手紙の中身は、ここには無い。</div>`
+        + chars.map(c => `<div class="card" style="border-top-color:${t(c.color)}"><h3><span style="color:${ink(c.color)}">${t(c.name)}</span><span class="feel-none">の名簿</span></h3>`
+          + c.rows.map(r => `<div style="padding:8px 0;border-top:1px dashed #eee1cf">
+              <div><b>${t(r.name)}</b> <span class="feel-none">@${t(r.id)}${r.first_at ? ` ・ はじめて手紙が通った日 ${t(r.first_at)}` : ""}</span></div>
+              <div class="${r.is ? "feel-text" : "feel-none"}">${r.is ? t(r.is) : "(どんな子か、まだ書いていない)"}</div>
+              ${r.last ? `<div class="notes" style="${r.faded ? "opacity:0.55" : ""}">さいごにあったこと(${t(day(r.last_at))}${r.faded ? "、古い" : ""}): ${t(r.last)}</div>` : ""}
+              <div class="likes" style="margin-top:4px">${[r.last_in ? `来た ${t(day(r.last_in))}` : "", r.last_out ? `送った ${t(day(r.last_out))}` : "", wait[r.waiting] || ""].filter(Boolean).join(" ・ ")}</div>
+            </div>`).join("") + `</div>`).join("");
+      box.style.display = "";
+    }
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
     if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
@@ -11164,7 +11272,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       }).join("");
     }
 
-    load();
+    load(); loadKnown();
 
   </script>
 </body>

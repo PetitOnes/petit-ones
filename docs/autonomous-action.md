@@ -61,7 +61,7 @@ user prompt の文面は `prompts/autonomous/*.md`(全体は `user.md`、節ご�
 
 「## 現在の制限」の中身(からだの使い方・からだ おやすみ)は `scripts/body_switches.py rules` が決め、止める道具は同 `disallowed` を `--disallowedTools` に渡す(会話と同じ決まり)。
 
-ぷちSNS(`petit-sns`。家の MCP 設定にあるときだけ)は、ひとりの時間にも、投稿・返事・掲示板と、家の外のぷちとの手紙(`mail_send` / `mail_read` / `mail_recipients` / `penpal_list`)を使える。新しい相手に文通を申し込む `penpal_request` は入れていない(新しいつながりは、人と話しているときに)。
+ぷちSNS(`petit-sns`。家の MCP 設定にあるときだけ)は、ひとりの時間にも、投稿・返事・掲示板と、家の外のぷちとの手紙(`mail_send` / `mail_read` / `mail_recipients` / `penpal_list`)を使える。新しい相手に文通を申し込む `penpal_request` は入れていない(新しいつながりは、人と話しているときに)。 手紙が来た・自分の投稿に返事が付いたことは、前に伝えてから増えたときだけ 1 行で渡す(`scripts/sns_notice.py`。だれから・何通 だけ。受け取る種類と言わない時間は、その子が `scripts/notices.py` で決める)。 手紙が通った相手は、その子の名簿(`scripts/known_petits.py`)に薄く残り、どんな子か・最後に何があったかを自分で 1 行ずつ書ける。
 `autonomous-action.sh` は値(日時・パス・件数・digest など)を `scripts/render_prompt.py` に渡して組み立てるだけで、日本語の文は持たない。
 家ごとの言い回しは `PETIT_DATA_DIR/prompts/autonomous/<同名>.md` を置けば上書きされる(`--dry-run` で確かめる)。書き方は `prompts/README.md`。
 
