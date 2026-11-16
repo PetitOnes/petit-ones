@@ -272,6 +272,15 @@ if [ "$SKIP_SCHEDULE" = false ]; then
     fi
   fi
 
+  # 「いまから n 時間は時間外でも動いてよい」(settings.json の awake.until。scripts/awake.py、設定ページのボタン)
+  if [ "$IS_ACTIVE" = false ] && [ -f "$SETTINGS_FILE" ] && command -v jq &>/dev/null; then
+    if [ -n "$OVERRIDE_DATE" ]; then NOW_ISO="${OVERRIDE_DATE/ /T}"; else NOW_ISO=$(date +%Y-%m-%dT%H:%M); fi
+    if [ "$(jq -r --arg now "$NOW_ISO" '((.awake.until // "") > $now)' "$SETTINGS_FILE" 2>/dev/null)" = "true" ]; then
+      IS_ACTIVE=true
+      echo "時間外だが 起きていてよい(awake.until まで)" >> "$LOG_FILE"
+    fi
+  fi
+
   if [ "$IS_ACTIVE" = false ]; then
     # 非アクティブ時間帯は動かない。子ごとの起動の分のずれ(:00 / :05 / :10)は
     # 3 人を同時に動かさないためのもので、時間外に動く枠ではない。
