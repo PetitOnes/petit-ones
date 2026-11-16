@@ -388,8 +388,14 @@ def descriptions_path(base: Path) -> Path:
 
 def _mcp_list_tools(cmd: list[str], env: dict[str, str], timeout: float) -> list[dict]:
     """部品を立ち上げて tools/list を聞く。小さな stdio の JSON-RPC(ライブラリ無し)。返事が無ければ空"""
-    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                            env={**os.environ, **env}, text=True, bufsize=1)
+    # ダッシュボードのサービスは PATH が短い(uvx が見つからない)ので、~/.local/bin を足す。立ち上がらない部品は空(つながらなかった)
+    run_env = {**os.environ, **env}
+    run_env["PATH"] = f"{Path.home() / '.local' / 'bin'}:{run_env.get('PATH', '/usr/bin:/bin')}"
+    try:
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                env=run_env, text=True, bufsize=1)
+    except OSError:
+        return []
     try:
         def send(obj: dict) -> None:
             assert proc.stdin is not None
