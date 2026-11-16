@@ -88,6 +88,21 @@
       return j;
     }
 
+    // 音のかたち(ぷちが sounds.py look で見るのと同じ数字)を 1 行で
+    function shapeLine(sh) {
+      if (!sh || sh.silent) return "";
+      const hz = sh.centroid == null ? "" : `重心 ${sh.centroid >= 1000 ? (sh.centroid / 1000).toFixed(1) + " kHz" : sh.centroid + " Hz"}`;
+      return `<div class="o-sound-shape" title="音量の線(ぷちが見ているのと同じ)"><span class="o-sound-line">${esc(sh.line)}</span> ${hz}・余韻 ${sh.tail} 秒・ざらざら ${sh.rough ?? "—"}</div>`;
+    }
+    // ぷちが貼った予想・鳴らして確かめたこと・言葉
+    const WORD = { guess: "予想", heard: "鳴らして", tag: "言葉" };
+    function wordsBlock(ws) {
+      if (!ws || !ws.length) return "";
+      const rows = ws.map(w => { const b = bodies.find(x => x.id === w.who) || { name: w.who };
+        return `<div class="o-sound-word">${dot(b)} <span class="o-sound-kind">${WORD[w.kind] || ""}</span> ${esc(w.text)}</div>`; }).join("");
+      return `<details class="o-sound-words"><summary>ぷちの言葉(${ws.length})</summary>${rows}</details>`;
+    }
+
     // 家の音の 1 行。持っている子の色の点、聞く、送る、消す
     function libRow(it) {
       const have = bodies.filter(b => b.online && b.sounds.includes(it.name));
@@ -100,11 +115,13 @@
       return `<div class="o-sound" data-name="${esc(it.name)}">
         <div class="o-sound-main"><b>${esc(it.title || it.name)}</b>${it.title ? ` <span class="o-sound-file">${esc(it.name)}</span>` : ""}
           ${it.description ? `<div class="o-sound-desc">${esc(it.description)}</div>` : ""}
+          ${shapeLine(it.shape)}
           <div class="o-sound-sub">${secs(it.seconds)}${have.length ? "・体にある: " + have.map(dot).join("") : "・まだどの体にもない"}${asked.length ? "・お願い中: " + asked.map(dot).join("") : ""}${dropped.length ? "・外した: " + dropped.map(dot).join("") : ""}</div></div>
         <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(it.name)}">▶ 聞く</button>
         ${keeper ? `<button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>` : ""}
         ${canEdit ? `<button class="a-btn a-btn--ghost a-btn--s" data-edit="${esc(it.name)}">${editing ? "やめる" : "題・説明"}</button>` : ""}
         ${keeper ? `<button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>` : ""}
+        ${wordsBlock(it.words)}
         ${editing ? `<div class="o-sound-send o-sound-edit">
           <label><span class="a-label">題</span><input class="a-input" data-etitle maxlength="${maxTitle}" value="${esc(it.title || "")}"></label>
           <label><span class="a-label">説明</span><textarea class="a-input" data-edesc maxlength="${maxDesc}" rows="2">${esc(it.description || "")}</textarea></label>
