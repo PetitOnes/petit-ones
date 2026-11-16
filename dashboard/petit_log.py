@@ -10,7 +10,7 @@
 - 人の手で起きること(持ち上げられた・置かれた・触られた・起こされた)には、家の持ち主の名前を付ける
   (「ありさんに持ち上げられた」)。体はだれの手かまでは分からないので、家の持ち主と見なして書く
 - 目覚めは、つながらなかった時間の直後なら「体が入れ直された」(再起動・電源の入れ直し)、
-  ひとりの時間のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」、
+  ひとりの時間や会話のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」(起きてから体でしたことがあれば「自分で起きて、話した」のように添える)、
   それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
 - ひとりの時間(自律行動 1 回)の幅に入る行には alone: true を付ける
 - 記念日(家の設定)に当たる日は、その日のいちばん上に 1 行出す
@@ -48,6 +48,8 @@ BODY_CONTACT = {"picked_up", "put_down", "touch"}
 BODY_WORDS = {"picked_up": "持ち上げられた", "put_down": "置かれた", "touch": "触られた", "sleep": "眠った", "woken": "起こされた",
               "restarted": "体が入れ直された", "restarted_self": "体がひとりでに立ち上がり直した"}
 WOKE_ITSELF = "自分で起きた"
+WAKE_FOR = {"sense", "look", "speak", "sound", "photo"}   # 「自分で起きた」に添える、起きてから体でしたこと(何のために起きたか)
+WAKE_CHAT_BACK_S = 30 * 60   # 会話の記録は 1 回の返事ごと。目覚めより、これだけ前までに始まった記録を見る
 RESTARTED = "体が入れ直された"
 RESTART_SELF_REASONS = {"panic", "wdt", "brownout"}   # 体の不具合・固まった・電圧。人が入れ直したのではない
 # ひとりの時間の一言。(見分ける印, 「…て」の形, 「…た」の形)。出すのはこの並びの順。
@@ -161,33 +163,6 @@ def _title_from(name: str, char_id: str) -> str:
     return "_".join(rest)
 
 
-def _called_wake(log: Path, ts: datetime, char_id: str) -> bool:
-    """自律行動の記録(stream.jsonl)のなかで、ts のころに自分の体の wake を呼んでいるか。
-
-    行に時刻が無い古い記録は、呼んでいれば True(その回の幅に入っていることは呼ぶ側が見ている)
-    """
-    names = {"mcp__m5-mcp__wake", f"mcp__m5-{char_id}__wake"}
-    try:
-        lines = log.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return False
-    for line in lines:
-        if '"tool_use"' not in line or '__wake"' not in line:
-            continue
-        try:
-            ev = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        msg = ev.get("message") if isinstance(ev, dict) else None
-        content = msg.get("content") if isinstance(msg, dict) else None
-        for c in content if isinstance(content, list) else []:
-            if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") in names:
-                at = _local(ev.get("timestamp", ""))
-                if at is None or abs((ts - at).total_seconds()) <= WAKE_NEAR_S:
-                    return True
-    return False
-
-
 def _own_file(path: str, char_id: str) -> str | None:
     """その子の家の中のファイルか。"notes" = ノート、"own" = それ以外の自分のファイル(SOUL・ルーチン・TODO など)、None = よそ"""
     if f"/characters/{char_id}/" not in path:
@@ -226,6 +201,53 @@ def _did(name: str, args: dict, char_id: str) -> str | None:
     if name in ("Read", "Grep", "Glob"):
         return {"notes": "note_read", "own": "reread"}.get(_own_file(str(args.get("file_path") or args.get("path") or ""), char_id) or "")
     return None
+
+
+def _wake_then(log: Path, ts: datetime, char_id: str, need_time: bool = False) -> set[str] | None:
+    """行動の記録(stream.jsonl)のなかで、ts のころに自分の体の wake を呼んでいれば、そのあと同じ記録のなかで使った道具の印。
+
+    呼んでいなければ None。行に時刻が無い古い記録は、呼んでいれば当たり(その回の幅に入っていることは呼ぶ側が見ている)。
+    need_time なら、時刻の無い行は当たりにしない(会話の記録は、回の幅が分からないので)
+    """
+    names = {"mcp__m5-mcp__wake", f"mcp__m5-{char_id}__wake"}
+    try:
+        lines = log.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    if not any('__wake"' in line for line in lines):
+        return None
+    after: set[str] | None = None
+    for line in lines:
+        if '"tool_use"' not in line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        for c in content if isinstance(content, list) else []:
+            if not isinstance(c, dict) or c.get("type") != "tool_use":
+                continue
+            if after is None:
+                if c.get("name") in names:
+                    at = _local(ev.get("timestamp", ""))
+                    if (at is None and not need_time) or (at is not None and abs((ts - at).total_seconds()) <= WAKE_NEAR_S):
+                        after = set()
+                continue
+            args = c.get("input")
+            key = _did(str(c.get("name", "")), args if isinstance(args, dict) else {}, char_id)
+            if key:
+                after.add(key)
+    return after
+
+
+def _woke_words(after: set[str]) -> str:
+    """「自分で起きた」に、起きてから体でしたこと(感じた・見た・話した など)を添える。無ければそのまま"""
+    words = [(te, ta) for key, te, ta in ALONE_DID if key in after and key in WAKE_FOR]
+    if not words:
+        return WOKE_ITSELF
+    return "、".join(["自分で起きて"] + [te for te, _ in words[:-1]] + [words[-1][1]])
 
 
 def _alone_did(log: Path, char_id: str) -> set[str]:
@@ -478,10 +500,27 @@ class _Index:
                         "category": category or "", "emotion": emotion or ""})
         return out
 
-    def _woke_itself(self, ts: datetime) -> bool:
-        """その目覚めは、ひとりの時間のなかで、その子が自分で体を起こしたものか"""
+    def _woke_itself(self, ts: datetime) -> set[str] | None:
+        """その目覚めが、その子が自分で体を起こしたものなら、起きてからしたことの印。ちがえば None。
+
+        ひとりの時間のなかでも、会話の途中でも(2026-11-16 ありさん: 話しているときに自分で起きたのも分かるように)
+        """
         near = timedelta(seconds=WAKE_NEAR_S)
-        return any(a <= ts <= b + near and _called_wake(f, ts, self.src.char_id) for a, b, f in self.run_logs)
+        for a, b, f in self.run_logs:
+            if a <= ts <= b + near:
+                after = _wake_then(f, ts, self.src.char_id)
+                if after is not None:
+                    return after
+        back = timedelta(seconds=WAKE_CHAT_BACK_S)
+        for day in (ts.date() - timedelta(days=1), ts.date()):
+            for f in self.streams.get(day, []):
+                at = _stamp(f.name)
+                if not f.name.endswith("chat_stream.jsonl") or at is None or not (ts - back <= at <= ts + near):
+                    continue
+                after = _wake_then(f, ts, self.src.char_id, need_time=True)
+                if after is not None:
+                    return after
+        return None
 
     def _experience(self, day: Date) -> list[dict]:
         """その日の体の出来事の記録(state/experience/YYYYMMDD.jsonl)。無ければ空"""
@@ -596,8 +635,8 @@ class _Index:
                     continue   # 再起動して起きた。「体が入れ直された」の行がもうある
                 if ts not in knows_restart and any(abs((ts - t).total_seconds()) <= RESTART_NEAR_S for t in back_online):
                     word = RESTARTED   # 起動からの秒数を返さない体では、つながらなかった直後の目覚めを再起動と見る(推測)
-                elif self._woke_itself(ts):
-                    word = WOKE_ITSELF
+                elif (after := self._woke_itself(ts)) is not None:
+                    word = _woke_words(after)
                 else:
                     word = self._by_owner(word)
             elif kind in BODY_CONTACT:
