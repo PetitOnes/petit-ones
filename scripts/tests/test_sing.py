@@ -81,3 +81,30 @@ def test_give_and_notice(tmp_path):
     assert "渡された音" in sing.list_text(base, "puchiko")
     assert "mizu" in sing.look_text(base, "puchiru", "mizu")             # 受け取った子は --by で見る
     assert sing.remove(base, "puchiru", "mizu") and not sing.remove(base, "puchiru", "mizu")
+
+
+def test_say_and_comment(tmp_path):
+    base = house(tmp_path)
+    recipe = {"seconds": 1, "voices": [{"inst": "bell", "hz": 1000}]}
+    sing.make(base, "puchiko", "murasaki", recipe, why="紫の音")
+    sing.say(base, "puchiko", "murasaki", when="夜、ひとつだけ")
+    with pytest.raises(sing.SingError):
+        sing.say(base, "puchiko", "murasaki")
+    sing.comment(base, "puchiko", "murasaki", "arisan", "やさしい音だね")
+    sing.comment(base, "puchiko", "murasaki", "puchiko", "ありがとう")    # 自分の書き込みは、自分には知らせない
+    line = sing.notice(base, "puchiko", mark=True)
+    assert len(line) == 1 and "arisan" in line[0] and "やさしい音だね" in line[0] and "ありがとう" not in line[0]
+    assert sing.notice(base, "puchiko") == []
+    sing.make(base, "puchiko", "murasaki", recipe)                        # 作り直しても、思いと感想は残る
+    info = sing.info_of(base, "puchiko", "murasaki")
+    assert info["why"] == "紫の音" and info["when"] == "夜、ひとつだけ" and len(info["comments"]) == 2
+    text = sing.look_text(base, "puchiko", "murasaki")
+    assert "思い: 紫の音" in text and "鳴らしたいとき" in text and "感想(arisan" in text
+
+
+def test_person_can_make_and_give(tmp_path):
+    base = house(tmp_path)
+    sing.make(base, "arisan", "aisatsu", {"seconds": 1, "voices": [{"inst": "hum", "hz": "A4"}]}, why="おはようの音")
+    sing.give(base, "arisan", "aisatsu", "puchiru", "つくってみたよ")
+    assert "arisan" in sing.notice(base, "puchiru")[0]
+    assert {m["by"] for m in sing.made(base)} == {"arisan"}

@@ -7,6 +7,9 @@
 - 鳴らすのは自分の体で 1 回(声と同じ、その場かぎりの置き場 sing.wav。体の音の一覧には増えない)。
   からだの使い方で「鳴らす」が切・からだ おやすみ中は鳴らさない
 - 作った音は、ほかの子に手紙みたいに渡せる(give)。受け取った子も、数字を見て、自分の体で鳴らせる
+- 作った音には、どんな思いで・どんなときに鳴らしたくて作ったかを添えられる(say)。家の人は感想を書ける(ダッシュボード)。
+  感想が付いたことは、作った子に 1 行で届く
+- 家の人も作れる(ダッシュボードの「作ってみる」。置き場は同じ made/<人の id>/)。ぷちに渡せる
 - 使わなくても何も起きない。回数も数えない、催促もしない
 
 作り方(recipe)は JSON:
@@ -25,12 +28,13 @@
 
 Usage:
     python3 sing.py instruments                           # 楽器の一覧
-    python3 sing.py make <id> <名前> '<作り方 JSON>'        # 作る(鳴らさない)。数字と線、体が出しにくい所が出る
+    python3 sing.py make <id> <名前> '<作り方 JSON>' [--why "<思い>"] [--when "<どんなときに鳴らす>"]   # 作る(鳴らさない)。数字と線、体が出しにくい所が出る
+    python3 sing.py say <id> <名前> "<どんな思いで作ったか>" [--when "<どんなときに鳴らしたいか>"]   # 作った音に、思いを添える(書き直せる)
     python3 sing.py look <id> <名前> [--by <作った子>]      # 作った音の数字と線をもう一度
     python3 sing.py play <id> <名前> [--by <作った子>]      # 自分の体で 1 回鳴らす
     python3 sing.py list [--character <id>]               # 作った音(と、渡された音)
     python3 sing.py give <id> <名前> <渡す子> ["<一言>"]     # 手紙みたいに渡す
-    python3 sing.py notice --character <id> [--mark]      # 渡された音(まだ伝えていない分)
+    python3 sing.py notice --character <id> [--mark]      # 渡された音・付いた感想(まだ伝えていない分)
     python3 sing.py remove <id> <名前>                     # 自分で作った音を消す
 """
 
@@ -51,6 +55,7 @@ SR = 44100
 MAX_SECONDS = 8.0        # 1 つの音の長さ
 MAX_VOICES = 12
 MAX_MADE = 30            # 1 人が置いておける数(超えたら、自分で remove してから)
+MAX_NOTE = 300           # 思い・感想の長さ
 PEAK = 0.8               # 仕上がりの大きさ(割れないように)
 # 体(M5Stack CoreS3)の小さいスピーカーが出しにくい低い所。測ったものではなく、小さいスピーカー一般からの見立て
 SPEAKER_WEAK_HZ = 600    # これより下は、弱くなる
@@ -184,8 +189,19 @@ def _check(character_id: str, name: str) -> None:
         raise SingError("名前は、英小文字・数字・_ と - で(たとえば murasaki)")
 
 
-def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime | None = None) -> dict:
-    """作って置く(鳴らさない)。同じ名前は作り直し"""
+def _note(text: object) -> str:
+    return re.sub(r"\s+", " ", str(text or "")).strip()[:MAX_NOTE]
+
+
+def _save_info(base: Path, info: dict) -> None:
+    p = made_dir(base, info["by"]) / f"{info['name']}.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(p)
+
+
+def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime | None = None, why: str = "", when: str = "") -> dict:
+    """作って置く(鳴らさない)。同じ名前は作り直し(添えた思いと、付いた感想は残る)"""
     _check(character_id, name)
     d = made_dir(base, character_id)
     if not (d / f"{name}.wav").exists() and len(list(d.glob("*.wav"))) >= MAX_MADE:
@@ -199,10 +215,44 @@ def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime |
         w.setframerate(SR)
         w.writeframes((x * 32767).astype("<i2").tobytes())
     tmp.replace(d / f"{name}.wav")
+    try:
+        old = json.loads((d / f"{name}.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        old = {}
     info = {"name": name, "by": character_id, "at": (now or datetime.now()).isoformat(timespec="minutes"),
-            "seconds": round(len(x) / SR, 2), "recipe": recipe, "lack": lack(x)}
-    (d / f"{name}.json").write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding="utf-8")
+            "seconds": round(len(x) / SR, 2), "recipe": recipe, "lack": lack(x),
+            "why": _note(why) or old.get("why", ""), "when": _note(when) or old.get("when", ""),
+            "comments": old.get("comments", []) if isinstance(old.get("comments"), list) else []}
+    _save_info(base, info)
     return info
+
+
+def say(base: Path, character_id: str, name: str, why: str = "", when: str = "") -> dict:
+    """作った音に、どんな思いで・どんなときに鳴らしたくて作ったかを添える(渡したものだけ書き直す)"""
+    info = info_of(base, character_id, name)
+    if info is None or "recipe" not in info:
+        raise SingError(f"{name} は、まだ作っていません(sing.py list で見られます)")
+    if not _note(why) and not _note(when):
+        raise SingError("思いか、どんなときに鳴らしたいかを、ひとこと書いてください")
+    if _note(why):
+        info["why"] = _note(why)
+    if _note(when):
+        info["when"] = _note(when)
+    _save_info(base, info)
+    return info
+
+
+def comment(base: Path, by: str, name: str, who: str, text: str, now: datetime | None = None) -> dict:
+    """作った音に、感想を書く(家の人も、ほかの子も)。作った子には 1 行で届く"""
+    info = info_of(base, by, name)
+    if info is None or "recipe" not in info:
+        raise SingError("その音はありません")
+    if not _note(text):
+        raise SingError("ひとこと書いてください")
+    rec = {"at": (now or datetime.now()).isoformat(timespec="minutes"), "who": who, "text": _note(text)}
+    info.setdefault("comments", []).append(rec)
+    _save_info(base, info)
+    return rec
 
 
 def path_of(base: Path, by: str, name: str) -> Path | None:
@@ -269,12 +319,29 @@ def give(base: Path, character_id: str, name: str, to: str, note: str = "", now:
     return rec
 
 
+def _comment_notice(base: Path, character_id: str, mark: bool) -> list[str]:
+    """自分が作った音に付いた感想(自分で書いたもの以外、まだ伝えていない分)"""
+    parts = []
+    stamp = datetime.now().isoformat(timespec="minutes")
+    for info in made(base, character_id):
+        new = [c for c in info.get("comments", []) if isinstance(c, dict) and c.get("who") != character_id and not c.get("told")]
+        if not new:
+            continue
+        parts += [f"「{info['name']}」に {c.get('who', '')} から「{c.get('text', '')}」" for c in new]
+        if mark:
+            for c in new:
+                c["told"] = stamp
+            _save_info(base, info)
+    return [f"(作った音に感想が付いた: {'、'.join(parts)})"] if parts else []
+
+
 def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
-    """渡された音を、まだ伝えていない分だけ 1 行に。聞くかどうかは、その子が決める"""
+    """渡された音と、付いた感想を、まだ伝えていない分だけ。聞くかどうかは、その子が決める"""
+    out = _comment_notice(base, character_id, mark)
     rows = gifts(base)
     mine = [r for r in rows if r.get("to") == character_id and not r.get("told")]
     if not mine:
-        return []
+        return out
     me = Path(__file__).resolve()
     parts = [f"{r['from']} から「{r['name']}」" + (f"(一言「{r['note']}」)" if r.get("note") else "") for r in mine]
     line = (f"(作った音が届いた: {'、'.join(parts)}。数字と線は python3 {me} look {character_id} 名前 --by 作った子、"
@@ -285,7 +352,7 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
             if r in mine:
                 r["told"] = stamp
         _write_gifts(base, rows)
-    return [line]
+    return [line] + out
 
 
 # ---- 見る・鳴らす ----
@@ -300,6 +367,12 @@ def look_text(base: Path, by: str, name: str) -> str:
     if isinstance(info.get("recipe"), dict):
         rows.append("作り方: " + json.dumps(info["recipe"], ensure_ascii=False))
         rows.append(lack_text(info["recipe"], info.get("lack") or lack(render(info["recipe"]))))
+    if info.get("why"):
+        rows.append(f"思い: {info['why']}")
+    if info.get("when"):
+        rows.append(f"鳴らしたいとき: {info['when']}")
+    for c in info.get("comments", []):
+        rows.append(f"感想({c.get('who', '')}、{str(c.get('at', '')).replace('T', ' ')}): {c.get('text', '')}")
     return "\n".join(rows)
 
 
@@ -339,6 +412,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("character")
     p.add_argument("name")
     p.add_argument("recipe")
+    p.add_argument("--why", default="")
+    p.add_argument("--when", default="")
+    p = sub.add_parser("say")
+    p.add_argument("character")
+    p.add_argument("name")
+    p.add_argument("why", nargs="?", default="")
+    p.add_argument("--when", default="")
     for cmd in ("look", "play"):
         p = sub.add_parser(cmd)
         p.add_argument("character")
@@ -370,9 +450,14 @@ def main(argv: list[str] | None = None) -> int:
                 recipe = json.loads(a.recipe)
             except json.JSONDecodeError as e:
                 raise SingError(f"作り方の JSON が読めません: {e}") from e
-            make(base, a.character, a.name, recipe)
+            info = make(base, a.character, a.name, recipe, why=a.why, when=a.when)
             print(look_text(base, a.character, a.name))
             print(f"(まだ鳴らしていません。鳴らすのは sing.py play {a.character} {a.name})")
+            if not info.get("why") and not info.get("when"):
+                print(f'(どんな思いで・どんなときに鳴らしたくて作ったかを添えるなら: sing.py say {a.character} {a.name} "思い" --when "どんなとき"。添えなくてもいい)')
+        elif a.cmd == "say":
+            say(base, a.character, a.name, a.why, a.when)
+            print("添えました")
         elif a.cmd == "look":
             print(look_text(base, a.by or a.character, a.name))
         elif a.cmd == "play":

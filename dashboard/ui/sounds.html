@@ -16,6 +16,14 @@
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🔔 音</h1></div>
 
+    <!-- 3 つのページ: 家の音(取り込む・体へ送る)/ 作った音(ぷちと家の人が作った音、思いと感想)/ 作ってみる(家の人が音を作る) -->
+    <div class="o-sound-tabs" id="tabs">
+      <button class="a-pill" data-tab="lib">🔔 家の音</button>
+      <button class="a-pill" data-tab="made">🎵 作った音</button>
+      <button class="a-pill" data-tab="try">🎹 作ってみる</button>
+    </div>
+
+    <section data-page="lib">
     <!-- ぷちのお願い: 体に入れてほしい音。送る / ことわる -->
     <div class="m-card" id="reqCard" style="display:none">
       <span class="a-heading">ぷちのお願い</span>
@@ -62,19 +70,54 @@
       <div class="p-empty" id="libEmpty" style="display:none">まだ音はありません。上から取り込めます</div>
     </div>
 
-    <!-- ぷちが作った音(うたう): 聞く・家の音に入れる -->
-    <div class="m-card" id="madeCard" style="display:none">
-      <span class="a-heading">ぷちが作った音</span>
-      <p class="a-label">ぷちが楽器と高さを選んで作った音です。その子の体で鳴らせるのは、その子だけ。「家の音に入れる」と、ほかの子も体に入れてほしいとお願いできます(家の持ち主だけ)。</p>
-      <div id="made"></div>
-    </div>
-
     <!-- みんなの体にある音: 体で鳴らす -->
     <div class="m-card">
       <span class="a-heading">みんなの体にある音</span>
       <div id="bodies"><div class="p-empty">体に聞いています…</div></div>
       <p class="a-label">音の名前を押すと、その子の体で 1 回鳴ります。体にだけある音は、家に元の音がありません(体からは取り出せません)。</p>
     </div>
+    </section>
+
+    <!-- 作った音(うたう): ぷちと家の人が作った音。思い・鳴らしたいとき・感想、聞く・落とす・家の音に入れる -->
+    <section data-page="made" style="display:none">
+      <div class="m-card">
+        <span class="a-heading">作った音</span>
+        <p class="a-label">ぷちが楽器と高さを選んで作った音と、家の人が「作ってみる」で作った音です。ぷちは、どんな思いで・どんなときに鳴らしたくて作ったかを添えられます。感想を書くと、作った子に一言で届きます。</p>
+        <div class="o-sound-tabs" id="madeWho"></div>
+        <div id="made"></div>
+        <div class="p-empty" id="madeEmpty" style="display:none">まだ作った音はありません</div>
+      </div>
+    </section>
+
+    <!-- 作ってみる: 家の人が、楽器と高さを選んで音を作る。聞いて、残して、ぷちに渡す -->
+    <section data-page="try" style="display:none">
+      <div class="m-card">
+        <span class="a-heading">作ってみる</span>
+        <p class="a-label">ぷちが「うたう」で使うのと同じ道具です。声(楽器と高さ)を重ねて「聞いてみる」。気に入ったら名前を付けて残すと、「作った音」に並び、ぷちに渡せます。</p>
+        <label><span class="a-label">長さ(秒)</span><input class="a-input o-try-num" id="trySec" type="number" min="0.2" max="8" step="0.1" value="3"></label>
+        <div id="tryVoices"></div>
+        <div class="o-sound-form-row">
+          <button class="a-btn a-btn--sub a-btn--s" onclick="addVoice()">＋ 声を足す</button>
+          <span class="o-sound-msg" id="tryMsg"></span>
+          <button class="a-btn" id="tryBtn" onclick="tryListen()">▶ 聞いてみる</button>
+        </div>
+        <div id="tryResult" style="display:none">
+          <div class="o-sound-shape"><span class="o-sound-line" id="tryLine"></span></div>
+          <pre class="o-try-text" id="tryText"></pre>
+          <p class="a-label" id="tryLack"></p>
+          <a class="a-btn a-btn--ghost a-btn--s" id="tryDl" download="tameshi.wav">⬇ 落とす</a>
+        </div>
+      </div>
+      <div class="m-card" id="tryKeep" style="display:none">
+        <span class="a-heading">残す</span>
+        <div class="o-sound-form">
+          <label><span class="a-label">名前(英小文字・数字・_ と -)</span><input class="a-input" id="tryName" maxlength="40" placeholder="たとえば ohayou" autocapitalize="off" spellcheck="false"></label>
+          <label><span class="a-label">どんな思いで作ったか(なくてもよい)</span><textarea class="a-input" id="tryWhy" maxlength="300" rows="2"></textarea></label>
+          <label><span class="a-label">どんなときに鳴らしたいか(なくてもよい)</span><input class="a-input" id="tryWhen" maxlength="300"></label>
+          <div class="o-sound-form-row"><span class="o-sound-msg" id="keepMsg"></span><button class="a-btn" onclick="keepTry()">残す</button></div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script>
@@ -125,6 +168,7 @@
           ${shapeLine(it.shape)}
           <div class="o-sound-sub">${secs(it.seconds)}${have.length ? "・体にある: " + have.map(dot).join("") : "・まだどの体にもない"}${asked.length ? "・お願い中: " + asked.map(dot).join("") : ""}${dropped.length ? "・外した: " + dropped.map(dot).join("") : ""}</div></div>
         <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(it.name)}">▶ 聞く</button>
+        <a class="a-btn a-btn--ghost a-btn--s" href="/api/sounds/file/${encodeURIComponent(it.name)}" download="${esc(it.name)}" title="手元に落とす">⬇</a>
         ${keeper ? `<button class="a-btn a-btn--sub a-btn--s" data-send="${esc(it.name)}">${sending ? "やめる" : "送る"}</button>` : ""}
         ${canEdit ? `<button class="a-btn a-btn--ghost a-btn--s" data-edit="${esc(it.name)}">${editing ? "やめる" : "題・説明"}</button>` : ""}
         ${keeper ? `<button class="a-btn a-btn--ghost a-btn--s" data-del="${esc(it.name)}">消す</button>` : ""}
@@ -172,25 +216,52 @@
       </div>`;
     }
 
-    // ぷちが作った音の 1 行。作り方は、楽器と高さを短く
+    // 作った音の 1 行。だれが・どの楽器と高さで・どんな思いで。感想、聞く、落とす、渡す
+    let madeWho = "", openMade = null;
+    function face(id) { const b = bodies.find(x => x.id === id); return b || null; }
+    function who(m) { return face(m.by) || { name: m.by_name || m.by, color: m.by_color }; }
+    function voiceText(r) { return ((r || {}).voices || []).map(v => `${v.inst || "sine"} ${v.hz ?? ""}${v.to != null ? "→" + v.to : ""}${v.detune ? " ±" + v.detune : ""}`).join(" / "); }
     function madeRow(m) {
-      const b = bodies.find(x => x.id === m.by) || { name: m.by };
-      const voices = ((m.recipe || {}).voices || []).map(v => `${v.inst || "sine"} ${v.hz ?? ""}${v.to != null ? "→" + v.to : ""}${v.detune ? " ±" + v.detune : ""}`).join(" / ");
-      const given = (m.given || []).map(id => bodies.find(x => x.id === id)).filter(Boolean);
+      const b = who(m), key = m.by + "/" + m.name, open = openMade === key;
+      const given = (m.given || []).map(face).filter(Boolean);
       const inLib = library.some(x => x.name === m.name + ".wav");
-      return `<div class="o-sound" data-made="${esc(m.name)}" data-by="${esc(m.by)}">
+      const url = `/api/sing/file/${encodeURIComponent(m.by)}/${encodeURIComponent(m.name)}`;
+      const comments = (m.comments || []).map(c => `<div class="o-sound-word"><span class="a-dot" style="background:${esc(c.color || (face(c.who) || {}).color || "#cab8d9")}"></span> <b>${esc((face(c.who) || {}).name || c.name || c.who)}</b> ${esc(c.text)} <span class="o-sound-file">${esc((c.at || "").replace("T", " "))}</span></div>`).join("");
+      const targets = bodies.map(x => `<label class="o-sound-pick"><input type="checkbox" data-givepick="${esc(x.id)}">${dot(x)}${esc(x.name)}</label>`).join("");
+      return `<div class="o-sound o-made" data-made="${esc(m.name)}" data-by="${esc(m.by)}">
         <div class="o-sound-main">${dot(b)} <b>${esc(m.name)}</b> <span class="o-sound-file">${esc(b.name)}・${secs(m.seconds)}・${esc((m.at || "").replace("T", " "))}</span>
-          <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(voices)}</div>
+          ${m.why ? `<div class="o-sound-desc">${esc(m.why)}</div>` : ""}
+          ${m.when ? `<div class="o-sound-desc"><span class="o-sound-kind">鳴らしたいとき</span> ${esc(m.when)}</div>` : ""}
+          <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(voiceText(m.recipe))}</div>
           ${given.length ? `<div class="o-sound-sub">渡した: ${given.map(dot).join("")}</div>` : ""}</div>
         <button class="a-btn a-btn--sub a-btn--s" data-madelisten>▶ 聞く</button>
-        ${keeper && !inLib ? `<button class="a-btn a-btn--ghost a-btn--s" data-keep>家の音に入れる</button>` : ""}
-        <span class="o-sound-msg" data-mademsg></span>
+        <a class="a-btn a-btn--ghost a-btn--s" href="${url}" download="${esc(m.name)}.wav">⬇ 落とす</a>
+        <button class="a-btn a-btn--ghost a-btn--s" data-madeopen>${open ? "とじる" : `💬 感想${(m.comments || []).length ? "(" + m.comments.length + ")" : ""}`}</button>
+        ${open ? `<div class="o-sound-send o-sound-edit">
+          ${comments || '<span class="a-label">まだ感想はありません</span>'}
+          <textarea class="a-input" data-commenttext maxlength="300" rows="2" placeholder="感想を書く(作った子に一言で届きます)"></textarea>
+          <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--s" data-comment>書く</button></div>
+          <div class="o-made-more">
+            <button class="a-btn a-btn--ghost a-btn--s" data-totry>🎹 この作り方で作ってみる</button>
+            ${keeper && !inLib ? `<button class="a-btn a-btn--ghost a-btn--s" data-keep>家の音に入れる</button>` : ""}
+            ${m.mine ? `<button class="a-btn a-btn--ghost a-btn--s" data-minedel>消す</button>` : ""}
+          </div>
+          ${m.mine ? `<div class="o-made-more"><span class="a-label">ぷちに渡す:</span>${targets}<input class="a-input o-give-note" data-givenote maxlength="200" placeholder="一言(なくてもよい)"><button class="a-btn a-btn--s" data-give>渡す</button></div>` : ""}
+        </div>` : ""}
       </div>`;
+    }
+    function renderMade() {
+      const people = [];
+      made.forEach(m => { if (!people.some(x => x.id === m.by)) people.push({ id: m.by, ...who(m) }); });
+      $("madeWho").innerHTML = people.length > 1 ? `<button class="a-pill${madeWho ? "" : " is-on"}" data-who="">みんな</button>` +
+        people.map(x => `<button class="a-pill${madeWho === x.id ? " is-on" : ""}" data-who="${esc(x.id)}">${dot(x)}${esc(x.name)}</button>`).join("") : "";
+      const rows = made.filter(m => !madeWho || m.by === madeWho);
+      $("made").innerHTML = rows.map(madeRow).join("");
+      $("madeEmpty").style.display = rows.length ? "none" : "";
     }
 
     function render() {
-      $("made").innerHTML = made.map(madeRow).join("");
-      $("madeCard").style.display = made.length ? "" : "none";
+      renderMade();
       $("requests").innerHTML = requests.map(reqRow).join("");
       $("reqCard").style.display = requests.length ? "" : "none";
       $("library").innerHTML = library.map(libRow).join("");
@@ -209,6 +280,7 @@
         bodies = res.bodies || [];
         requests = res.requests || [];
         made = res.made || [];
+        if (res.sing) { sing = res.sing; $("trySec").max = sing.max_seconds; if (!voices.length) addVoice(); }
         keeper = !!res.keeper;   // 体へ送る・消す・お願いに答えるのは、家の持ち主だけ
         maxTitle = res.max_title || 40; maxDesc = res.max_description || 200;
         $("hint").textContent = `WAV・MP3・M4A などを入れられます。体が鳴らせる形(モノラル・16 kHz)に変換します。${res.max_seconds || 20} 秒までです。`;
@@ -305,20 +377,128 @@
       }
     });
 
+    $("madeWho").addEventListener("click", e => { const b = e.target.closest("[data-who]"); if (b) { madeWho = b.dataset.who; renderMade(); } });
     $("made").addEventListener("click", async e => {
       const row = e.target.closest("[data-made]");
       if (!row) return;
+      const by = row.dataset.by, name = row.dataset.made, msg = row.querySelector("[data-mademsg]");
+      const m = made.find(x => x.by === by && x.name === name);
+      const say = t => { if (msg) msg.textContent = t; else alert(t); };
       if (e.target.closest("[data-madelisten]")) {
         if (audio) audio.pause();
-        audio = new Audio(`/api/sing/file/${encodeURIComponent(row.dataset.by)}/${encodeURIComponent(row.dataset.made)}`);
+        audio = new Audio(`/api/sing/file/${encodeURIComponent(by)}/${encodeURIComponent(name)}`);
         audio.play().catch(() => {});
+      } else if (e.target.closest("[data-madeopen]")) {
+        openMade = openMade === by + "/" + name ? null : by + "/" + name; renderMade();
+      } else if (e.target.closest("[data-comment]")) {
+        const text = row.querySelector("[data-commenttext]").value.trim();
+        if (!text) { say("ひとこと書いてください"); return; }
+        try { await call("POST", "/api/sing/comment", { by, name, text }); await load(); } catch (e2) { say(e2.message); }
+      } else if (e.target.closest("[data-totry]")) {
+        if (m && m.recipe) { loadRecipe(m.recipe); showTab("try"); }
       } else if (e.target.closest("[data-keep]")) {
-        const title = prompt("家の音に入れます。題を付けてください(あとで直せます)", row.dataset.made);
+        const title = prompt("家の音に入れます。題を付けてください(あとで直せます)", name);
         if (title === null) return;
-        try { await call("POST", "/api/sing/keep", { by: row.dataset.by, name: row.dataset.made, title }); await load(); }
-        catch (e2) { row.querySelector("[data-mademsg]").textContent = e2.message; }
+        try { await call("POST", "/api/sing/keep", { by, name, title }); await load(); say("家の音に入れました"); } catch (e2) { say(e2.message); }
+      } else if (e.target.closest("[data-minedel]")) {
+        if (!confirm(`「${name}」を消します`)) return;
+        try { await call("DELETE", "/api/sing/mine/" + encodeURIComponent(name)); openMade = null; await load(); } catch (e2) { say(e2.message); }
+      } else if (e.target.closest("[data-give]")) {
+        const to = [...row.querySelectorAll("[data-givepick]:checked")].map(x => x.dataset.givepick);
+        if (!to.length) { say("渡す子を選んでください"); return; }
+        try {
+          const res = await call("POST", "/api/sing/give", { name, to, note: row.querySelector("[data-givenote]").value.trim() });
+          const bad = Object.entries(res.results || {}).filter(([, v]) => v !== "ok");
+          await load(); if (bad.length) alert(bad.map(([id, v]) => `${id}: ${v}`).join(" / "));
+        } catch (e2) { say(e2.message); }
       }
     });
+
+    // ---- ページ(家の音 / 作った音 / 作ってみる)。開いているページは # で覚える ----
+    function showTab(t) {
+      if (!["lib", "made", "try"].includes(t)) t = "lib";
+      document.querySelectorAll("[data-page]").forEach(x => x.style.display = x.dataset.page === t ? "" : "none");
+      document.querySelectorAll("#tabs [data-tab]").forEach(x => x.classList.toggle("is-on", x.dataset.tab === t));
+      if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
+    }
+    $("tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) showTab(b.dataset.tab); });
+    showTab(location.hash.slice(1));
+
+    // ---- 作ってみる ----
+    let sing = { instruments: [], max_seconds: 8, max_voices: 12 }, voices = [], tryRecipe = null;
+    const FIELDS = [["hz", "高さ(Hz か A4・ラ4)", "text"], ["to", "おわりの高さ(動かすとき)", "text"], ["start", "いつから(秒)", "number"], ["length", "長さ(秒)", "number"],
+                    ["attack", "立ち上がり(秒)", "number"], ["tail", "尾の長さ(秒)", "number"], ["detune", "ずらして重ねる(Hz。うねり)", "number"], ["vol", "大きさ(0〜1)", "number"]];
+    function voiceRow(v, i) {
+      const inst = sing.instruments.find(x => x.id === v.inst) || {};
+      const opts = sing.instruments.map(x => `<option value="${esc(x.id)}"${x.id === v.inst ? " selected" : ""}>${esc(x.id)}: ${esc(x.desc)}</option>`).join("");
+      const ph = { attack: inst.attack, tail: inst.tail, start: 0, vol: 1, detune: 0, length: "最後まで", to: "動かさない" };
+      return `<div class="o-try-voice" data-voice="${i}">
+        <div class="o-sound-form-row"><b>声 ${i + 1}</b><span style="flex:1"></span>${voices.length > 1 ? `<button class="a-btn a-btn--ghost a-btn--s" data-vdel>はずす</button>` : ""}</div>
+        <select class="a-input" data-f="inst">${opts}</select>
+        <div class="o-try-grid">${FIELDS.map(([k, label, type]) => `<label><span class="a-label">${label}</span>
+          <input class="a-input" data-f="${k}" type="${type}" ${type === "number" ? 'step="any"' : 'autocapitalize="off"'} value="${esc(v[k] ?? "")}" placeholder="${esc(ph[k] ?? "")}"></label>`).join("")}</div>
+      </div>`;
+    }
+    function renderVoices() { $("tryVoices").innerHTML = voices.map(voiceRow).join(""); }
+    function addVoice() {
+      if (voices.length >= sing.max_voices) return;
+      voices.push({ inst: (sing.instruments[0] || {}).id || "sine", hz: "A4" }); renderVoices();
+    }
+    function loadRecipe(r) {
+      $("trySec").value = r.seconds ?? 3;
+      voices = (r.voices || []).map(v => ({ ...v }));
+      if (!voices.length) addVoice(); else renderVoices();
+      $("tryResult").style.display = "none"; $("tryKeep").style.display = "none";
+    }
+    $("tryVoices").addEventListener("input", e => {
+      const row = e.target.closest("[data-voice]"), f = e.target.dataset.f;
+      if (!row || !f) return;
+      voices[+row.dataset.voice][f] = e.target.value;
+      if (f === "inst") renderVoices();   // 楽器を替えたら、立ち上がりと尾の「はじめの値」を出し直す
+    });
+    $("tryVoices").addEventListener("click", e => {
+      const row = e.target.closest("[data-voice]");
+      if (row && e.target.closest("[data-vdel]")) { voices.splice(+row.dataset.voice, 1); renderVoices(); }
+    });
+    function recipeNow() {
+      const out = { seconds: parseFloat($("trySec").value) || 3, voices: [] };
+      for (const v of voices) {
+        const o = { inst: v.inst };
+        for (const [k, , type] of FIELDS) {
+          const raw = String(v[k] ?? "").trim();
+          if (!raw) continue;
+          o[k] = type === "number" || /^-?[0-9.]+$/.test(raw) ? parseFloat(raw) : raw;
+        }
+        if (o.hz == null) o.hz = 440;
+        out.voices.push(o);
+      }
+      return out;
+    }
+    async function tryListen() {
+      const msg = $("tryMsg");
+      msg.textContent = ""; $("tryBtn").disabled = true;
+      try {
+        tryRecipe = recipeNow();
+        const res = await call("POST", "/api/sing/preview", { recipe: tryRecipe });
+        const url = "data:audio/wav;base64," + res.wav;
+        $("tryLine").textContent = res.shape.line; $("tryText").textContent = res.text.split("\n").slice(2).join("\n"); $("tryLack").textContent = res.lack;
+        $("tryDl").href = url; $("tryDl").download = ($("tryName").value.trim() || "tameshi") + ".wav";
+        $("tryResult").style.display = ""; $("tryKeep").style.display = "";
+        if (audio) audio.pause();
+        audio = new Audio(url); audio.play().catch(() => {});
+      } catch (e) { msg.textContent = e.message; }
+      $("tryBtn").disabled = false;
+    }
+    async function keepTry() {
+      const msg = $("keepMsg");
+      msg.textContent = "";
+      try {
+        await call("POST", "/api/sing/make", { recipe: recipeNow(), name: $("tryName").value.trim(), why: $("tryWhy").value.trim(), when: $("tryWhen").value.trim() });
+        $("tryName").value = ""; $("tryWhy").value = ""; $("tryWhen").value = "";
+        madeWho = ""; await load(); showTab("made");
+      } catch (e) { msg.textContent = e.message; }
+    }
+
 
     $("bodies").addEventListener("click", async e => {
       const undrop = e.target.closest("[data-undrop]");

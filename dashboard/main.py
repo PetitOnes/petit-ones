@@ -574,7 +574,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sing/make|/api/sing/give|/api/sing/mine/[^/]+|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -3521,17 +3521,29 @@ async def api_sounds(request: Request = None):
         except Exception:
             it["shape"] = None
         it["words"] = said.get(it["name"], [])
-    made = []   # ぷちが作った音(うたう)
+    made = []   # ぷちと家の人が作った音(うたう)。新しい順
+    me = _get_username(request) or OWNER_USER
     try:
         import sound_shape
-        for m in _sing().made(DATA_DIR):
-            if m.get("by") in mine:
-                f = _sing().path_of(DATA_DIR, m["by"], m["name"])
-                made.append({**m, "line": sound_shape.shape(f)["line"] if f else "",
-                             "given": [g["to"] for g in _sing().gifts(DATA_DIR) if g.get("from") == m["by"] and g.get("name") == m["name"]]})
+        gifts = _sing().gifts(DATA_DIR)
+        faces = {c["id"]: (c.get("name") or c["id"], c.get("color") or "") for c in list_characters()}   # id → (名前, 色)。子と、家の人
+        faces.update({u: (_user_label(u, u), _person_color(u)) for u in _USER_DISPLAY})
+        for m in reversed(_sing().made(DATA_DIR)):
+            by = m.get("by", "")
+            if by not in mine and by not in _USER_DISPLAY:
+                continue
+            f = _sing().path_of(DATA_DIR, by, m["name"])
+            made.append({**m, "line": sound_shape.shape(f)["line"] if f else "", "person": by not in mine, "mine": by == me,
+                         "by_name": faces.get(by, (by, ""))[0], "by_color": faces.get(by, (by, ""))[1],
+                         "comments": [{**c, "name": faces.get(c.get("who", ""), (c.get("who", ""), ""))[0], "color": faces.get(c.get("who", ""), ("", ""))[1]}
+                                      for c in m.get("comments", []) if isinstance(c, dict)],
+                         "given": [g["to"] for g in gifts if g.get("from") == by and g.get("name") == m["name"]]})
     except Exception:
         made = []
-    return {"library": library, "bodies": list(bodies), "requests": reqs, "made": made, "keeper": _sound_keeper(request),
+    sg = _sing()
+    return {"library": library, "bodies": list(bodies), "requests": reqs, "made": made, "keeper": _sound_keeper(request), "me": me,
+            "sing": {"instruments": [{"id": k, "desc": v[0], "attack": v[2], "tail": v[3]} for k, v in sg.INSTRUMENTS.items()],
+                     "max_seconds": sg.MAX_SECONDS, "max_voices": sg.MAX_VOICES, "weak_hz": sg.SPEAKER_WEAK_HZ, "none_hz": sg.SPEAKER_NONE_HZ},
             "max_seconds": _sounds().MAX_SECONDS,
             "max_title": _sounds().MAX_TITLE, "max_description": _sounds().MAX_DESCRIPTION}
 
@@ -3608,13 +3620,119 @@ async def api_sing_play(body: SingPlayRequest, request: Request):
     return {"ok": True, "message": f"鳴らしました: {body.name}"}
 
 
+def _sing_visible(request: Request, by: str) -> bool:
+    """その人に見える「作った音」か(見られる子の分と、家の人の分)"""
+    return by in {c["id"] for c in _my_chars(request)} or by in _USER_DISPLAY
+
+
 @app.get("/api/sing/file/{by}/{name}")
 def api_sing_file(by: str, name: str, request: Request):
-    """ぷちが作った音を、ブラウザで聞く"""
-    path = _sing().path_of(DATA_DIR, by, name) if by in {c["id"] for c in _my_chars(request)} else None
+    """作った音を、ブラウザで聞く・手元に落とす"""
+    path = _sing().path_of(DATA_DIR, by, name) if _sing_visible(request, by) else None
     if path is None:
         return JSONResponse({"error": "その音はありません"}, status_code=404)
     return Response(path.read_bytes(), media_type="audio/wav", headers={"Cache-Control": "no-cache"})
+
+
+class SingRecipeBody(BaseModel):
+    recipe: dict
+    name: str = ""
+    why: str = ""
+    when: str = ""
+
+
+class SingCommentBody(BaseModel):
+    by: str
+    name: str
+    text: str
+
+
+class SingGiveBody(BaseModel):
+    name: str
+    to: list[str]
+    note: str = ""
+
+
+@app.post("/api/sing/preview")
+async def api_sing_preview(body: SingRecipeBody):
+    """作ってみる: 作り方から音を作って、聞く用に返す(置かない)。数字と線、体のスピーカーが出しにくい所も"""
+    import io
+    import tempfile
+    import wave as _wave
+
+    import sound_shape
+    sg = _sing()
+
+    def _do() -> dict:
+        x = sg.render(body.recipe)
+        buf = io.BytesIO()
+        with _wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sg.SR)
+            w.writeframes((x * 32767).astype("<i2").tobytes())
+        with tempfile.NamedTemporaryFile(suffix=".wav") as f:
+            f.write(buf.getvalue())
+            f.flush()
+            shape = sound_shape.shape(Path(f.name))
+        return {"ok": True, "wav": base64.b64encode(buf.getvalue()).decode(), "shape": shape,
+                "text": sound_shape.text("ためしの音", shape), "lack": sg.lack_text(body.recipe, sg.lack(x))}
+    try:
+        return await asyncio.to_thread(_do)
+    except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/sing/make")
+async def api_sing_make(body: SingRecipeBody, request: Request):
+    """作ってみる: 自分の作った音として置く(置き場はぷちと同じ sounds/made/<自分の id>/)"""
+    sg = _sing()
+    me = _get_username(request) or OWNER_USER
+    try:
+        info = await asyncio.to_thread(lambda: sg.make(DATA_DIR, me, body.name.strip(), body.recipe, why=body.why, when=body.when))
+    except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "item": info}
+
+
+@app.post("/api/sing/comment")
+def api_sing_comment(body: SingCommentBody, request: Request):
+    """作った音に、感想を書く。作った子には、次の自律行動か会話の頭に 1 行で届く"""
+    sg = _sing()
+    if not _sing_visible(request, body.by):
+        return JSONResponse({"error": "その音はありません"}, status_code=404)
+    try:
+        rec = sg.comment(DATA_DIR, body.by, body.name, _get_username(request) or OWNER_USER, body.text)
+    except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "comment": rec}
+
+
+@app.post("/api/sing/give")
+def api_sing_give(body: SingGiveBody, request: Request):
+    """自分が作った音を、ぷちに渡す(届いたことが 1 行で伝わる。聞くかどうかはその子が決める)"""
+    sg = _sing()
+    me = _get_username(request) or OWNER_USER
+    mine = {c["id"] for c in _my_chars(request)}
+    results = {}
+    for to in body.to:
+        if to not in mine or to not in GROUP_CHAR_IDS:
+            results[to] = "この子には渡せません"
+            continue
+        try:
+            sg.give(DATA_DIR, me, body.name, to, body.note)
+            results[to] = "ok"
+        except sg.SingError as e:
+            results[to] = str(e)
+    return {"ok": bool(results) and all(v == "ok" for v in results.values()), "results": results}
+
+
+@app.delete("/api/sing/mine/{name}")
+def api_sing_delete_mine(name: str, request: Request):
+    """自分が作った音を消す(ぷちの作った音は、ここからは消せない)"""
+    if not _sing().remove(DATA_DIR, _get_username(request) or OWNER_USER, name):
+        return JSONResponse({"error": "その音はありません"}, status_code=404)
+    return {"ok": True}
 
 
 @app.post("/api/sing/keep")
@@ -3631,7 +3749,9 @@ def api_sing_keep(body: SingKeepRequest, request: Request):
         return JSONResponse({"error": f"{target.name} はもう家の音にあります"}, status_code=409)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(path.read_bytes())
-    sd.set_meta(DATA_DIR, target.name, body.title, body.description or f"{_user_label(body.by, body.by)}が作った音", by=body.by)
+    info = _sing().info_of(DATA_DIR, body.by, body.name) or {}
+    about = " ".join(x for x in (info.get("why", ""), f"鳴らしたいとき: {info['when']}" if info.get("when") else "") if x)
+    sd.set_meta(DATA_DIR, target.name, body.title, body.description or about or f"{_user_label(body.by, body.by)}が作った音", by=body.by)
     return {"ok": True, "name": target.name}
 
 
