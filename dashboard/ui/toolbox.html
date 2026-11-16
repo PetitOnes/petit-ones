@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>道具箱</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 🧰 道具箱(2026-11-16、ぷち 3 人と決めた): 道具の地図。濃い = よく使う、薄い = 手が向いていない。ありさんだけが見る */
+    .t-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 0.85rem; color: var(--ui-text-sub, #777); }
+    .t-legend i { width: 12px; height: 12px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+    .t-days { display: flex; gap: 6px; margin-left: auto; }
+    .t-shelf { margin-top: 12px; }
+    .t-shelf h2 { margin: 0 0 6px; font-size: 1rem; display: flex; align-items: baseline; gap: 8px; }
+    .t-shelf h2 small { font-weight: 400; font-size: 0.75rem; color: var(--ui-text-sub, #999); }
+    .t-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 7px 4px; border-top: 1px solid var(--ui-line, #eee); }
+    .t-row:first-of-type { border-top: none; }
+    .t-row .lab { font-size: 0.9rem; line-height: 1.3; }
+    .t-row .key { display: block; font-size: 0.68rem; color: var(--ui-text-sub, #aaa); font-family: ui-monospace, monospace; }
+    .t-dots { display: flex; gap: 6px; }
+    .t-dot { width: 26px; height: 26px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 0.62rem; font-weight: 700; color: #fff; border: 2px solid transparent; }
+    .t-dot.none { background: transparent !important; border-color: var(--ui-line, #ddd); color: transparent; }
+    .t-hand { font-size: 0.75rem; padding: 3px 9px; }
+    .t-form { margin-top: 8px; padding: 10px 12px; border-radius: 12px; background: var(--ui-surface); border: 1.5px solid var(--ui-accent); }
+    .t-form .who { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+    .t-form .who button.is-on { outline: 2px solid var(--ui-text); }
+    .t-form .a-input { width: 100%; box-sizing: border-box; }
+    .t-log { padding: 8px 12px; border-radius: 12px; background: var(--ui-surface); margin-top: 8px; border-left: 4px solid #ccc; font-size: 0.9rem; }
+    .t-log .meta { font-size: 0.75rem; color: var(--ui-text-sub, #999); }
+    .t-log p { margin: 4px 0 0; line-height: 1.6; white-space: pre-wrap; }
+    .t-msg { font-size: 0.8rem; color: #d9534f; margin-top: 4px; }
+    .t-toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 18px; border-radius: 999px; background: var(--ui-text); color: #fff; font-size: 0.9rem; opacity: 0; transition: opacity 0.25s; pointer-events: none; z-index: 30; }
+    .t-toast.on { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🧰 道具箱</h1></div>
+
+    <div class="m-card">
+      <div class="t-legend" id="legend"></div>
+      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。薄い丸は、この期間に手が向いていない道具。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
+    </div>
+
+    <div id="shelves"></div>
+
+    <div class="m-card" style="margin-top:12px">
+      <h2 style="margin:0 0 6px;font-size:1rem">渡したものと、使い心地</h2>
+      <div id="log"><span class="a-hint">まだ無い</span></div>
+    </div>
+  </div>
+  <div class="t-toast" id="toast"></div>
+
+  <script>
+    const { esc } = PetitPage;
+    const $ = id => document.getElementById(id);
+    let st = null, days = 14, openKey = null, pick = null;
+    function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1800); }
+    const nameOf = id => ((st.chars || []).find(c => c.id === id) || {}).name || id;
+    const colorOf = id => ((st.chars || []).find(c => c.id === id) || {}).color || "#ccc";
+    const labelOf = key => { for (const s of st.shelves || []) for (const t of s.tools) if (t.key === key) return t.label; return key; };
+    const when = iso => (iso || "").replace("T", " ").slice(5, 16);
+
+    async function load() {
+      const r = await fetch(`/api/toolbox?days=${days}`);
+      if (!r.ok) { $("shelves").innerHTML = `<div class="m-card"><span class="a-hint">${r.status === 403 ? "道具箱は家の人のもの" : "読めなかった"}</span></div>`; return; }
+      st = await r.json();
+      render();
+    }
+    function render() {
+      $("legend").innerHTML = (st.chars || []).map(c => `<span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span>`).join("") +
+        `<span class="t-days">${[7, 14, 30].map(d => `<button class="a-pill${d === days ? " is-on" : ""}" onclick="setDays(${d})">${d} 日</button>`).join("")}</span>`;
+      // 子ごとの最大回数で濃さを決める(その子の中での相対)
+      const max = {}; for (const s of st.shelves) for (const t of s.tools) for (const c of st.chars) { const u = t.usage[c.id]; if (u) max[c.id] = Math.max(max[c.id] || 0, u.count); }
+      const handedToday = {}; for (const h of st.handed || []) if ((h.at || "").slice(0, 10) === st.today) handedToday[h.to] = h;
+      $("shelves").innerHTML = st.shelves.map(s => {
+        const used = s.tools.filter(t => st.chars.some(c => t.usage[c.id])).length;
+        return `<div class="m-card t-shelf"><h2>${esc(s.name)} <small>${used} / ${s.tools.length} に手が向いた</small></h2>` +
+          s.tools.map(t => {
+            const dots = st.chars.map(c => { const u = t.usage[c.id]; if (!u) return `<span class="t-dot none" title="${esc(c.name)}: この期間は使っていない">0</span>`;
+              const a = 0.35 + 0.65 * Math.min(1, u.count / Math.max(1, max[c.id] || 1));
+              return `<span class="t-dot" style="background:${esc(c.color)};opacity:${a.toFixed(2)}" title="${esc(c.name)}: ${u.count} 回(ひとりの時間 ${u.alone}・会話 ${u.chat})。最後は ${esc(when(u.last))}">${u.count > 99 ? "99+" : u.count}</span>`; }).join("");
+            const form = openKey === t.key ? `<div class="t-form" style="grid-column:1 / -1">
+                <div class="a-label">だれに渡す?</div>
+                <div class="who">${st.chars.map(c => `<button class="a-pill${pick === c.id ? " is-on" : ""}" style="border-color:${esc(c.color)}" onclick="pickChar('${esc(c.id)}')" ${handedToday[c.id] ? `title="今日はもう ${esc(labelOf(handedToday[c.id].tool))} を渡してある"` : ""}>${esc(c.name)}${handedToday[c.id] ? " ✓" : ""}</button>`).join("")}</div>
+                <input class="a-input" id="handNote" placeholder="一言(「紫を引いてみる?」など。無くてもいい)" maxlength="200">
+                <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="a-btn a-btn--s" onclick="hand('${esc(t.key)}')">渡す</button><button class="a-btn a-btn--sub a-btn--s" onclick="openForm(null)">やめる</button><span class="t-msg" id="handMsg"></span></div>
+              </div>` : "";
+            return `<div class="t-row"><span class="lab">${esc(t.label)}<span class="key">${esc(t.key)}</span></span><span class="t-dots">${dots}</span><button class="a-btn a-btn--sub t-hand" onclick="openForm('${esc(t.key)}')">渡す</button>${form}</div>`;
+          }).join("") + `</div>`;
+      }).join("");
+      const feltBy = {}; for (const f of st.felt || []) (feltBy[f.who + "|" + f.tool] = feltBy[f.who + "|" + f.tool] || []).push(f);
+      const items = (st.handed || []).slice().reverse().map(h => {
+        const fs = feltBy[h.to + "|" + h.tool] || [];
+        return `<div class="t-log" style="border-left-color:${esc(colorOf(h.to))}"><span class="meta">${esc(when(h.at))} ${esc(nameOf(h.to))} に <b>${esc(labelOf(h.tool))}</b>${h.note ? ` 「${esc(h.note)}」` : ""}${h.told ? "" : " <span class='a-badge a-badge--soft'>まだ届いていない</span>"}</span>` +
+          fs.map(f => `<p>${f.skip ? "🍃 " : "✍️ "}${esc(f.text)} <span class="meta">${esc(when(f.at))}</span></p>`).join("") + (fs.length ? "" : `<p class="meta">まだ一言は無い</p>`) + `</div>`;
+      });
+      $("log").innerHTML = items.length ? items.join("") : `<span class="a-hint">まだ無い</span>`;
+    }
+    function setDays(d) { days = d; load(); }
+    function openForm(key) { openKey = key; pick = null; render(); if (key) { const el = $("handNote"); if (el) el.focus(); } }
+    function pickChar(id) { pick = id; const note = ($("handNote") || {}).value || ""; render(); const el = $("handNote"); if (el) el.value = note; }
+    async function hand(key) {
+      if (!pick) { $("handMsg").textContent = "だれに渡すか選んでね"; return; }
+      const note = ($("handNote") || {}).value || "";
+      const r = await fetch("/api/toolbox/hand", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({character_id: pick, tool: key, note})});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { $("handMsg").textContent = d.error || "渡せなかった"; return; }
+      toast(`${nameOf(pick)} に ${labelOf(key)} を渡した`);
+      openKey = null; pick = null; load();
+    }
+    load();
+  </script>
+</body>
+</html>
