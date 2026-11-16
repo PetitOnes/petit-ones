@@ -1,3 +1,4 @@
+"""家の中の体(M5)を探す。192.168.1.x を総当たりで /sensor に当たり、返事があった IP を出す。"""
 import concurrent.futures
 import urllib.request
 

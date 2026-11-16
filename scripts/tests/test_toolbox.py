@@ -41,7 +41,9 @@ def test_usage_counts_and_shelves(tmp_path):
     by_id = {s["id"]: s for s in shelves}
     assert by_id["memory"]["tools"][0]["key"] == "memory:remember" and by_id["memory"]["tools"][0]["usage"]["puchi"]["count"] == 1
     assert any(t["key"] == "memory:recall_divergent" and t["usage"]["puchi"]["count"] == 1 for t in by_id["memory"]["tools"])
-    assert [t["key"] for t in by_id["other"]["tools"]] == ["weird-server:thing"]   # 知らない鍵は「ほか」
+    assert [t["key"] for t in by_id["other"]["tools"]] == ["weird-server:thing"]   # 知らない鍵は「ほか」(掃除なし)
+    pruned = {s["id"]: s for s in tb.shelves_with({"puchi": {**u, "claude:desires.json": u["claude:Read"], "script:nope": u["claude:Read"], "m5:rover_status": u["claude:Read"]}}, project_dir=tmp_path)}
+    assert [t["key"] for t in pruned.get("other", {"tools": []})["tools"]] == ["m5:rover_status"]   # 言い間違い・無い台本・知らない部品は出さない
     assert tb.usage(base, "nobody") == {}
     # まとめた行(音量): どちらかを使えば使ったことに。許されている場の印
     u2 = {"m5:set_volume": {"count": 2, "alone": 2, "chat": 0, "last": "2026-11-16T12:00"}}
@@ -136,4 +138,5 @@ def test_describe_with_fake_server(tmp_path):
     assert r["done"] == ["memory"] and r["failed"] == ["dead", "missing"]   # 立ち上がらない部品も「つながらなかった」
     assert r["tools"]["memory:remember"]["description"].startswith("覚える。") and r["tools"]["memory:remember"]["params"] == [{"name": "content", "desc": "中身"}]
     assert r["tools"]["script:sky"]["description"].startswith("空のこと。")
+    assert r["tools"]["claude:Glob"]["server"] == "Claude Code"
     assert tb.descriptions(tmp_path)["tools"]["memory:remember"]["server"] == "memory"
