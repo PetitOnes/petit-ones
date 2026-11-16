@@ -106,6 +106,15 @@ def test_group_turn_tells_order_and_position():
         "\n\n[先に答えた子の返事]\nぷちる: うん\nぷちてゃ: まあね")
 
 
+def test_group_turn_adds_unseen_replies_before_prev():
+    """前の回で自分のあとに答えた子の返事(まだ読んでいない分)は、今回の「先に答えた子の返事」より前に出す。無ければ段ごと出ない"""
+    got = P("group_turn", prompt="やあ", order="ぷちこ → ぷちる", position=2, before="ぷちこ", after="", prev="ぷちこ: うん",
+            unseen="ぷちてゃ: きのうの続き", rotating=True)
+    assert got.rstrip("\n").endswith(
+        "きみが最後。]\n\n[前の回、きみのあとに答えた子の返事(きみはまだ読んでいない)]\nぷちてゃ: きのうの続き\n\n[先に答えた子の返事]\nぷちこ: うん")
+    assert "まだ読んでいない" not in P("group_turn", prompt="やあ", order="ぷちこ → ぷちる", position=1, before="", after="ぷちる", prev="", unseen="")
+
+
 def test_group_turn_for_chosen_members_does_not_claim_rotation():
     """選んだ子に聞くとき(順番は選んだ順)は、「毎回変わる」とは言わない"""
     got = P("group_turn", prompt="やあ", order="ぷちる → ぷちこ", position=2, before="ぷちる", after="", prev="ぷちる: うん")
