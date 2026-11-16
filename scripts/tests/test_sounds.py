@@ -147,21 +147,48 @@ def test_sent_fulfils_request(tmp_path):
     assert "bell.wav" in sounds.on_body_of(tmp_path, "puchiteya")
 
 
-def test_drop_and_undrop(tmp_path):
+def test_drop_is_a_request(tmp_path):
     _put(tmp_path, "bell.wav")
     sounds.remember_body(tmp_path, "puchiko", ["bell.wav", "old.wav"])
     with pytest.raises(sounds.SoundError):
         sounds.want(tmp_path, "puchiko", "bell")  # もう体にある(外していない)
-    sounds.drop(tmp_path, "puchiko", "old")   # 体にだけある音も外せる
-    sounds.drop(tmp_path, "puchiko", "bell")
-    assert set(sounds.removed_of(tmp_path, "puchiko")) == {"bell.wav", "old.wav"}
-    assert "外した" in sounds.list_for(tmp_path, "puchiko")[0]
-    assert sounds.requests(tmp_path) == []   # 外したら、まだのお願いは取り下げ
-    sounds.want(tmp_path, "puchiko", "bell")   # 外した音は、またお願いできる
-    sounds.undrop(tmp_path, "puchiko", "old.wav")
-    assert sounds.removed_of(tmp_path, "puchiko") == ["bell.wav"]
     with pytest.raises(sounds.SoundError):
-        sounds.drop(tmp_path, "puchiko", "nothing")
+        sounds.drop(tmp_path, "puchiko", "nothing")   # 体に無い音は外せない
+    r = sounds.drop(tmp_path, "puchiko", "old", "もう鳴らさない")   # 体にだけある音も外してほしいと言える
+    assert r["kind"] == "remove" and sounds.removed_of(tmp_path, "puchiko") == []   # まだ外れていない(お願い)
+    assert any("体にだけある音" in x for x in sounds.list_for(tmp_path, "puchiko"))
+    sounds.resolve(tmp_path, r["id"], "done", by="arisan")
+    assert sounds.removed_of(tmp_path, "puchiko") == ["old.wav"]
+    assert "外してくれた" in sounds.notice(tmp_path, "puchiko", mark=True)[0]
+    with pytest.raises(sounds.SoundError):
+        sounds.drop(tmp_path, "puchiko", "old")   # もう外してある
+    sounds.undrop(tmp_path, "puchiko", "old.wav")
+    assert sounds.removed_of(tmp_path, "puchiko") == []
+
+
+def test_opposite_request_withdraws(tmp_path):
+    _put(tmp_path, "bell.wav")
+    sounds.remember_body(tmp_path, "puchiko", ["bell.wav"])
+    sounds.drop(tmp_path, "puchiko", "bell")
+    sounds.resolve(tmp_path, sounds.requests(tmp_path)[0]["id"], "done")
+    sounds.want(tmp_path, "puchiko", "bell")   # 外した音は、またお願いできる
+    assert [r["kind"] for r in sounds.requests(tmp_path)] == ["add"]
+    sounds.sent(tmp_path, "puchiko", "bell.wav")
+    assert sounds.removed_of(tmp_path, "puchiko") == []   # 入れ直したら外した印は取れる
+
+
+def test_wish(tmp_path):
+    with pytest.raises(sounds.SoundError):
+        sounds.wish(tmp_path, "puchiru", "  ")
+    r = sounds.wish(tmp_path, "puchiru", "川の せせらぎ")
+    assert sounds.wish(tmp_path, "puchiru", "川の せせらぎ")["id"] == r["id"]
+    assert any("こういう音がほしい" in x for x in sounds.list_for(tmp_path, "puchiru"))
+    _put(tmp_path, "river.wav")
+    sounds.set_meta(tmp_path, "river.wav", "かわ")
+    sounds.resolve(tmp_path, r["id"], "done", by="arisan", name="river.wav")
+    assert "river.wav" in sounds.on_body_of(tmp_path, "puchiru")
+    line = sounds.notice(tmp_path, "puchiru")[0]
+    assert "せせらぎ" in line and "かわ" in line
 
 
 def test_delete_clears_meta_and_requests(tmp_path):

@@ -9,7 +9,7 @@
 - 名前は、体のファイル名になる。英小文字・数字・_ と - だけ、MAX_NAME 文字まで、末尾は .wav
 
 音ライブラリ(2026-11-16): 家の音には、題と説明を付けられる(sounds/library.json)。ぷちは一覧を見て、
-「体に入れてほしい」とお願いしたり(世話人がダッシュボードで送るか、ことわる)、自分の体から外したりできる。
+「体に入れてほしい」「体から外してほしい」、家に無い音でも「こういう音がほしい」とお願いできる。答えるのは家の持ち主だけ(ダッシュボードで、入れる・外す・ことわる)。
 体は音を消せないので、「外す」は家の側の覚え(その子はもう使わない)。体の SD には残る。
 お願いの行方は、その子の次の自律行動か会話の頭に 1 行(notice)。
 
@@ -18,7 +18,8 @@
 Usage:
     python3 sounds.py list --character <id>                  # 家の音の一覧(題・説明・秒数・体にあるか)
     python3 sounds.py want <id> <名前> ["<なぜ>"]              # 体に入れてほしい、とお願いする
-    python3 sounds.py drop <id> <名前>                        # 自分の体から外す(もう使わない)
+    python3 sounds.py drop <id> <名前> ["<なぜ>"]              # 体から外してほしい、とお願いする
+    python3 sounds.py wish <id> "<どんな音か>"                 # 家に無い音を、こういう音がほしい、とお願いする
     python3 sounds.py notice --character <id> [--mark]        # お願いの行方(まだ伝えていない分)
 """
 
@@ -261,8 +262,23 @@ def _load_requests(base: Path) -> list[dict]:
 
 
 def requests(base: Path, state: str | None = "pending") -> list[dict]:
-    """お願いの一覧(古い順)。state=None で全部"""
-    return [r for r in _load_requests(base) if state is None or r.get("state") == state]
+    """お願いの一覧(古い順)。state=None で全部。kind は add(入れてほしい)/ remove(外してほしい)/ wish(こういう音がほしい)"""
+    return [{**r, "kind": r.get("kind", "add")} for r in _load_requests(base) if state is None or r.get("state") == state]
+
+
+def _ask(base: Path, character_id: str, name: str, kind: str, why: str, now: datetime | None) -> dict:
+    """お願いを足す。同じお願いがまだ残っていれば、それを返す。逆向きのまだのお願いは取り下げる"""
+    reqs = _load_requests(base)
+    for r in reqs:
+        if r.get("who") == character_id and r.get("name") == name and r.get("state") == "pending":
+            if r.get("kind", "add") == kind:
+                return {**r, "kind": kind}
+            r["state"], r["told"] = "withdrawn", datetime.now().isoformat(timespec="minutes")
+    rec = {"id": uuid.uuid4().hex[:8], "at": (now or datetime.now()).isoformat(timespec="minutes"),
+           "who": character_id, "kind": kind, "name": name, "why": _clean(why, MAX_WHY), "state": "pending"}
+    reqs.append(rec)
+    _write_json(_requests_path(base), reqs)
+    return rec
 
 
 def _norm(name: str) -> str:
@@ -277,33 +293,41 @@ def want(base: Path, character_id: str, name: str, why: str = "", now: datetime 
         raise SoundError(f"{name} は家の音にありません(sounds.py list で見られます)")
     if name in on_body_of(base, character_id) and name not in removed_of(base, character_id):
         raise SoundError(f"{name} は、もうあなたの体にあります")
+    return _ask(base, character_id, name, "add", why, now)
+
+
+def drop(base: Path, character_id: str, name: str, why: str = "", now: datetime | None = None) -> dict:
+    """体から外してほしい、とお願いする(答えるのは家の持ち主)。外すと、体の SD には残るが使わない音になる"""
+    name = _norm(name)
+    if name in removed_of(base, character_id):
+        raise SoundError(f"{name} は、もう外してあります")
+    if name not in on_body_of(base, character_id):
+        raise SoundError(f"{name} は、あなたの体にありません(体の音は list_sounds で見られます)")
+    return _ask(base, character_id, name, "remove", why, now)
+
+
+def wish(base: Path, character_id: str, text: str, now: datetime | None = None) -> dict:
+    """家に無い音を「こういう音がほしい」とお願いする。家の人が取り込んで、体に入れて答える"""
+    text = _clean(text, MAX_WHY)
+    if not text:
+        raise SoundError("どんな音がほしいか、ひとこと書いてください")
     reqs = _load_requests(base)
     for r in reqs:
-        if r.get("who") == character_id and r.get("name") == name and r.get("state") == "pending":
+        if r.get("who") == character_id and r.get("kind") == "wish" and r.get("why") == text and r.get("state") == "pending":
             return r
     rec = {"id": uuid.uuid4().hex[:8], "at": (now or datetime.now()).isoformat(timespec="minutes"),
-           "who": character_id, "name": name, "why": _clean(why, MAX_WHY), "state": "pending"}
+           "who": character_id, "kind": "wish", "name": "", "why": text, "state": "pending"}
     reqs.append(rec)
     _write_json(_requests_path(base), reqs)
     return rec
 
 
-def drop(base: Path, character_id: str, name: str) -> dict:
-    """自分の体から外す(もう使わない)。体の SD には残る。まだのお願いがあれば取り下げる"""
-    name = _norm(name)
+def _mark_removed(base: Path, character_id: str, name: str) -> None:
     bodies = _load_bodies(base)
     cur = bodies.get(character_id, {})
-    if name not in cur.get("on_body", []) and path_of(base, name) is None:
-        raise SoundError(f"{name} は、あなたの体にも家の音にもありません")
     cur["removed"] = sorted(set(cur.get("removed", [])) | {name})
     bodies[character_id] = cur
     _write_json(_bodies_path(base), bodies)
-    reqs = _load_requests(base)
-    for r in reqs:
-        if r.get("who") == character_id and r.get("name") == name and r.get("state") == "pending":
-            r["state"], r["told"] = "withdrawn", datetime.now().isoformat(timespec="minutes")
-    _write_json(_requests_path(base), reqs)
-    return {"name": name, "removed": True}
 
 
 def undrop(base: Path, character_id: str, name: str) -> None:
@@ -315,8 +339,8 @@ def undrop(base: Path, character_id: str, name: str) -> None:
     _write_json(_bodies_path(base), bodies)
 
 
-def resolve(base: Path, request_id: str, state: str, by: str = "", note: str = "") -> dict | None:
-    """お願いに答える。state は done(体に入れた)か declined(ことわった)。done なら体の覚えも足す"""
+def resolve(base: Path, request_id: str, state: str, by: str = "", note: str = "", name: str = "") -> dict | None:
+    """お願いに答える。state は done(入れた・外した)か declined(ことわった)。done なら体の覚えも直す"""
     if state not in ("done", "declined"):
         raise ValueError(state)
     reqs = _load_requests(base)
@@ -325,10 +349,15 @@ def resolve(base: Path, request_id: str, state: str, by: str = "", note: str = "
             r.update({"state": state, "by": by, "done_at": datetime.now().isoformat(timespec="minutes")})
             if note:
                 r["note"] = _clean(note, MAX_WHY)
+            if name and r.get("kind") == "wish":   # 「こういう音がほしい」に答えた音
+                r["name"] = name
             _write_json(_requests_path(base), reqs)
             if state == "done":
-                _add_on_body(base, r["who"], r["name"])
-            return r
+                if r.get("kind", "add") == "remove":
+                    _mark_removed(base, r["who"], r["name"])
+                else:
+                    _add_on_body(base, r["who"], r["name"])
+            return {**r, "kind": r.get("kind", "add")}
     return None
 
 
@@ -336,7 +365,7 @@ def sent(base: Path, character_id: str, name: str, by: str = "") -> None:
     """世話人が体へ送った。その子のまだのお願いがあれば、かなったことにする"""
     _add_on_body(base, character_id, name)
     for r in requests(base):
-        if r.get("who") == character_id and r.get("name") == name:
+        if r.get("who") == character_id and r.get("name") == name and r["kind"] == "add":
             resolve(base, r["id"], "done", by=by)
 
 
@@ -358,9 +387,19 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     for r in mine:
         title = meta.get(r["name"], {}).get("title")
         label = f"{r['name']}「{title}」" if title else r["name"]
+        if r.get("kind") == "wish":
+            asked = f"「{r.get('why', '')}」のお願い"
+            label = f"{asked}に、{label}" if r["state"] == "done" else asked
         who = _person_name(base, r.get("by", ""))
         note = f"(一言「{r['note']}」)" if r.get("note") else ""
-        parts.append(f"{label}は{who}が体に入れてくれた{note}" if r["state"] == "done" else f"{label}は今回は見送り{note}")
+        if r["state"] == "declined":
+            parts.append(f"{label}は今回は見送り{note}")
+        elif r.get("kind") == "wish":
+            parts.append(f"{label}を{who}が作って体に入れてくれた{note}")
+        elif r.get("kind", "add") == "remove":
+            parts.append(f"{label}は{who}が外してくれた(もう使わない音){note}")
+        else:
+            parts.append(f"{label}は{who}が体に入れてくれた{note}")
     line = "(音のお願い: " + "。".join(parts) + "。体の音は list_sounds / play_sound で)"
     if mark:
         stamp = datetime.now().isoformat(timespec="minutes")
@@ -374,16 +413,24 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
 def list_for(base: Path, character_id: str) -> list[str]:
     """ぷちに見せる一覧(1 音 1 行)"""
     on_body, removed = set(on_body_of(base, character_id)), set(removed_of(base, character_id))
-    asked = {r["name"] for r in requests(base) if r.get("who") == character_id}
+    pending = [r for r in requests(base) if r.get("who") == character_id]
+    asked = {r["name"]: r["kind"] for r in pending if r["kind"] != "wish"}
     lines = []
     for it in list_library(base):
         n = it["name"]
-        mark = ("外した" if n in removed else "体にある" if n in on_body else "お願い中" if n in asked else "まだ体にない")
+        mark = ("外した" if n in removed else "体にある・外してほしいとお願い中" if asked.get(n) == "remove"
+                else "体にある" if n in on_body else "入れてほしいとお願い中" if n in asked else "まだ体にない")
         title = f"「{it['title']}」" if it.get("title") else ""
         desc = f": {it['description']}" if it.get("description") else ""
         lines.append(f"- {n}{title} {it['seconds']:g} 秒{desc} [{mark}]")
     if not lines:
-        return ["(家の音はまだありません)"]
+        lines = ["(家の音はまだありません)"]
+    only = sorted(on_body - {it["name"] for it in list_library(base)})
+    if only:   # 家に元のない、体にだけある音。外してほしいとお願いはできる
+        lines.append("体にだけある音: " + ", ".join(f"{n}{'(外した)' if n in removed else ''}" for n in only))
+    for r in pending:
+        if r["kind"] == "wish":
+            lines.append(f"こういう音がほしい(お願い中): {r['why']}")
     return lines
 
 
@@ -399,6 +446,10 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("drop")
     p.add_argument("character")
     p.add_argument("name")
+    p.add_argument("why", nargs="?", default="")
+    p = sub.add_parser("wish")
+    p.add_argument("character")
+    p.add_argument("text")
     p = sub.add_parser("notice")
     p.add_argument("--character", required=True)
     p.add_argument("--mark", action="store_true")
@@ -411,8 +462,11 @@ def main(argv: list[str] | None = None) -> int:
             r = want(base, a.character, a.name, a.why)
             print(f"お願いしました: {r['name']}(家の人がダッシュボードで見て、体に入れるか決めます)")
         elif a.cmd == "drop":
-            r = drop(base, a.character, a.name)
-            print(f"外しました: {r['name']}(体の中のファイルは残りますが、もう使わない音として覚えます)")
+            r = drop(base, a.character, a.name, a.why)
+            print(f"お願いしました: {r['name']} を外す(家の人がダッシュボードで見て決めます。外しても体の中のファイルは残り、使わない音として覚えます)")
+        elif a.cmd == "wish":
+            wish(base, a.character, a.text)
+            print("お願いしました(家の人が、合う音をさがして取り込めたら体に入れます。見つからないこともあります)")
         elif a.cmd == "notice":
             out = notice(base, a.character, mark=a.mark)
             if out:
