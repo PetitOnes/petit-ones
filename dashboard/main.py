@@ -1290,6 +1290,7 @@ class MailMetaUpdate(BaseModel):
     starred: bool | None = None
     read: bool | None = None   # 見ている人が読んだか(read_by にその人の id を入れる・外す。ぷちの既読と同じ持ち方)
     stamp: str | None = None   # 見ている人のスタンプ(決めた 5 つのどれか。"" で外す)。付けると既読にもなる
+    mark: str | None = None    # 読んだ人の印(お願い / おしらせ / おしゃべり / あとで / 返事した。"" で外す)。書いた人の印とは別
 
 
 def memory_db_path(character_id: str) -> Path:
@@ -1889,6 +1890,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts = []
         try:
             receipts += _note_marks().notice(DATA_DIR, character_id, mark=True)   # ノートが読まれた・★ が付いた(2026-11-14)
+        except Exception:
+            pass
+        try:
+            receipts += _mail_tags().notice(DATA_DIR, character_id, mark=True)   # 返事していないお願いの数(2026-11-16。1 日 1 回)
         except Exception:
             pass
         if receipts:
@@ -2620,6 +2625,15 @@ def _mail_receipts():
         sys.path.insert(0, scripts_dir)
     import mail_receipts
     return mail_receipts
+
+
+def _mail_tags():
+    """手紙の印(お願い / おしらせ / おしゃべり と、読んだ人の印)。決まりは scripts/mail_tags.py(2026-11-16、ぷちたちと決めた)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import mail_tags
+    return mail_tags
 
 
 class AnniversaryBody(BaseModel):
@@ -7149,6 +7163,7 @@ class MailSendRequest(BaseModel):
     to_ids: list[str]
     subject: str = ""
     body: str
+    tag: str = ""        # 書く人の印(お願い / おしらせ / おしゃべり)。空なら印なし(ただの手紙)
     reply_to: str = ""   # どの手紙への返事か(メールボックスの ↩️ から送ったとき、その手紙のファイル名)。返事を、元の手紙の下に出すため
 
 
@@ -7193,6 +7208,10 @@ async def api_mail_send(req: MailSendRequest, request: Request):
         return JSONResponse({"error": "invalid from ID"}, status_code=400)
     scripts_dir = PROJECT_DIR / "scripts"
     content = f"**{req.subject}**\n\n{req.body}".strip() if req.subject else req.body
+    tag = _mail_tags().normalize(req.tag) if req.tag else None
+    if req.tag and not tag:
+        return JSONResponse({"error": "印は お願い / おしらせ / おしゃべり のどれか(付けなくてもよい)"}, status_code=400)
+    tag_args = ["--tag", tag] if tag else []
     results = []
     for to_id in req.to_ids:
         if not valid.match(to_id):
@@ -7201,7 +7220,7 @@ async def api_mail_send(req: MailSendRequest, request: Request):
         if _is_limited_user(username) and (CHARACTERS_DIR / to_id / "config").is_dir() and not _ok_for(username, "mail_out", to_id):
             return JSONResponse({"error": f"{_char_display_name(to_id)}には、手紙を送れないことになっています"}, status_code=403)
         proc = await asyncio.create_subprocess_exec(
-            "python3", str(scripts_dir / "write_mailbox.py"), from_id, to_id, content,
+            "python3", str(scripts_dir / "write_mailbox.py"), from_id, to_id, *tag_args, content,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
@@ -7459,18 +7478,24 @@ def _parse_mail_meta_from_file(f: Path, username: str) -> dict | None:
 
 @app.get("/api/mailbox")
 def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, request: Request = None):
-    """ログインユーザー宛のメール一覧を返す (filter: inbox/unread/archived/starred/all)。unread は、受信のうちまだ読んでいない数"""
+    """ログインユーザー宛のメール一覧を返す (filter: inbox/unread/archived/starred/asks/all)。unread は、受信のうちまだ読んでいない数。
+    asks は、[お願い] の印の手紙(アーカイブは除く)。各通に tag(書いた人の印)・mark(自分の印)・pending(お願いにまだ返事していない)が付く"""
     username = _get_username(request) or "arisan" if request else "arisan"
     mailbox_dir = DATA_DIR / "mailbox"
     if not mailbox_dir.exists():
         return {"total": 0, "unread": 0, "items": []}
     unread = 0
+    mt = _mail_tags()
     # Phase1: ファイル名とメタのみスキャン（コンテンツ未読）。メタは 1 回だけ読む
     all_meta = _load_mailbox_metadata()
     candidates = []
+    sent_at: dict[str, list[str]] = {}   # 相手 → 自分がその相手に書いた日時(ファイル名の YYYYMMDD_HHMM)。お願いに返事したかを見る
     for f in sorted(mailbox_dir.iterdir(), reverse=True):
         if not f.name.endswith(".md"):
             continue
+        m_sent = _MAIL_FILE_RE.match(f.name)
+        if m_sent and m_sent.group(1) == username:
+            sent_at.setdefault(m_sent.group(2), []).append(m_sent.group(3) + m_sent.group(4))
         info = _parse_mail_meta_from_file(f, username)
         if info is None:
             continue
@@ -7486,11 +7511,14 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
             continue
         if filter == "starred" and not meta["starred"]:
             continue
+        if filter == "asks" and (meta["archived"] or mt.parse(_read_mail_cached(f)[:200])[0] != mt.ASK):
+            continue
         info["archived"] = meta["archived"]
         info["starred"] = meta["starred"]
         info["read_by"] = meta.get("read_by", [])
         info["read"] = is_read
         info["stamp"] = (meta.get("stamps") or {}).get(username, "")
+        info["mark"] = (meta.get("marks") or {}).get(username, "")
         info["_meta"] = meta
         candidates.append(info)
     candidates.sort(key=lambda m: m["date"], reverse=True)
@@ -7498,15 +7526,24 @@ def api_mailbox(filter: str = "inbox", offset: int = 0, limit: int = 100, reques
     # Phase2: 該当ページ分だけコンテンツ読み込み
     items = []
     for c in candidates[offset:offset + limit]:
-        content = _read_mail_cached(c["_file"])
+        tag, content = mt.parse(_read_mail_cached(c["_file"]))   # 書いた人の印は本文の 1 行目。画面には印として出し、本文からは外す
         sender = c["sender"]
         if not sender:
             lines = [l.strip() for l in content.strip().splitlines() if l.strip()]
             if lines:
                 sender = lines[-1]
+        m_name = _MAIL_FILE_RE.match(c["filename"])
+        pending = bool(
+            tag == mt.ASK and m_name and c["mark"] != "返事した"
+            and not any(isinstance(r, dict) and r.get("by") == username for r in c["_meta"].get("replies") or [])
+            and not any(t >= m_name.group(3) + m_name.group(4) for t in sent_at.get(m_name.group(1), []))
+        )
         items.append({
             "filename": c["filename"],
             "content": content,
+            "tag": tag or "",
+            "mark": c["mark"],
+            "pending": pending,
             "date": c["date"],
             "sender": sender,
             "sender_id": c.get("sender_id", ""),
@@ -7764,6 +7801,16 @@ def api_mailbox_update_meta(filename: str, body: MailMetaUpdate, request: Reques
             if username not in (current.get("read_by") or []):   # スタンプを付けたら、読んだことにもする
                 current["read_by"] = (current.get("read_by") or []) + [username]
         current["stamps"] = stamps
+    if body.mark is not None:
+        mt = _mail_tags()
+        mark = mt.ALIASES.get(body.mark, body.mark) if body.mark else ""
+        if mark and mark not in mt.MARKS:
+            return JSONResponse({"error": "その印はありません"}, status_code=400)
+        username = _get_username(request) or "arisan"
+        marks = {k: v for k, v in (current.get("marks") or {}).items() if k != username}
+        if mark:
+            marks[username] = mark
+        current["marks"] = marks
     mails[safe_name] = current
     _save_mailbox_metadata(data)
     return current
@@ -8128,6 +8175,11 @@ HTML = """<!DOCTYPE html>
     .mail-item.is-unread .mail-unread-mark { display: inline-block; }
     .mail-read-btn { background: none; border: 1px solid #ccc; border-radius: 10px; font-size: 0.7rem; padding: 2px 8px; cursor: pointer; color: #666; white-space: nowrap; }
     .mail-stamps { display: flex; gap: 4px; margin-top: 8px; }
+    /* 手紙の印(2026-11-16、ぷちたちと決めた): 書いた人の印はチップで、自分の印は小さな選択で。別々に出す(上書きしない) */
+    .mail-tag { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600; background: rgba(255,255,255,0.7); color: #666; vertical-align: middle; }
+    .mail-tag.is-ask { background: #fff0e8; color: #c0623a; }
+    .mail-tag.is-pending { background: #ffe3d6; color: #b5461d; }
+    .mail-mark { font-size: 0.7rem; color: #888; border: 1px solid #e0e0e0; border-radius: 8px; background: rgba(255,255,255,0.6); padding: 1px 4px; }
     .mail-stamp { width: 34px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 15px; background: rgba(255,255,255,0.6); font-size: 1rem; line-height: 1; cursor: pointer; opacity: 0.45; filter: grayscale(0.6); }
     .mail-stamp:hover { opacity: 0.8; }
     .mail-stamp.on { opacity: 1; filter: none; border-color: #e0a0a0; background: #fff; }
@@ -8402,6 +8454,15 @@ HTML = """<!DOCTYPE html>
         </div>
       </div>
       <div style="margin-bottom:10px">
+        <label style="font-size:0.85rem;color:#888;display:block;margin-bottom:6px">印（省略可）</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;font-size:0.9rem">
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="mailTag" value="" checked> ただの手紙</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="返事がほしい"><input type="radio" name="mailTag" value="お願い"> 🙏 お願い</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="読めば済む"><input type="radio" name="mailTag" value="おしらせ"> 📣 おしらせ</label>
+          <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="返事はあってもなくてもいい"><input type="radio" name="mailTag" value="おしゃべり"> 💬 おしゃべり</label>
+        </div>
+      </div>
+      <div style="margin-bottom:10px">
         <label style="font-size:0.85rem;color:#888;display:block;margin-bottom:4px">件名（省略可）</label>
         <input id="mailSubject" type="text" placeholder="件名..." style="width:100%;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:1rem;box-sizing:border-box">
       </div>
@@ -8607,6 +8668,7 @@ HTML = """<!DOCTYPE html>
           <button class="mailbox-tab active" id="mailTabInbox" onclick="switchMailTab('inbox')">受信</button>
           <button class="mailbox-tab" id="mailTabUnread" onclick="switchMailTab('unread')">未読<span id="mailUnreadCount"></span></button>
           <button class="mailbox-tab" id="mailTabStarred" onclick="switchMailTab('starred')">⭐</button>
+          <button class="mailbox-tab" id="mailTabAsks" onclick="switchMailTab('asks')" title="「お願い」の印の手紙(返事がほしい手紙)">お願い</button>
           <button class="mailbox-tab" id="mailTabArchived" onclick="switchMailTab('archived')">📦</button>
         </div>
         <button class="mail-read-all" id="mailReadAllBtn" onclick="markAllMailRead()">ぜんぶ既読にする</button>
@@ -10167,7 +10229,7 @@ HTML = """<!DOCTYPE html>
     function switchMailTab(filter) {
       currentMailTab = filter;
       document.querySelectorAll(".mailbox-tab").forEach(t => t.classList.remove("active"));
-      const tabId = {inbox:"mailTabInbox", unread:"mailTabUnread", starred:"mailTabStarred", archived:"mailTabArchived"}[filter];
+      const tabId = {inbox:"mailTabInbox", unread:"mailTabUnread", starred:"mailTabStarred", asks:"mailTabAsks", archived:"mailTabArchived"}[filter];
       document.getElementById(tabId).classList.add("active");
       loadMailbox();
     }
@@ -10188,9 +10250,12 @@ HTML = """<!DOCTYPE html>
       const sc = ((window._allChars || characters).find(c => c.id === m.sender_id) || {}).color || m.sender_color;
       const itemStyle = sc ? `background:${lighten(sc, 0.86)};border-color:${lighten(sc, 0.72)}` : "";
       const senderStyle = sc ? `color:${readableText(sc)}` : "";
+      // 書いた人の印(お願い / おしらせ / おしゃべり)。お願いにまだ返事していなければ「返事待ち」
+      const tagHtml = m.tag ? `<span class="mail-tag${m.tag === "お願い" ? " is-ask" : ""}" title="${(MAIL_TAG_HELP[m.tag] || "").replace(/"/g,"&quot;")}">${MAIL_TAG_ICON[m.tag] || ""}${m.tag}</span>${m.pending ? `<span class="mail-tag is-pending" title="まだ返事していない">返事待ち</span>` : ""}` : "";
+      const markHtml = `<select class="mail-mark" title="わたしの印(書いた人の印は変わらない)" onchange="setMailMark('${fn}',this.value)"><option value="">印なし</option>${MAIL_MARKS.map(k => `<option value="${k}"${m.mark === k ? " selected" : ""}>${k}</option>`).join("")}</select>`;
       return `<div class="mail-item${m.read ? "" : " is-unread"}" data-filename="${m.filename.replace(/"/g,'&quot;')}" style="${itemStyle}">
         <div class="mail-header">
-          <span><span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span><span class="mail-unread-mark">未読</span></span>
+          <span><span class="mail-sender" style="${senderStyle}">${m.sender.replace(/</g,"&lt;")}</span>${tagHtml}<span class="mail-unread-mark">未読</span></span>
           <div class="mail-actions">
             <button class="mail-read-btn" onclick="toggleMailRead('${fn}',this)">${m.read ? "未読に戻す" : "既読にする"}</button>
             <button class="mail-action-btn ${starCls}" title="スター" onclick="toggleStar('${fn}',this)">⭐</button>
@@ -10198,7 +10263,7 @@ HTML = """<!DOCTYPE html>
             ${m.sender_id && canMailTo(m.sender_id) ? `<button class="mail-action-btn" title="${m.sender.replace(/"/g,"&quot;")}に返信" onclick="toggleReply(this)">↩️</button>` : ""}
           </div>
         </div>
-        <div style="font-size:0.7rem;color:#aaa;margin-bottom:4px;">${m.date}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:0.7rem;color:#aaa;margin-bottom:4px;"><span>${m.date}</span>${markHtml}</div>
         <div class="mail-body${bodyMd === null ? "" : " md"}">${bodyMd === null ? bodyText : bodyMd}</div>
         ${m.sender_id ? `<div class="mail-stamps">${MAIL_STAMPS.map(([e, t]) => `<button class="mail-stamp${m.stamp === e ? " on" : ""}${e === MAIL_HEART ? " is-heart" : ""}" title="${t}" onclick="toggleMailStamp('${fn}','${e}',this)">${e === MAIL_HEART ? `<span class="mail-heart" style="color:${sc || "#e57373"}">♥</span>` : e}</button>`).join("")}</div>` : ""}
         <div class="mail-replies">${(m.replies || []).map(_mailRepliedHtml).join("")}</div>
@@ -10210,6 +10275,18 @@ HTML = """<!DOCTYPE html>
           </div>
         </div>` : ""}
       </div>`;
+    }
+
+    // 手紙の印(2026-11-16、ぷちたちと決めた)。書く人が付ける 3 つ + 読んだ人だけが付ける 2 つ。印なし = ただの手紙
+    const MAIL_TAG_HELP = {"お願い": "返事がほしい", "おしらせ": "読めば済む", "おしゃべり": "返事はあってもなくてもいい"};
+    const MAIL_TAG_ICON = {"お願い": "🙏 ", "おしらせ": "📣 ", "おしゃべり": "💬 "};
+    const MAIL_MARKS = ["お願い", "おしらせ", "おしゃべり", "あとで", "返事した"];
+    async function setMailMark(filename, mark) {
+      try {
+        await fetch(`/api/mailbox/${encodeURIComponent(filename)}/meta`, {
+          method: "PATCH", headers: {"Content-Type": "application/json"}, body: JSON.stringify({mark})
+        });
+      } catch(e) {}
     }
 
     // この手紙に自分が書いた返事(↩️ から送った分)。本文の下に出す(2026-11-14 ありさん)
@@ -10299,7 +10376,7 @@ HTML = """<!DOCTYPE html>
         _mailboxOffset = data.items.length;
         _showMailUnread(data.unread || 0);
         if (!data.items.length) {
-          const labels = {inbox:"メールはありません", unread:"未読のメールはありません", starred:"スター付きメールはありません", archived:"アーカイブはありません"};
+          const labels = {inbox:"メールはありません", unread:"未読のメールはありません", starred:"スター付きメールはありません", asks:"「お願い」の手紙はありません", archived:"アーカイブはありません"};
           body.innerHTML = `<div class='empty'>${labels[currentMailTab] || "メールはありません"}</div>`;
           return;
         }
@@ -10529,6 +10606,7 @@ HTML = """<!DOCTYPE html>
       const toIds = [...document.querySelectorAll(".mail-to-check:checked")].map(el => el.value);
       const subject = document.getElementById("mailSubject").value.trim();
       const body = document.getElementById("mailBody").value.trim();
+      const tag = (document.querySelector('input[name="mailTag"]:checked') || {}).value || "";
       if (toIds.length === 0) { document.getElementById("mailResult").textContent = "宛先を選んでください"; document.getElementById("mailResult").style.color = "#e57373"; return; }
       if (!body) { document.getElementById("mailResult").textContent = "本文を入力してください"; document.getElementById("mailResult").style.color = "#e57373"; return; }
       const btn = document.getElementById("mailSendBtn");
@@ -10536,11 +10614,12 @@ HTML = """<!DOCTYPE html>
       try {
         const res = await fetch("/api/mail/send", {
           method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({to_ids: toIds, subject, body})
+          body: JSON.stringify({to_ids: toIds, subject, body, tag})
         });
         const data = await res.json();
         if (res.ok) {
           document.getElementById("mailResult").textContent = `✓ ${toIds.length}人に送った！`;
+          const t0 = document.querySelector('input[name="mailTag"][value=""]'); if (t0) t0.checked = true;
           document.getElementById("mailResult").style.color = "#4caf50";
           setTimeout(closeMailModal, 1200);
           document.getElementById("mailBody").value = "";
@@ -10947,6 +11026,13 @@ KANKEI_HTML = """<!DOCTYPE html>
     html.embed .top-bar { display: none; }
     .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
     .back-btn:hover { background: #f0eaf8; }
+    /* 3 ページ(図 / それぞれ / 名簿)。上の粒で切り替える(2026-11-16 ありさん) */
+    .tabs { display: flex; gap: 6px; max-width: 720px; margin: 10px auto 4px; padding: 0 16px; }
+    .tab { flex: 1; min-height: 40px; padding: 6px 8px; border: 1.5px solid #E3D6C2; border-radius: 999px; background: #fff; color: #6E625A; font: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+    .tab[aria-selected="true"] { background: #9b8ec4; border-color: #9b8ec4; color: #fff; }
+    .tab:focus-visible { outline: 3px solid #cab8d9; outline-offset: 2px; }
+    .page[hidden] { display: none; }
+    .page { padding-top: 6px; }
     #chart { max-width: 640px; width: 100%; height: auto; }
     .chart-container { display: flex; justify-content: center; max-width: 660px; margin: 10px auto 14px; padding: 6px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
     @media (max-width: 700px) { .chart-container { margin-left: 12px; margin-right: 12px; } }
@@ -11020,15 +11106,42 @@ KANKEI_HTML = """<!DOCTYPE html>
     <a href="/" class="back-btn">← もどる</a>
     <h1>🤝 関係</h1>
   </div>
+  <div class="tabs" role="tablist" aria-label="関係のページ">
+    <button class="tab" role="tab" id="tab-chart" data-page="chart" aria-controls="page-chart">🕸 図</button>
+    <button class="tab" role="tab" id="tab-each" data-page="each" aria-controls="page-each">💬 それぞれ</button>
+    <button class="tab" role="tab" id="tab-known" data-page="known" aria-controls="page-known">📇 名簿</button>
+  </div>
+  <div class="page" id="page-chart" role="tabpanel" aria-labelledby="tab-chart">
   <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
   <div class="tooltip" id="tip"></div>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="detail-panel" id="detailPanel"></div>
   </div>
-  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは、下に文字で。</div>
-  <div class="cards" id="cards"></div>
-  <div class="cards" id="known" style="display:none"></div>
+  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。顔を押すと、その子の気持ち。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは「それぞれ」に文字で。</div>
+  </div>
+  <div class="page" id="page-each" role="tabpanel" aria-labelledby="tab-each" hidden>
+    <div class="cards" id="cards"></div>
+  </div>
+  <div class="page" id="page-known" role="tabpanel" aria-labelledby="tab-known" hidden>
+    <div class="cards" id="known"><div class="chart-hint" style="margin:0">よその家のぷちとは、まだ手紙が通っていない。1 通でも通った子が、ここに並ぶ。</div></div>
+  </div>
   <script>
+    // 3 ページの切り替え。さいごに見ていたページを覚えておく(この端末だけ)
+    const PAGES = ["chart", "each", "known"];
+    function showPage(name, remember) {
+      if (!PAGES.includes(name)) name = "chart";
+      for (const p of PAGES) {
+        document.getElementById("page-" + p).hidden = p !== name;
+        document.getElementById("tab-" + p).setAttribute("aria-selected", p === name ? "true" : "false");
+      }
+      if (remember) { try { localStorage.setItem("relations_page", name); } catch (e) {} }
+    }
+    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => showPage(b.dataset.page, true)));
+    {
+      let first = location.hash.slice(1);
+      if (!PAGES.includes(first)) { try { first = localStorage.getItem("relations_page"); } catch (e) {} }
+      showPage(first, false);
+    }
     // よその家のぷちの名簿: 手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書き、一言はその子が書く
     async function loadKnown() {
       const box = document.getElementById("known");
@@ -11047,7 +11160,6 @@ KANKEI_HTML = """<!DOCTYPE html>
               ${r.last ? `<div class="notes" style="${r.faded ? "opacity:0.55" : ""}">さいごにあったこと(${t(day(r.last_at))}${r.faded ? "、古い" : ""}): ${t(r.last)}</div>` : ""}
               <div class="likes" style="margin-top:4px">${[r.last_in ? `来た ${t(day(r.last_in))}` : "", r.last_out ? `送った ${t(day(r.last_out))}` : "", wait[r.waiting] || ""].filter(Boolean).join(" ・ ")}</div>
             </div>`).join("") + `</div>`).join("");
-      box.style.display = "";
     }
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
