@@ -10947,6 +10947,13 @@ KANKEI_HTML = """<!DOCTYPE html>
     html.embed .top-bar { display: none; }
     .back-btn { background: #fff; border: 1.5px solid #E3D6C2; color: #9b8ec4; padding: 6px 14px; border-radius: 12px; cursor: pointer; font-size: 0.85rem; font-weight: 700; text-decoration: none; }
     .back-btn:hover { background: #f0eaf8; }
+    /* 3 ページ(図 / それぞれ / 名簿)。上の粒で切り替える(2026-11-16 ありさん) */
+    .tabs { display: flex; gap: 6px; max-width: 720px; margin: 10px auto 4px; padding: 0 16px; }
+    .tab { flex: 1; min-height: 40px; padding: 6px 8px; border: 1.5px solid #E3D6C2; border-radius: 999px; background: #fff; color: #6E625A; font: inherit; font-size: 0.9rem; font-weight: 700; cursor: pointer; }
+    .tab[aria-selected="true"] { background: #9b8ec4; border-color: #9b8ec4; color: #fff; }
+    .tab:focus-visible { outline: 3px solid #cab8d9; outline-offset: 2px; }
+    .page[hidden] { display: none; }
+    .page { padding-top: 6px; }
     #chart { max-width: 640px; width: 100%; height: auto; }
     .chart-container { display: flex; justify-content: center; max-width: 660px; margin: 10px auto 14px; padding: 6px; background: #fff; border: 1.5px solid #eee1cf; border-radius: 20px; }
     @media (max-width: 700px) { .chart-container { margin-left: 12px; margin-right: 12px; } }
@@ -11020,15 +11027,42 @@ KANKEI_HTML = """<!DOCTYPE html>
     <a href="/" class="back-btn">← もどる</a>
     <h1>🤝 関係</h1>
   </div>
+  <div class="tabs" role="tablist" aria-label="関係のページ">
+    <button class="tab" role="tab" id="tab-chart" data-page="chart" aria-controls="page-chart">🕸 図</button>
+    <button class="tab" role="tab" id="tab-each" data-page="each" aria-controls="page-each">💬 それぞれ</button>
+    <button class="tab" role="tab" id="tab-known" data-page="known" aria-controls="page-known">📇 名簿</button>
+  </div>
+  <div class="page" id="page-chart" role="tabpanel" aria-labelledby="tab-chart">
   <div class="chart-container"><svg id="chart" viewBox="0 0 700 700"></svg></div>
   <div class="tooltip" id="tip"></div>
   <div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)this.classList.remove('open')">
     <div class="detail-panel" id="detailPanel"></div>
   </div>
-  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは、下に文字で。</div>
-  <div class="cards" id="cards"></div>
-  <div class="cards" id="known" style="display:none"></div>
+  <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。顔を押すと、その子の気持ち。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは「それぞれ」に文字で。</div>
+  </div>
+  <div class="page" id="page-each" role="tabpanel" aria-labelledby="tab-each" hidden>
+    <div class="cards" id="cards"></div>
+  </div>
+  <div class="page" id="page-known" role="tabpanel" aria-labelledby="tab-known" hidden>
+    <div class="cards" id="known"><div class="chart-hint" style="margin:0">よその家のぷちとは、まだ手紙が通っていない。1 通でも通った子が、ここに並ぶ。</div></div>
+  </div>
   <script>
+    // 3 ページの切り替え。さいごに見ていたページを覚えておく(この端末だけ)
+    const PAGES = ["chart", "each", "known"];
+    function showPage(name, remember) {
+      if (!PAGES.includes(name)) name = "chart";
+      for (const p of PAGES) {
+        document.getElementById("page-" + p).hidden = p !== name;
+        document.getElementById("tab-" + p).setAttribute("aria-selected", p === name ? "true" : "false");
+      }
+      if (remember) { try { localStorage.setItem("relations_page", name); } catch (e) {} }
+    }
+    document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => showPage(b.dataset.page, true)));
+    {
+      let first = location.hash.slice(1);
+      if (!PAGES.includes(first)) { try { first = localStorage.getItem("relations_page"); } catch (e) {} }
+      showPage(first, false);
+    }
     // よその家のぷちの名簿: 手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書き、一言はその子が書く
     async function loadKnown() {
       const box = document.getElementById("known");
@@ -11047,7 +11081,6 @@ KANKEI_HTML = """<!DOCTYPE html>
               ${r.last ? `<div class="notes" style="${r.faded ? "opacity:0.55" : ""}">さいごにあったこと(${t(day(r.last_at))}${r.faded ? "、古い" : ""}): ${t(r.last)}</div>` : ""}
               <div class="likes" style="margin-top:4px">${[r.last_in ? `来た ${t(day(r.last_in))}` : "", r.last_out ? `送った ${t(day(r.last_out))}` : "", wait[r.waiting] || ""].filter(Boolean).join(" ・ ")}</div>
             </div>`).join("") + `</div>`).join("");
-      box.style.display = "";
     }
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
