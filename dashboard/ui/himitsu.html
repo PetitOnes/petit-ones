@@ -316,13 +316,13 @@
     function block(cls, label, text) {   // 長い文は畳んで、押すと全部
       const t = String(text || "");
       const long = t.length > 320 || t.split("\n").length > 5;
-      return `<div class="g-ev ${cls}"><div class="g-label">${label}</div><pre class="g-text${long ? " g-clamp" : ""}">${esc(t)}</pre>${long ? `<button class="g-open" data-open>ぜんぶ見る ↓</button>` : ""}</div>`;
+      return `<div class="g-ev ${cls}"><div class="g-label">${label}</div>${t ? `<pre class="g-text${long ? " g-clamp" : ""}">${esc(t)}</pre>` : ""}${long ? `<button class="g-open" data-open>ぜんぶ見る ↓</button>` : ""}</div>`;
     }
     function runHtml(events) {
       if (!events.length) return `<div class="p-empty">記録が、空です</div>`;
       let last = "";
       return events.map(ev => {
-        if (ev.kind === "thinking") return block("g-think", "💭 考えたこと", ev.text);
+        if (ev.kind === "thinking") return (ev.text || "").trim() ? block("g-think", "💭 考えたこと", ev.text) : "";   // 中身が残っていない回は、出さない
         if (ev.kind === "text") { last = ev.text; return block("g-say", "💬 言ったこと", ev.text); }
         if (ev.kind === "user_text") return block("g-think", "📨 渡された文", ev.text);
         if (ev.kind === "tool_call") {
