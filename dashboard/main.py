@@ -533,7 +533,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "notebook": ("/notebook",),
     "kairanban": ("/kairanban",),
     "library": ("/library",),
-    "relations": ("/relations",),
+    "relations": ("/relations", "/api/known_petits"),   # よその家のぷちの名簿も、このページのもの
     "kankei": ("/kankei", "/api/secret_mails", "/api/mailbox/all"),   # 手紙をぜんぶ返す入口も、いっしょに閉じる
     "monitor": ("/display",),
     "terminal": ("/terminal", "/api/terminal"),
@@ -2228,6 +2228,25 @@ def api_avatar(character_id: str):
     return Response(content=data, media_type="image/png")
 
 
+
+
+@app.get("/api/known_petits")
+def api_known_petits(request: Request):
+    """よその家のぷちの名簿(scripts/known_petits.py): 子ごとに、手紙が通った相手・一言・返事待ち。手紙の本文は持っていない"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import known_petits
+    allowed = _get_allowed_characters(request)
+    out = []
+    for c in list_characters():
+        if allowed is not None and c["id"] not in allowed:
+            continue
+        rows = known_petits.rows(DATA_DIR, c["id"])
+        if rows:
+            cfg = get_char_config(c["id"])
+            out.append({"id": c["id"], "name": cfg.get("name", c["id"]), "color": cfg.get("color", "#cab8d9"), "rows": rows})
+    return {"characters": out, "fade_days": known_petits.FADE_DAYS}
 
 
 @app.get("/api/relations")
@@ -10947,7 +10966,28 @@ KANKEI_HTML = """<!DOCTYPE html>
   </div>
   <div class="chart-hint">矢印は「だれから、だれへ」。太いほど、ハートが大きいほど、近い。図は家の中だけ。くわしい気持ちと、ほかの相手への気持ちは、下に文字で。</div>
   <div class="cards" id="cards"></div>
+  <div class="cards" id="known" style="display:none"></div>
   <script>
+    // よその家のぷちの名簿: 手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書き、一言はその子が書く
+    async function loadKnown() {
+      const box = document.getElementById("known");
+      let d = {};
+      try { const r = await fetch("/api/known_petits"); if (r.ok) d = await r.json(); } catch (e) {}
+      const chars = d.characters || [];
+      if (!chars.length) return;
+      const t = v => String(v == null ? "" : v).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+      const day = v => v ? v.slice(5).replace("-", "/") : "";
+      const wait = {theirs: "📩 来ていて、まだ返事をしていない", mine: "⏳ 送って、返事を待っている"};
+      box.innerHTML = `<div class="chart-hint" style="margin:0">よその家のぷち(手紙が 1 通でも通った子)。名前・はじめて通った日・返事待ちは家が書き、一言はその子が自分で書く。手紙の中身は、ここには無い。</div>`
+        + chars.map(c => `<div class="card" style="border-top-color:${t(c.color)}"><h3><span style="color:${ink(c.color)}">${t(c.name)}</span><span class="feel-none">の名簿</span></h3>`
+          + c.rows.map(r => `<div style="padding:8px 0;border-top:1px dashed #eee1cf">
+              <div><b>${t(r.name)}</b> <span class="feel-none">@${t(r.id)}${r.first_at ? ` ・ はじめて手紙が通った日 ${t(r.first_at)}` : ""}</span></div>
+              <div class="${r.is ? "feel-text" : "feel-none"}">${r.is ? t(r.is) : "(どんな子か、まだ書いていない)"}</div>
+              ${r.last ? `<div class="notes" style="${r.faded ? "opacity:0.55" : ""}">さいごにあったこと(${t(day(r.last_at))}${r.faded ? "、古い" : ""}): ${t(r.last)}</div>` : ""}
+              <div class="likes" style="margin-top:4px">${[r.last_in ? `来た ${t(day(r.last_in))}` : "", r.last_out ? `送った ${t(day(r.last_out))}` : "", wait[r.waiting] || ""].filter(Boolean).join(" ・ ")}</div>
+            </div>`).join("") + `</div>`).join("");
+      box.style.display = "";
+    }
     // 子の色を、白い地の上で読める文字の色にする(黄色や淡い色は、こげ茶を混ぜて濃くする)
     function ink(c) { return `color-mix(in srgb, ${c || "#9b8ec4"} 55%, #3A322D)`; }
     if (new URLSearchParams(location.search).has("embed")) document.documentElement.classList.add("embed");   // トップページの中に開いたときは、題と「もどる」を出さない
@@ -11171,7 +11211,7 @@ KANKEI_HTML = """<!DOCTYPE html>
       }).join("");
     }
 
-    load();
+    load(); loadKnown();
 
   </script>
 </body>
