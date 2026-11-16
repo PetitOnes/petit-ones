@@ -24,14 +24,28 @@ SwitchBot の機体(ハブ 2・温湿度計・人感・電気)は、機体 ID �
 
 - room: いまいる部屋(どの印も見えなければ null)。since はその部屋になった時刻、at は最後の報告
 - 部屋は分かるが、ソファか机かまでは電波では分からない
+- net: 家のネットワークにいるか({"home": true/false, "at": "..."})。スマホの報告が PC にどう届いたかで見る(下)
+
+家の印が見えないとき、お外なのか、印の無い部屋なのか(2026-11-16 ありさん「スマホの Wi-Fi が家じゃないときに、外だよってわかるように」):
+スマホの報告は Tailscale を通って PC に届く。そのとき PC から見たスマホの実際のアドレス(tailscale status の CurAddr)が、
+PC と同じネットワーク(家の Wi-Fi)なら「家にいる」、ちがう(ほかのスマホのテザリング・出先の Wi-Fi・モバイル回線)なら「家の Wi-Fi にいない」。
+中継(DERP)ごしで実際のアドレスが分からないときは、どちらとも言わない。アプリは変えなくてよい。
+
+- 印が見える                          → 家(部屋)。家でモバイル回線のままでも、印が見えていれば家
+- 印が見えない + 家の Wi-Fi にいる     → 家(印の無い部屋)
+- 印が見えない + 家の Wi-Fi にいない   → お外
+- 印が見えない + 分からない            → 家の印が見えない(お外か、印の無い部屋)
 
 ぷちには毎回は渡さない(2026-11-14 ありさん「伝わるってより、見に行けば分かる、にしたい」)。
 「見に行けるもの」の入口に `phone_place.py line` を置き、部屋が変わった・帰ってきた・出たときだけ 1 行(changes --mark):
 
     line:     ありさんのスマホ: 家(あり部屋)
+              ありさんのスマホ: 家(印の無い部屋。家の Wi-Fi にいる)
+              ありさんのスマホ: お外(家の印も、家の Wi-Fi も見えない)
               ありさんのスマホ: 家の印が見えない(お外か、印の無い部屋)
     changes:  ありさんのスマホ: あり部屋 → 寝室 に動いた
               ありさんのスマホ: 家(あり部屋)に戻ってきた
+              ありさんのスマホ: お外に出た(家の印も、家の Wi-Fi も見えなくなった)
               ありさんのスマホ: 家の印が見えなくなった(お外に出たか、印の無い部屋)
 
 伝えたことは characters/<id>/state/phone_told.json に覚える(はじめての回は覚えるだけで何も言わない)。
@@ -46,10 +60,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import secrets
+import subprocess
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -59,6 +76,9 @@ DEFAULTS = {"hysteresis_db": 6, "fresh_s": 240, "window": 3, "min_rssi": -95}
 SILENT = -100          # 見えていない部屋の電波の強さ、として扱う値
 INTERVAL_S = 30        # スマホが報告する間隔(アプリに伝える)
 HISTORY_MAX = 10
+OUT, HOME = "@out", "@home"   # 伝えた覚え(phone_told.json)での「お外」「家(印の無い部屋)」。部屋の名前とぶつからない形
+TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+SKIP_IF = ("lo", "tailscale", "docker", "br-", "veth", "virbr")   # 家のネットワークではないインターフェース
 
 
 def data_dir() -> Path:
@@ -181,8 +201,84 @@ def decide(cur_room: str | None, levels: dict[str, int], hysteresis_db: float) -
     return best
 
 
-def report(user: str, seen: dict, base: Path | None = None, now: datetime | None = None) -> dict:
-    """スマホからの 1 回の報告を取り込み、その人の覚え書きを返す"""
+def local_nets(addrs: list) -> list:
+    """`ip -j addr` の結果 → この PC がいるネットワーク(家の Wi-Fi / 有線)の一覧"""
+    out = []
+    for i in addrs or []:
+        if str(i.get("ifname", "")).startswith(SKIP_IF):
+            continue
+        for a in i.get("addr_info") or []:
+            if a.get("scope") != "global":
+                continue
+            try:
+                out.append(ipaddress.ip_interface(f"{a['local']}/{a['prefixlen']}").network)
+            except (KeyError, ValueError):
+                continue
+    return out
+
+
+def _ip(text: object):
+    """"192.168.1.5:41641" / "[2400:…]:40321" / "192.168.1.5" → アドレス。読めなければ None"""
+    t = str(text or "").strip()
+    if t.startswith("["):
+        t = t[1:].split("]")[0]
+    elif t.count(":") == 1:
+        t = t.split(":")[0]
+    try:
+        return ipaddress.ip_address(t)
+    except ValueError:
+        return None
+
+
+def on_home_net(client_host: object, status: dict, nets: list) -> bool | None:
+    """報告を送ってきた相手が、PC と同じネットワークにいるか。True / False / 分からない(None)
+
+    client_host は報告の送り元。家の中のアドレスならそのまま True。Tailscale のアドレスなら、
+    tailscale status(status)でその相手の実際のアドレス(CurAddr)を見る。中継ごしで空なら None
+    """
+    def inside(ip) -> bool:
+        return any(ip.version == n.version and ip in n for n in nets)
+
+    ip = _ip(client_host)
+    if ip is None or not nets:
+        return None
+    if inside(ip):
+        return True
+    if not any(ip.version == n.version and ip in n for n in TAILNET):
+        return None   # 自分自身(プロキシごし)など。見分けられない
+    for peer in ((status or {}).get("Peer") or {}).values():
+        if any(_ip(a) == ip for a in peer.get("TailscaleIPs") or []):
+            cur = _ip(peer.get("CurAddr"))
+            return None if cur is None else inside(cur)
+    return None
+
+
+_cache: dict = {}
+
+
+def _run_json(key: str, cmd: list[str], ttl: float):
+    """コマンドの JSON 出力。ttl 秒は覚えておく。動かなければ None"""
+    hit = _cache.get(key)
+    if hit and time.monotonic() - hit[0] < ttl:
+        return hit[1]
+    try:
+        val = json.loads(subprocess.run(cmd, capture_output=True, text=True, timeout=5, check=True).stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        val = None
+    _cache[key] = (time.monotonic(), val)
+    return val
+
+
+def home_net(client_host: object) -> bool | None:
+    """いまの報告の送り元が、家のネットワークにいるか(PC の ip と tailscale に聞く)"""
+    nets = local_nets(_run_json("addr", ["ip", "-j", "addr"], 300) or [])
+    if not nets:
+        return None
+    return on_home_net(client_host, _run_json("ts", ["tailscale", "status", "--json"], 20) or {}, nets)
+
+
+def report(user: str, seen: dict, base: Path | None = None, now: datetime | None = None, home: bool | None = None) -> dict:
+    """スマホからの 1 回の報告を取り込み、その人の覚え書きを返す。home は「家のネットワークにいるか」(分からなければ None)"""
     now = now or datetime.now()
     cfg = config(base)
     stamp = now.replace(microsecond=0).isoformat()
@@ -197,6 +293,9 @@ def report(user: str, seen: dict, base: Path | None = None, now: datetime | None
     room = decide(cur.get("room"), levels, cfg["hysteresis_db"])
     since = cur.get("since") if room == cur.get("room") and cur.get("since") else stamp
     d[user] = {"room": room, "since": since, "at": stamp, "levels": levels, "history": history}
+    net = {"home": bool(home), "at": stamp} if home is not None else cur.get("net")   # 分からない回は、前のを持ち越す(古くなれば使わない)
+    if isinstance(net, dict):
+        d[user]["net"] = net
     _save(base, d)
     return d[user]
 
@@ -209,14 +308,21 @@ def _dt(value: object) -> datetime | None:
 
 
 def where(user: str, base: Path | None = None, now: datetime | None = None) -> dict | None:
-    """その人のスマホの居場所 {"room", "since", "at", "label"}。報告が古い・無いなら None"""
+    """その人のスマホの居場所 {"room", "since", "at", "label", "home"}。報告が古い・無いなら None。
+
+    home は家のネットワークにいるか(True / False)。分からない・古いなら None
+    """
     now = now or datetime.now()
     cur = _load(base).get(user)
     at = _dt(cur.get("at")) if isinstance(cur, dict) else None
-    if at is None or now - at > timedelta(seconds=config(base)["fresh_s"]):
+    fresh = timedelta(seconds=config(base)["fresh_s"])
+    if at is None or now - at > fresh:
         return None
     label = (config(base)["phones"].get(user) or {}).get("label") or f"{user} のスマホ"
-    return {"room": cur.get("room"), "since": cur.get("since") or "", "at": cur.get("at"), "label": label}
+    net = cur.get("net") if isinstance(cur.get("net"), dict) else {}
+    net_at = _dt(net.get("at"))
+    home = bool(net.get("home")) if net_at and now - net_at <= fresh else None
+    return {"room": cur.get("room"), "since": cur.get("since") or "", "at": cur.get("at"), "label": label, "home": home}
 
 
 def _people_label(base: Path | None = None):
@@ -229,7 +335,39 @@ def _people_label(base: Path | None = None):
 
 
 def words(w: dict) -> str:
-    return f"家({w['room']})" if w.get("room") else "家の印が見えない(お外か、印の無い部屋)"
+    if w.get("room"):
+        return f"家({w['room']})"
+    if w.get("home") is True:
+        return "家(印の無い部屋。家の Wi-Fi にいる)"
+    if w.get("home") is False:
+        return "お外(家の印も、家の Wi-Fi も見えない)"
+    return "家の印が見えない(お外か、印の無い部屋)"
+
+
+def _told_key(w: dict) -> str | None:
+    """伝えた覚えに書く形: 部屋の名前 / OUT / HOME / 分からない(None)"""
+    if w.get("room"):
+        return w["room"]
+    return {True: HOME, False: OUT}.get(w.get("home"))
+
+
+def _moved(name: str, old: str | None, new: str | None) -> str:
+    """前に伝えた居場所 old から new に変わったときの 1 行。言うほどでなければ ""
+
+    「分からない」と「お外」「印の無い部屋」のあいだは、見分けがついた・つかなくなっただけなので言わない
+    """
+    old_room = old if old not in (None, OUT, HOME) else None
+    if new not in (None, OUT, HOME):
+        if old_room:
+            return f"{name}: {old_room} → {new} に動いた"
+        return f"{name}: {new} に動いた" if old == HOME else f"{name}: 家({new})に戻ってきた"
+    if new == OUT:
+        return f"{name}: お外に出た(家の印も、家の Wi-Fi も見えなくなった)" if old_room or old == HOME else ""
+    if new == HOME:
+        if old_room:
+            return f"{name}: {old_room} から、印の無い部屋に動いた"
+        return f"{name}: 家に戻ってきた(印の無い部屋)" if old == OUT else ""
+    return f"{name}: 家の印が見えなくなった(お外に出たか、印の無い部屋)" if old_room else ""
 
 
 def lines(base: Path | None = None, label=lambda u: u, now: datetime | None = None) -> list[str]:
@@ -260,16 +398,15 @@ def change_line(base: Path | None, character_id: str, mark: bool = False, now: d
         if w is None:
             continue
         name = (p.get("label") or f"{user} のスマホ")
-        room = w.get("room")
-        if not first and user in told and told[user] != room:
-            old = told[user]
-            if room and old:
-                lines_out.append(f"{name}: {old} → {room} に動いた")
-            elif room:
-                lines_out.append(f"{name}: 家({room})に戻ってきた")
-            else:
-                lines_out.append(f"{name}: 家の印が見えなくなった(お外に出たか、印の無い部屋)")
-        told[user] = room
+        new = _told_key(w)
+        old = told.get(user)
+        if new is None and old in (OUT, HOME):
+            continue   # 見分けがつかなくなっただけ。前に伝えたまま(あとで「帰ってきた」を言えるように)
+        if not first and user in told and old != new:
+            line = _moved(name, old, new)
+            if line:
+                lines_out.append(line)
+        told[user] = new
     if mark:
         told_path.parent.mkdir(parents=True, exist_ok=True)
         told_path.write_text(json.dumps(told, ensure_ascii=False), encoding="utf-8")

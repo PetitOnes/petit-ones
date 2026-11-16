@@ -103,3 +103,70 @@ def test_change_line_only_when_moved(tmp_path):
     assert pp.change_line(base, "puchiko", mark=True, now=t) == "ありさんのスマホ: 家(あり部屋)に戻ってきた"
     # 報告が古くなったら、分からないので何も言わず、覚えも変えない
     assert pp.change_line(base, "puchiko", mark=True, now=t + timedelta(seconds=600)) == ""
+
+
+NETS = pp.local_nets([
+    {"ifname": "lo", "addr_info": [{"local": "127.0.0.1", "prefixlen": 8, "scope": "host"}]},
+    {"ifname": "wlan0", "addr_info": [{"local": "192.168.1.10", "prefixlen": 24, "scope": "global"},
+                                      {"local": "2001:db8:1:2::10", "prefixlen": 64, "scope": "global"},
+                                      {"local": "fe80::1", "prefixlen": 64, "scope": "link"}]},
+    {"ifname": "tailscale0", "addr_info": [{"local": "100.64.0.1", "prefixlen": 32, "scope": "global"}]},
+    {"ifname": "docker0", "addr_info": [{"local": "172.17.0.1", "prefixlen": 16, "scope": "global"}]},
+])
+
+
+def _status(cur: str) -> dict:
+    return {"Peer": {"k1": {"TailscaleIPs": ["100.64.0.9", "fd7a:115c:a1e0::9"], "CurAddr": cur},
+                     "k2": {"TailscaleIPs": ["100.64.0.8"], "CurAddr": "192.168.1.77:41641"}}}
+
+
+def test_on_home_net():
+    assert [str(n) for n in NETS] == ["192.168.1.0/24", "2001:db8:1:2::/64"]   # lo・tailscale・docker は家のネットワークに数えない
+    assert pp.on_home_net("192.168.1.23", {}, NETS) is True                     # 家の中から直に届いた
+    assert pp.on_home_net("100.64.0.9", _status("192.168.1.23:41641"), NETS) is True
+    assert pp.on_home_net("100.64.0.9", _status("[2001:db8:1:2:aa::5]:40321"), NETS) is True
+    assert pp.on_home_net("100.64.0.9", _status("[2001:db8:9:9::5]:40321"), NETS) is False   # テザリング・出先
+    assert pp.on_home_net("100.64.0.9", _status("203.0.113.5:1234"), NETS) is False
+    assert pp.on_home_net("100.64.0.9", _status(""), NETS) is None              # 中継ごし。分からない
+    assert pp.on_home_net("100.64.0.7", _status(""), NETS) is None              # 知らない相手
+    assert pp.on_home_net("127.0.0.1", _status(""), NETS) is None               # プロキシごし
+    assert pp.on_home_net("100.64.0.9", _status("192.168.1.23:41641"), []) is None
+    assert pp.on_home_net(None, {}, NETS) is None
+
+
+def test_out_or_room_without_beacon(tmp_path):
+    base = _house(tmp_path)
+    label = lambda u: {"arisan": "ありさん"}.get(u, u)  # noqa: E731
+    # 印が見えていれば、家の Wi-Fi でなくても家
+    pp.report("arisan", {"DFE455C969D7": -60}, base, T, home=False)
+    assert pp.lines(base, label, T) == ["ありさんのスマホ: 家(あり部屋)"]
+    assert pp.change_line(base, "puchiko", mark=True, now=T) == ""   # はじめての回は覚えるだけ
+    # 印が見えなくなって、家の Wi-Fi にもいない → お外
+    for i in range(1, 4):
+        pp.report("arisan", {}, base, T + timedelta(seconds=30 * i), home=False)
+    t = T + timedelta(seconds=90)
+    assert pp.where("arisan", base, t)["home"] is False
+    assert pp.lines(base, label, t) == ["ありさんのスマホ: お外(家の印も、家の Wi-Fi も見えない)"]
+    assert pp.change_line(base, "puchiko", mark=True, now=t) == "ありさんのスマホ: お外に出た(家の印も、家の Wi-Fi も見えなくなった)"
+    # 中継ごしで分からない回は、前のを持ち越す。古くなれば「分からない」に戻るが、ぷちには言い直さない
+    pp.report("arisan", {}, base, t + timedelta(seconds=30), home=None)
+    assert pp.where("arisan", base, t + timedelta(seconds=30))["home"] is False
+    t2 = t + timedelta(seconds=600)
+    pp.report("arisan", {}, base, t2, home=None)
+    assert pp.where("arisan", base, t2)["home"] is None
+    assert pp.lines(base, label, t2) == ["ありさんのスマホ: 家の印が見えない(お外か、印の無い部屋)"]
+    assert pp.change_line(base, "puchiko", mark=True, now=t2) == ""
+    # 家の Wi-Fi に戻った(印はまだ見えない部屋)
+    pp.report("arisan", {}, base, t2 + timedelta(seconds=30), home=True)
+    t3 = t2 + timedelta(seconds=30)
+    assert pp.lines(base, label, t3) == ["ありさんのスマホ: 家(印の無い部屋。家の Wi-Fi にいる)"]
+    assert pp.change_line(base, "puchiko", mark=True, now=t3) == "ありさんのスマホ: 家に戻ってきた(印の無い部屋)"
+    # 印のある部屋へ
+    for i in range(1, 4):
+        pp.report("arisan", {"70041D7E07AE": -50}, base, t3 + timedelta(seconds=30 * i), home=True)
+    t4 = t3 + timedelta(seconds=90)
+    assert pp.change_line(base, "puchiko", mark=True, now=t4) == "ありさんのスマホ: 寝室 に動いた"
+    # 印の無い部屋へ(家の Wi-Fi のまま)
+    for i in range(1, 4):
+        pp.report("arisan", {}, base, t4 + timedelta(seconds=30 * i), home=True)
+    assert pp.change_line(base, "puchiko", mark=True, now=t4 + timedelta(seconds=90)) == "ありさんのスマホ: 寝室 から、印の無い部屋に動いた"
