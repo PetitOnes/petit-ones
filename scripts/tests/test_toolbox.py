@@ -130,10 +130,10 @@ def test_describe_with_fake_server(tmp_path):
         "    elif m.get('id')==2: print(json.dumps({'jsonrpc':'2.0','id':2,'result':{'tools':[{'name':'remember','description':'覚える。\\n長い説明。','inputSchema':{'properties':{'content':{'description':'中身'}}}}]}}),flush=True)\n",
         encoding="utf-8")
     cfg = tmp_path / "mcp.json"
-    cfg.write_text(json.dumps({"mcpServers": {"memory": {"command": sys.executable, "args": [str(fake)]}, "dead": {"command": sys.executable, "args": ["-c", "pass"]}}}), encoding="utf-8")
+    cfg.write_text(json.dumps({"mcpServers": {"memory": {"command": sys.executable, "args": [str(fake)]}, "dead": {"command": sys.executable, "args": ["-c", "pass"]}, "missing": {"command": "no-such-command-xyz"}}}), encoding="utf-8")
     (tmp_path / "scripts").mkdir(); (tmp_path / "scripts" / "sky.py").write_text('"""空のこと。\n\n月と節気。"""\n', encoding="utf-8")
     r = tb.describe(tmp_path, cfg, tmp_path, timeout=5)
-    assert r["done"] == ["memory"] and r["failed"] == ["dead"]
+    assert r["done"] == ["memory"] and r["failed"] == ["dead", "missing"]   # 立ち上がらない部品も「つながらなかった」
     assert r["tools"]["memory:remember"]["description"].startswith("覚える。") and r["tools"]["memory:remember"]["params"] == [{"name": "content", "desc": "中身"}]
     assert r["tools"]["script:sky"]["description"].startswith("空のこと。")
     assert tb.descriptions(tmp_path)["tools"]["memory:remember"]["server"] == "memory"
