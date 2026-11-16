@@ -121,7 +121,7 @@
     function reqRow(r) {
       const b = bodies.find(x => x.id === r.who) || { name: r.who }, it = library.find(x => x.name === r.name) || { name: r.name };
       return `<div class="o-sound" data-req="${esc(r.id)}">
-        <div class="o-sound-main">${dot(b)}<b>${esc(b.name)}</b>: ${esc(it.title || it.name)}${secs(it.seconds) ? `(${secs(it.seconds)})` : ""}
+        <div class="o-sound-main">${dot(b)} <b>${esc(b.name)}</b>: ${esc(it.title || it.name)}${secs(it.seconds) ? `(${secs(it.seconds)})` : ""}
           ${r.why ? `<div class="o-sound-desc">「${esc(r.why)}」</div>` : ""}
           <div class="o-sound-sub">${esc((r.at || "").replace("T", " "))}</div></div>
         <button class="a-btn a-btn--sub a-btn--s" data-listen="${esc(r.name)}">▶ 聞く</button>
