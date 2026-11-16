@@ -43,6 +43,22 @@ def test_usage_counts_and_shelves(tmp_path):
     assert any(t["key"] == "memory:recall_divergent" and t["usage"]["puchi"]["count"] == 1 for t in by_id["memory"]["tools"])
     assert [t["key"] for t in by_id["other"]["tools"]] == ["weird-server:thing"]   # 知らない鍵は「ほか」
     assert tb.usage(base, "nobody") == {}
+    # まとめた行(音量): どちらかを使えば使ったことに。許されている場の印
+    u2 = {"m5:set_volume": {"count": 2, "alone": 2, "chat": 0, "last": "2026-11-16T12:00"}}
+    sh = {s["id"]: s for s in tb.shelves_with({"puchi": u2}, {"alone": {"m5:get_volume"}, "chat": set()})}
+    vol = next(t for t in sh["body"]["tools"] if t["key"] == "m5:volume")
+    assert vol["usage"]["puchi"]["count"] == 2 and vol["allowed"] == {"alone": True, "chat": False} and vol["keys"] == ["m5:get_volume", "m5:set_volume"]
+    assert "module:get_ble_rssi" not in tb.labels() and tb.shelf_of("m5:print_text") == "printer"
+
+
+def test_allowed_alone_parses_action_script(tmp_path):
+    (tmp_path / "autonomous-action.sh").write_text(
+        'x\nALLOWED_TOOLS=$(cat <<TOOLS\nRead($ALLOWED_DIR/**),\nWebSearch,\nBash(uv run scripts/reader.py:*),\n'
+        'Bash(python3 $ALLOWED_DIR/scripts/write_mailbox.py *),\nmcp__m5-mcp__speak,\nmcp__memory__recall_divergent\nTOOLS\n)\n', encoding="utf-8")
+    got = tb.allowed_alone(tmp_path)
+    assert got == {"claude:Read", "claude:WebSearch", "script:reader", "script:write_mailbox", "m5:speak", "memory:recall_divergent"}
+    assert tb.allowed_alone(tmp_path / "nope") == set()
+    assert tb.allowed_from_names(["mcp__m5-mcp__take_snapshot", "Read"]) == {"m5:take_snapshot", "claude:Read"}
 
 
 def test_hand_once_a_day_notice_once_and_felt(tmp_path):

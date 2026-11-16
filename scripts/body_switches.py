@@ -3,11 +3,11 @@
 
 置き場所は その子の characters/<id>/config/settings.json:
 
-    {"body": {"see": true, "speak": true, "sound": true, "hear": false},
+    {"body": {"see": true, "speak": true, "sound": true, "hear": false, "erase": false},
      "rest": {"until": "2026-11-14T15:30:00", "hours": [[23, 0, 7, 0]]}}
 
 - body: ふだんのスイッチ。see = 見る(カメラ take_snapshot)、speak = 話す(声 speak)、sound = 鳴らす(効果音 play_sound・play_icon)、
-  hear = 聞く(マイク mic_start・mic_stop)。無ければ古い allow_camera / allow_sound / allow_microphone を読む(speak は true)
+  hear = 聞く(マイク mic_start・mic_stop)、erase = 消す(自分の写真 delete_album_photo・ノート delete_note。はじめは切。ありさんが許したときだけ)。無ければ古い allow_camera / allow_sound / allow_microphone を読む(speak は true)
 - rest: からだ おやすみ = 見る・話す・鳴らす を止める(聞く はそのまま)。考える・書く・調べる・手紙はいつも通り。
   until = いまから何時間(📍 の「からだ おやすみ 30 分」や設定ページのボタン)。hours = 毎日この時間(日をまたいでよい)
 - 決め方: おやすみ中なら 見る・話す・鳴らす は false。それ以外はふだんのスイッチ
@@ -32,12 +32,12 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
-SWITCHES = ("see", "speak", "sound", "hear")
-DEFAULTS = {"see": True, "speak": True, "sound": True, "hear": False}
+SWITCHES = ("see", "speak", "sound", "hear", "erase")
+DEFAULTS = {"see": True, "speak": True, "sound": True, "hear": False, "erase": False}   # erase = 自分の写真を消す(2026-11-16 ありさん: 許したときだけ)
 LEGACY = {"see": "allow_camera", "sound": "allow_sound", "hear": "allow_microphone"}
 REST_OFF = ("see", "speak", "sound")   # おやすみ中に止めるもの
-TOOLS = {"see": ["take_snapshot"], "speak": ["speak"], "sound": ["play_sound", "play_icon"], "hear": ["mic_start", "mic_stop"]}
-WORDS = {"see": "見る(カメラ)", "speak": "話す(声)", "sound": "鳴らす(効果音)", "hear": "聞く(マイク)"}
+TOOLS = {"see": ["take_snapshot"], "speak": ["speak"], "sound": ["play_sound", "play_icon"], "hear": ["mic_start", "mic_stop"], "erase": ["delete_album_photo", "mcp__notes__delete_note"]}   # 体の道具は名前だけ、ほかは mcp__ からの名前
+WORDS = {"see": "見る(カメラ)", "speak": "話す(声)", "sound": "鳴らす(効果音)", "hear": "聞く(マイク)", "erase": "消す(自分の写真・ノート)"}
 TOOL_PREFIX = "mcp__m5-mcp__"
 REST_MAX_MIN = 24 * 60
 REST_WORDS = {"until": "いまから", "hours": "毎日の時間"}
@@ -117,7 +117,7 @@ def effective(settings: dict, now: datetime | None = None) -> dict:
 
 def disallowed_tools(switches: dict[str, bool]) -> list[str]:
     """止める道具(Claude Code の --disallowedTools に渡す。skip-permissions でも効く)"""
-    return [TOOL_PREFIX + t for k in SWITCHES if not switches.get(k, True) for t in TOOLS[k]]
+    return [t if "__" in t else TOOL_PREFIX + t for k in SWITCHES if not switches.get(k, True) for t in TOOLS[k]]
 
 
 def rest_note(rest: dict | None) -> str:

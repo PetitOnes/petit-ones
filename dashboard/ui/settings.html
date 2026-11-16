@@ -252,6 +252,7 @@
         <div class="s-row"><span>🗣 話す（声）</span><label class="a-toggle"><input type="checkbox" id="bodySpeak"><span></span></label></div>
         <div class="s-row"><span>🔔 鳴らす（効果音）</span><label class="a-toggle"><input type="checkbox" id="bodySound"><span></span></label></div>
         <div class="s-row"><span>👂 聞く（マイク）</span><label class="a-toggle"><input type="checkbox" id="bodyHear"><span></span></label></div>
+        <div class="s-row"><span>🗑 消す（自分の写真・ノート）</span><label class="a-toggle"><input type="checkbox" id="bodyErase"><span></span></label></div>
       </div>
       <div class="m-card">
         <span class="a-heading">🌙 からだ おやすみ</span><a class="s-help" data-help="rest" href="/help#rest" title="使い方">？</a>
@@ -592,7 +593,7 @@
     const $ = id => document.getElementById(id);
     function renderBody(v) {
       if (!v) { $("restNow").textContent = "読めなかった"; return; }
-      for (const [k, el] of [["see", "bodySee"], ["speak", "bodySpeak"], ["sound", "bodySound"], ["hear", "bodyHear"]]) $(el).checked = !!v.base[k];
+      for (const [k, el] of [["see", "bodySee"], ["speak", "bodySpeak"], ["sound", "bodySound"], ["hear", "bodyHear"], ["erase", "bodyErase"]]) $(el).checked = !!v.base[k];
       $("restNow").innerHTML = v.rest.on ? `いま: <b>おやすみ中</b>（${esc(v.rest.until)} まで。${esc(v.rest.why)}）` : "いま: ふだん通り";
       $("restOffBtn").style.display = v.rest.on ? "" : "none";
       const h = v.rest.hours && v.rest.hours[0];
@@ -670,7 +671,7 @@
         active_hours: schedule,
         day_type_override: document.getElementById("dayTypeOverride").value || null,
         autonomous_skip: parseInt(document.getElementById("autonomousSkip").value) || 0,
-        body: {see: $("bodySee").checked, speak: $("bodySpeak").checked, sound: $("bodySound").checked, hear: $("bodyHear").checked},
+        body: {see: $("bodySee").checked, speak: $("bodySpeak").checked, sound: $("bodySound").checked, hear: $("bodyHear").checked, erase: $("bodyErase").checked},
         rest: {hours: $("restHoursOn").checked ? [[+$("restSh").value, +$("restSm").value, +$("restEh").value, +$("restEm").value]] : []},
         max_turns: Math.max(1, Math.min(200, parseInt(document.getElementById("maxTurns").value) || 20)),
         notices: Object.fromEntries([...document.querySelectorAll("[data-notice]")].map(x => [x.dataset.notice, x.checked])),

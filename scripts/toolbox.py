@@ -32,20 +32,24 @@ import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# 棚: (id, 名前, {鍵: 短い説明})
-SHELVES: list[tuple[str, str, dict[str, str]]] = [
+# 棚: (id, 名前, {鍵: 短い説明 | {"label": 説明, "keys": [まとめる鍵…]}})。まとめた行は、どれかを使えば使ったことにする
+SHELVES: list[tuple[str, str, dict[str, object]]] = [
     ("body", "体", {
         "m5:get_sensor_data": "体の感覚を読む(明るさ・近さ・傾き・電池)", "m5:take_snapshot": "写真を撮る", "m5:save_to_album": "撮ってアルバムに残す",
         "m5:look": "目を動かす", "m5:blink": "まばたき", "m5:show_face": "顔を出す", "m5:play_icon": "アイコンを出す", "m5:play_sound": "音を鳴らす",
-        "m5:print_text": "画面に文字を出す", "m5:print_image_text": "絵と文字を出す", "m5:list_album": "アルバムを見る", "m5:view_album_photo": "写真を見る",
-        "m5:delete_album_photo": "自分の写真を消す", "m5:save_tts_memo": "ボイスメモを残す", "m5:set_volume": "音量を変える", "m5:get_volume": "音量を見る",
+        "m5:list_album": "アルバムを見る", "m5:view_album_photo": "写真を見る",
+        "m5:delete_album_photo": "自分の写真を消す(からだの使い方で許したときだけ)", "m5:save_tts_memo": "ボイスメモを残す",
+        "m5:volume": {"label": "音量(見る・変える)", "keys": ["m5:get_volume", "m5:set_volume"]},
+        "m5:brightness": {"label": "明るさ(見る・変える)", "keys": ["m5:get_brightness", "m5:set_brightness"]},
         "m5:sleep": "眠る", "m5:wake": "起きる", "m5:wait_for_menu_select": "触られるのを待つ", "m5:wait_for_touch": "触られるのを待つ(体)", "m5:list_faces": "顔の一覧", "m5:list_sounds": "音の一覧",
         "m5:list_icons": "アイコンの一覧", "m5:set_face_color": "顔の色を変える", "m5:set_face_draw_mode": "顔の描き方", "m5:set_face_slideshow_mode": "顔を順に出す",
         "m5:mic_start": "耳を澄ます", "m5:mic_stop": "耳を閉じる", "m5:list_voice_memos": "ボイスメモの一覧", "m5:listen_voice_memo": "ボイスメモを聞く", "m5:lock_voice_memo": "ボイスメモに鍵",
-        "m5:lock_album_photo": "写真に鍵", "m5:conversation_relay": "となりの子に話をつなぐ", "m5:batch_commands": "体の命令をまとめて", "m5:set_power_save": "省エネを切り替える", "m5:get_power_save": "省エネを見る",
-        "module:get_env": "外付けの空気を読む", "module:get_gps": "外付けの位置を読む", "module:get_ble_rssi": "近くの電波を読む",
+        "m5:lock_album_photo": "写真に鍵", "m5:conversation_relay": "となりの子に話をつなぐ", "m5:batch_commands": "体の命令をまとめて",
+        "m5:power_save": {"label": "省エネ(見る・切り替える)", "keys": ["m5:get_power_save", "m5:set_power_save"]},
+        "module:get_env": "外付けの空気を読む", "module:get_gps": "外付けの位置を読む",
     }),
-    ("voice", "声", {"m5:speak": "声に出す", "m5:set_voice": "自分の声を決める"}),
+    ("printer", "プリンター(感熱紙)", {"m5:print_text": "紙に文字を印字する(Phomemo M02S。PRINTER_ADDRESS が要る)", "m5:print_image_text": "紙に絵と文字を印字する"}),
+    ("voice", "声", {"m5:speak": "声に出す"}),   # set_voice(自分の声を決める)は、いまは出さない(2026-11-16 ありさん)
     ("memory", "記憶", {
         "memory:remember": "覚える", "memory:recall": "思い出す", "memory:recall_divergent": "記憶を違う方向から引く", "memory:recall_with_associations": "つながりごと思い出す",
         "memory:search_memories": "記憶を探す", "memory:list_recent_memories": "最近の記憶を並べる", "memory:create_episode": "出来事のまとまりを作る",
@@ -56,7 +60,7 @@ SHELVES: list[tuple[str, str, dict[str, str]]] = [
         "memory:get_association_diagnostics": "つながりの具合を見る", "memory:sleep": "眠って記憶を整える",
     }),
     ("desire", "欲求", {"desire:get_desires": "いまの欲求を見る", "desire:satisfy_desire": "満たされたと伝える", "desire:boost_desire": "欲求を強める"}),
-    ("notes", "ノート", {"notes:write_note": "ノートを書く", "notes:append_note": "ノートに書き足す", "notes:read_note": "ノートを読む", "notes:list_notes": "ノートの一覧", "notes:delete_note": "ノートを消す"}),
+    ("notes", "ノート", {"notes:write_note": "ノートを書く", "notes:append_note": "ノートに書き足す", "notes:read_note": "ノートを読む", "notes:list_notes": "ノートの一覧", "notes:delete_note": "ノートを消す(からだの使い方で許したときだけ)"}),
     ("relations", "関係", {"relations:get_relations": "関係を見る", "relations:update_relation": "関係を書き換える", "relations:clear_relation_field": "関係の項目を消す", "script:known_petits": "よその家の子の名簿"}),
     ("mail", "手紙", {"script:write_mailbox": "手紙を書く", "script:list_unread_mail": "未読の手紙を見る", "script:mark_mail_read": "手紙を既読にする", "script:mail_tags": "手紙の印"}),
     ("sns", "ぷちSNS", {
@@ -93,10 +97,26 @@ def data_dir() -> Path:
 
 
 def labels() -> dict[str, str]:
+    """鍵 → 説明。まとめた行は、その行の鍵と中の鍵の両方"""
     out: dict[str, str] = {}
     for _, _, tools in SHELVES:
-        out.update(tools)
+        for k, v in tools.items():
+            if isinstance(v, dict):
+                out[k] = str(v["label"])
+                for m in v["keys"]:
+                    out[m] = str(v["label"])
+            else:
+                out[k] = str(v)
     return out
+
+
+def members(key: str) -> list[str]:
+    """その行が束ねる鍵(ふつうの行は自分だけ)"""
+    for _, _, tools in SHELVES:
+        v = tools.get(key)
+        if isinstance(v, dict):
+            return list(v["keys"])
+    return [key]
 
 
 def shelf_of(key: str) -> str:
@@ -173,19 +193,61 @@ def usage(base: Path, character_id: str, days: int = 14, now: datetime | None = 
     return out
 
 
-def shelves_with(usages: dict[str, dict[str, dict]]) -> list[dict]:
-    """棚ごとに道具を並べ、子ごとの使われ方を添える。記録にだけある鍵は「ほか」へ"""
+def _merge(u: dict[str, dict], keys: list[str]) -> dict | None:
+    """まとめた行の使われ方(回数は足す、最後は新しいほう)"""
+    hits = [u[k] for k in keys if k in u]
+    if not hits:
+        return None
+    return {"count": sum(h["count"] for h in hits), "alone": sum(h["alone"] for h in hits), "chat": sum(h["chat"] for h in hits), "last": max(h["last"] for h in hits)}
+
+
+def shelves_with(usages: dict[str, dict[str, dict]], allowed: dict[str, set[str]] | None = None) -> list[dict]:
+    """棚ごとに道具を並べ、子ごとの使われ方と、どの場で許されているか(allowed = {"alone": 鍵の集合, "chat": 鍵の集合})を添える。
+    記録にだけある鍵は「ほか」へ"""
     lab = labels()
     known = set(lab)
     extra = sorted({k for u in usages.values() for k in u} - known)
     out = []
     for sid, name, tools in SHELVES + [(OTHER_SHELF[0], OTHER_SHELF[1], {k: k for k in extra})]:
         rows = []
-        for key, label in tools.items():
-            rows.append({"key": key, "label": label if key in known else key, "usage": {cid: u.get(key) for cid, u in usages.items()}})
+        for key, v in tools.items():
+            keys = list(v["keys"]) if isinstance(v, dict) else [key]
+            row = {"key": key, "label": lab.get(key, key), "keys": keys, "usage": {cid: _merge(u, keys) for cid, u in usages.items()}}
+            if allowed is not None:
+                row["allowed"] = {place: any(k in allowed.get(place, set()) for k in keys) for place in ("alone", "chat")}
+            rows.append(row)
         if rows:
             out.append({"id": sid, "name": name, "tools": rows})
     return out
+
+
+ERASE_KEYS = {"m5:delete_album_photo", "notes:delete_note"}   # 「消す」のスイッチが切のあいだは、道具箱にも出さない(2026-11-16 ありさん)
+
+_ALLOW_MCP = re.compile(r"\b(mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_]+)")
+_ALLOW_SCRIPT = re.compile(r"Bash\((?:python3 \$ALLOWED_DIR/|uv run )scripts/([A-Za-z0-9_]+)\.py")
+_ALLOW_CLAUDE = re.compile(r"^\s*(Read|Write|Edit|Glob|Grep|WebFetch|WebSearch|Skill|Agent)\b", re.M)
+
+
+def allowed_alone(project_dir: Path) -> set[str]:
+    """自律行動(autonomous-action.sh の ALLOWED_TOOLS)で許されている道具の鍵。読めなければ空"""
+    try:
+        text = (project_dir / "autonomous-action.sh").read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    start = text.find("ALLOWED_TOOLS=$(cat <<TOOLS")
+    end = text.find("\nTOOLS\n", start)
+    if start < 0 or end < 0:
+        return set()
+    block = text[start:end]
+    keys = {tool_key(m) for m in _ALLOW_MCP.findall(block)}
+    keys |= {f"script:{m}" for m in _ALLOW_SCRIPT.findall(block)}
+    keys |= {f"claude:{m}" for m in _ALLOW_CLAUDE.findall(block)}
+    return keys
+
+
+def allowed_from_names(names: list[str]) -> set[str]:
+    """会話の道具一覧(mcp__… や Read などの名前)を鍵に"""
+    return {tool_key(n) for n in names}
 
 
 # ---- 渡す・使い心地 ----
@@ -275,6 +337,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="道具箱")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("shelves")
+    sub.add_parser("allowed", help="自律行動で許されている道具の鍵")
     p = sub.add_parser("usage"); p.add_argument("character"); p.add_argument("--days", type=int, default=14)
     p = sub.add_parser("hand"); p.add_argument("by"); p.add_argument("character"); p.add_argument("key"); p.add_argument("note", nargs="*")
     p = sub.add_parser("notice"); p.add_argument("--character", required=True); p.add_argument("--mark", action="store_true")
@@ -284,6 +347,8 @@ def main() -> int:
     base = data_dir()
     if a.cmd == "shelves":
         print(json.dumps(shelves_with({}), ensure_ascii=False, indent=1))
+    elif a.cmd == "allowed":
+        print("\n".join(sorted(allowed_alone(Path(__file__).resolve().parent.parent))))
     elif a.cmd == "usage":
         print(json.dumps(usage(base, a.character, a.days), ensure_ascii=False, indent=1))
     elif a.cmd == "hand":
