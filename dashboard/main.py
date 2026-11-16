@@ -3728,8 +3728,8 @@ def api_toolbox(days: int = 14, request: Request = None):
     base_alone = tb.allowed_alone(PROJECT_DIR)
     reg = tb.registered(chat_cfgs, seen_keys)        # 部品が実際に持っている道具(体は M5_ALLOWED_TOOLS で絞られる)
     g = tb.gates(DATA_DIR)                           # 道具箱で決めた門(自律 on/off、会話 off)
-    shelves = tb.shelves_with(usages)
-    desc = tb.descriptions(DATA_DIR).get("tools") or {}
+    shelves = tb.shelves_with(usages, project_dir=PROJECT_DIR)
+    desc = {**{k: {"name": k.split(":", 1)[1], "server": "Claude Code", "description": v, "params": []} for k, v in tb.BUILTIN_DOCS.items()}, **(tb.descriptions(DATA_DIR).get("tools") or {})}
     for s in shelves:
         for t in s["tools"]:
             t["gate"] = tb.effective(t["key"], base_alone, reg, g)

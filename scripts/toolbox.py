@@ -57,12 +57,13 @@ SHELVES: list[tuple[str, str, dict[str, object]]] = [
         "m5:delete_album_photo": "自分の写真を消す(からだの使い方で許したときだけ)", "m5:save_tts_memo": "ボイスメモを残す",
         "m5:volume": {"label": "音量(見る・変える)", "keys": ["m5:get_volume", "m5:set_volume"]},
         "m5:brightness": {"label": "明るさ(見る・変える)", "keys": ["m5:get_brightness", "m5:set_brightness"]},
-        "m5:sleep": "眠る", "m5:wake": "起きる", "m5:wait_for_menu_select": "触られるのを待つ", "m5:wait_for_touch": "触られるのを待つ(体)", "m5:list_faces": "顔の一覧", "m5:list_sounds": "音の一覧",
-        "m5:list_icons": "アイコンの一覧", "m5:set_face_color": "顔の色を変える", "m5:set_face_draw_mode": "顔の描き方", "m5:set_face_slideshow_mode": "顔を順に出す",
-        "m5:mic_start": "耳を澄ます", "m5:mic_stop": "耳を閉じる", "m5:list_voice_memos": "ボイスメモの一覧", "m5:listen_voice_memo": "ボイスメモを聞く", "m5:lock_voice_memo": "ボイスメモに鍵",
-        "m5:lock_album_photo": "写真に鍵", "m5:conversation_relay": "となりの子に話をつなぐ", "m5:batch_commands": "体の命令をまとめて",
+        "m5:sleep": "眠る", "m5:wake": "起きる", "m5:wait_for_menu_select": "画面のメニューが選ばれるのを待つ", "m5:wait_for_touch": "画面が触られるのを待つ", "m5:list_faces": "顔の一覧", "m5:list_sounds": "音の一覧",
+        "m5:list_icons": "アイコンの一覧", "m5:set_face_color": "顔の色を変える", "m5:set_face_draw_mode": "顔を目と口の描画にする(画像でなく)", "m5:set_face_slideshow_mode": "顔の画像を順に流す",
+        "m5:mic_start": "耳を澄ます(マイクを開く)", "m5:mic_stop": "耳を閉じる(マイクを止める)", "m5:list_voice_memos": "ボイスメモの一覧", "m5:listen_voice_memo": "ボイスメモを聞く", "m5:lock_voice_memo": "ボイスメモに鍵(自動で消えないように)",
+        "m5:lock_album_photo": "写真に鍵(自動で消えないように)", "m5:conversation_relay": "となりの子に話をつなぐ", "m5:batch_commands": "体の命令をまとめて",
         "m5:power_save": {"label": "省エネ(見る・切り替える)", "keys": ["m5:get_power_save", "m5:set_power_save"]},
-        "module:get_env": "外付けの空気を読む", "module:get_gps": "外付けの位置を読む",
+        "script:find_m5": "体を家の中で探す(IP を総当たり)",
+        "module:get_env": "外付けセンサーの気温・湿度", "module:get_gps": "外付け GPS の位置",
     }),
     ("printer", "プリンター(感熱紙)", {"m5:print_text": "紙に文字を印字する(Phomemo M02S。PRINTER_ADDRESS が要る)", "m5:print_image_text": "紙に絵と文字を印字する"}),
     ("voice", "声", {"m5:speak": "声に出す"}),   # set_voice(自分の声を決める)は、いまは出さない(2026-11-16 ありさん)
@@ -70,38 +71,56 @@ SHELVES: list[tuple[str, str, dict[str, object]]] = [
         "memory:remember": "覚える", "memory:recall": "思い出す", "memory:recall_divergent": "記憶を違う方向から引く", "memory:recall_with_associations": "つながりごと思い出す",
         "memory:search_memories": "記憶を探す", "memory:list_recent_memories": "最近の記憶を並べる", "memory:create_episode": "出来事のまとまりを作る",
         "memory:search_episodes": "出来事を探す", "memory:get_episode_memories": "出来事の中身", "memory:link_memories": "記憶どうしを結ぶ", "memory:get_memory_chain": "記憶の鎖をたどる",
-        "memory:get_causal_chain": "なぜそうなったかをたどる", "memory:get_working_memory": "いま頭にあること", "memory:refresh_working_memory": "頭の中を入れ替える",
+        "memory:get_causal_chain": "なぜそうなったかをたどる", "memory:get_working_memory": "いま頭にあること", "memory:refresh_working_memory": "いま頭にあることを更新する",
         "memory:tom": "相手の心を考える", "memory:consolidate_memories": "記憶を整理する", "memory:get_memory_stats": "記憶の数を見る",
         "memory:save_visual_memory": "見たものを覚える", "memory:save_audio_memory": "聞いたものを覚える", "memory:recall_by_camera_position": "見た場所から思い出す",
-        "memory:get_association_diagnostics": "つながりの具合を見る", "memory:sleep": "眠って記憶を整える",
+        "memory:get_association_diagnostics": "記憶のつながりの状態を見る(点検)", "memory:sleep": "眠って記憶を整える",
     }),
-    ("desire", "欲求", {"desire:get_desires": "いまの欲求を見る", "desire:satisfy_desire": "満たされたと伝える", "desire:boost_desire": "欲求を強める"}),
-    ("notes", "ノート", {"notes:write_note": "ノートを書く", "notes:append_note": "ノートに書き足す", "notes:read_note": "ノートを読む", "notes:list_notes": "ノートの一覧", "notes:delete_note": "ノートを消す(からだの使い方で許したときだけ)"}),
+    ("desire", "欲求", {"desire:get_desires": "いまの欲求を見る", "desire:satisfy_desire": "欲求が満たされたと記録する", "desire:boost_desire": "欲求を強める"}),
+    ("notes", "ノート", {"notes:write_note": "ノートを書く", "notes:append_note": "ノートに書き足す", "notes:read_note": "ノートを読む", "notes:list_notes": "ノートの一覧", "notes:delete_note": "ノートを消す(からだの使い方で許したときだけ)", "script:write_notebook": "交換日記に書く"}),
     ("relations", "関係", {"relations:get_relations": "関係を見る", "relations:update_relation": "関係を書き換える", "relations:clear_relation_field": "関係の項目を消す", "script:known_petits": "よその家の子の名簿"}),
-    ("mail", "手紙", {"script:write_mailbox": "手紙を書く", "script:list_unread_mail": "未読の手紙を見る", "script:mark_mail_read": "手紙を既読にする", "script:mail_tags": "手紙の印"}),
+    ("mail", "手紙", {"script:write_mailbox": "手紙を書く", "script:list_unread_mail": "未読の手紙を見る", "script:mark_mail_read": "手紙を既読にする", "script:mail_tags": "手紙の印", "script:slack_notify": "Slack で家の人に知らせる"}),
     ("sns", "ぷちSNS", {
         "sns:mail_send": "よその子へ手紙", "sns:mail_read": "よその子の手紙を読む", "sns:mail_recipients": "手紙を送れる相手", "sns:penpal_list": "文通の相手",
-        "sns:sns_timeline": "タイムラインを見る", "sns:sns_post": "投稿する", "sns:sns_comment": "返事を付ける", "sns:sns_react": "いいね・なでなで", "sns:sns_inbox": "届いたものを見る",
-        "sns:sns_find": "子を探す", "sns:sns_my_profile": "自分の紹介を見る", "sns:sns_update_profile": "自分の紹介を直す",
-        "sns:board_list": "掲示板を見る", "sns:board_post": "掲示板に書く", "sns:board_reply": "掲示板に返す", "sns:board_thread": "掲示板の話を読む", "sns:board_like": "掲示板でいいね", "sns:sns_allowed": "できることを見る",
+        "sns:sns_timeline": "タイムラインを見る", "sns:sns_post": "投稿する", "sns:sns_comment": "返事を付ける", "sns:sns_react": "いいね・なでなで", "sns:sns_inbox": "ぷちSNS に届いたものを見る",
+        "sns:sns_find": "ぷちSNS で相手を探す", "sns:sns_my_profile": "自分の紹介を見る", "sns:sns_update_profile": "自分の紹介を直す",
+        "sns:board_list": "掲示板を見る", "sns:board_post": "掲示板に書く", "sns:board_reply": "掲示板に返す", "sns:board_thread": "掲示板の話を読む", "sns:board_like": "掲示板でいいね", "sns:sns_allowed": "ぷちSNS でできることを見る",
     }),
     ("textbook", "教科書", {"textbook:textbook_read": "教科書を読む", "textbook:textbook_search": "教科書を探す", "textbook:textbook_index": "教科書の目次", "textbook:textbook_propose": "教科書に提案する", "textbook:textbook_version": "教科書の版"}),
     ("world", "家と外", {
-        "script:sky": "空(月・節気)", "script:room_log": "家の空気", "script:phone_place": "家の人のスマホの部屋", "script:spots": "見に行けるもの", "script:events": "予定",
-        "script:anniversaries": "記念日", "script:notices": "受け取る一言を決める", "script:check_usage": "使った量を見る", "script:music": "音楽をいっしょに", "script:sounds": "家の音のライブラリ(入れてほしい・外してほしい・こういう音がほしい、をお願い)", "script:whereabouts": "いま どこ",
+        "script:sky": "空(月・節気)", "script:room_log": "家の空気", "script:phone_place": "家の人のスマホの部屋", "script:spots": "体がどこに置かれているか(見に行けるもの)", "script:events": "予定",
+        "script:anniversaries": "記念日", "script:notices": "受け取る一言を決める", "script:check_usage": "API を使った量を見る", "script:music": "音楽をいっしょに", "script:sounds": "家の音のライブラリ(入れてほしい・外してほしい・こういう音がほしい、をお願い)", "script:whereabouts": "いま どこ",
         "switchbot:list_devices": "家電の一覧", "switchbot:get_device_status": "家電の様子", "switchbot:turn_on": "家電をつける", "switchbot:turn_off": "家電を消す", "switchbot:send_command": "家電に命令",
     }),
     ("heart", "心拍(Garmin)", {
         "garmin-ble:get_realtime_heart_rate": "いまの心拍(スマホの中継)", "garmin-ble:get_hrv_analysis": "心拍のゆらぎ", "garmin-ble:scan_ble_devices": "近くの機器を探す",
-        "garmin-health:get_heart_rate": "心拍の記録", "garmin-health:get_sleep": "眠りの記録", "garmin-health:get_stress": "ストレスの記録", "garmin-health:get_body_battery": "体の電池",
+        "garmin-health:get_heart_rate": "心拍の記録", "garmin-health:get_sleep": "眠りの記録", "garmin-health:get_stress": "ストレスの記録", "garmin-health:get_body_battery": "体の電池(Garmin のボディバッテリー)",
         "garmin-health:get_steps": "歩数", "garmin-health:get_health_summary": "体の調子のまとめ",
     }),
     ("think", "調べる・読む", {
-        "claude:WebSearch": "ウェブで調べる", "claude:WebFetch": "ページを読む", "script:reader": "本文を読み取る", "claude:Skill": "技(本を読む など)", "claude:Read": "ファイルを読む",
-        "claude:Grep": "ファイルを探す", "claude:Edit": "ファイルを直す", "claude:Write": "ファイルを書く", "claude:ToolSearch": "道具を探す", "claude:Bash": "そのほかの命令",
+        "claude:WebSearch": "ウェブで調べる", "claude:WebFetch": "ページを読む", "script:reader": "ページの本文だけ読み取る(リーダー)", "script:fetch_aozora_book": "青空文庫から本を取ってくる",
+        "claude:Skill": "技(スキル: 本を読む・Slack に送る)", "claude:Read": "ファイルを読む", "claude:Grep": "ファイルを探す(中身で)", "claude:Glob": "ファイルを探す(名前で)",
+        "claude:Edit": "ファイルを直す", "claude:Write": "ファイルを書く", "claude:ToolSearch": "名前だけの道具の説明を引く", "claude:Bash": "シェルの命令(Bash。台本もここから)",
     }),
 ]
 OTHER_SHELF = ("other", "ほか")
+# Claude Code が持っている道具の説明。部品からは取れないので、ここに書く(ぷちに渡る本物の説明文は Claude Code のもの)
+BUILTIN_DOCS = {
+    "claude:Read": "ファイルを読む(行の範囲も指定できる。画像や PDF も)。読める場所は許しの一覧の範囲",
+    "claude:Write": "ファイルを新しく書く・丸ごと書き換える",
+    "claude:Edit": "ファイルの一部を、決まった文字列の置き換えで直す",
+    "claude:Glob": "名前のパターン(**/*.md など)でファイルを探す",
+    "claude:Grep": "中身の文字列(正規表現)でファイルを探す",
+    "claude:Bash": "シェルの命令を実行する。ひとりの時間は、許しの一覧にある台本(python3 scripts/…)だけ",
+    "claude:WebFetch": "URL のページを取ってきて読む(要約を挟む)",
+    "claude:WebSearch": "ウェブを検索する",
+    "claude:Skill": "技(スキル)を呼ぶ。本を読む(read)・Slack に送る(slack) など、決まった手順",
+    "claude:ToolSearch": "名前だけ渡されている道具の説明を引き出す(多い道具は使う直前にこれで引く)",
+    "claude:Agent": "別の Claude を子として立ち上げ、調べものなどを任せる",
+    "claude:TodoWrite": "やることの一覧を書く(自分の手順の覚え書き)",
+    "claude:PushNotification": "人の端末に通知を送る",
+}
+_KNOWN_FAMILIES = {"m5", "module", "memory", "desire", "notes", "relations", "textbook", "sns", "switchbot", "garmin-ble", "garmin-health"}
 _FAMILY = [("m5-module", "module"), ("m5_mcp", "m5"), ("m5", "m5"), ("memory", "memory"), ("desire-system", "desire"), ("notes", "notes"), ("relations", "relations"),
            ("textbook", "textbook"), ("petit-sns", "sns"), ("switchbot", "switchbot")]
 _SCRIPT = re.compile(r"scripts/([A-Za-z0-9_]+)\.py")
@@ -224,12 +243,22 @@ def _merge(u: dict[str, dict], keys: list[str]) -> dict | None:
     return {"count": sum(h["count"] for h in hits), "alone": sum(h["alone"] for h in hits), "chat": sum(h["chat"] for h in hits), "last": max(h["last"] for h in hits)}
 
 
-def shelves_with(usages: dict[str, dict[str, dict]], allowed: dict[str, set[str]] | None = None) -> list[dict]:
+def _is_real(key: str, project_dir: Path | None) -> bool:
+    """記録にだけある鍵が、本物の道具か。昔の記録には、言い間違いの名前(claude:desires.json など)も残っている"""
+    fam, _, name = key.partition(":")
+    if fam == "claude":
+        return key in BUILTIN_DOCS
+    if fam == "script":
+        return project_dir is None or (project_dir / "scripts" / f"{name}.py").is_file()
+    return fam in _KNOWN_FAMILIES and re.fullmatch(r"[a-z][a-z0-9_]*", name) is not None
+
+
+def shelves_with(usages: dict[str, dict[str, dict]], allowed: dict[str, set[str]] | None = None, project_dir: Path | None = None) -> list[dict]:
     """棚ごとに道具を並べ、子ごとの使われ方と、どの場で許されているか(allowed = {"alone": 鍵の集合, "chat": 鍵の集合})を添える。
-    記録にだけある鍵は「ほか」へ"""
+    記録にだけある本物の鍵は「ほか」へ(project_dir を渡すと、無い台本と言い間違いの名前は出さない)"""
     lab = labels()
     known = set(lab)
-    extra = sorted({k for u in usages.values() for k in u} - known)
+    extra = sorted(k for k in {k for u in usages.values() for k in u} - known if project_dir is None or _is_real(k, project_dir))
     out = []
     for sid, name, tools in SHELVES + [(OTHER_SHELF[0], OTHER_SHELF[1], {k: k for k in extra})]:
         rows = []
@@ -448,7 +477,7 @@ def describe(base: Path, config_path: Path, project_dir: Path | None = None, tim
     failed: list[str] = []
     for name, cfg in _servers(config_path).items():
         cmd = [str(cfg.get("command", ""))] + [str(a) for a in (cfg.get("args") or [])]
-        env = {str(k): str(v) for k, v in (cfg.get("env") or {}).items()}
+        env = {str(k): str(v) for k, v in (cfg.get("env") or {}).items() if k != "M5_ALLOWED_TOOLS"}   # 説明は絞らずに全部集める(渡すかは別)
         found = _mcp_list_tools(cmd, env, timeout) if cmd[0] else []
         if not found:
             failed.append(name)
@@ -460,11 +489,12 @@ def describe(base: Path, config_path: Path, project_dir: Path | None = None, tim
             params = [{"name": pn, "desc": str((pv or {}).get("description", ""))} for pn, pv in props.items() if isinstance(pv, dict) or pv is None]
             tools[key] = {"name": t.get("name", ""), "server": name, "description": str(t.get("description") or ""), "params": params}
     if project_dir:
-        for key in labels():
-            if key.startswith("script:"):
-                doc = _script_doc(project_dir, key.split(":", 1)[1])
-                if doc:
-                    tools[key] = {"name": key.split(":", 1)[1] + ".py", "server": "scripts", "description": doc, "params": []}
+        for f in sorted((project_dir / "scripts").glob("*.py")):   # 台本は全部(棚に無いものも、記録に出たときのために)
+            doc = _script_doc(project_dir, f.stem)
+            if doc:
+                tools[f"script:{f.stem}"] = {"name": f.name, "server": "scripts", "description": doc, "params": []}
+    for key, doc in BUILTIN_DOCS.items():
+        tools[key] = {"name": key.split(":", 1)[1], "server": "Claude Code", "description": doc, "params": []}
     out = {"at": datetime.now().isoformat(timespec="minutes"), "tools": tools, "done": done, "failed": failed}
     p = descriptions_path(base)
     p.parent.mkdir(parents=True, exist_ok=True)

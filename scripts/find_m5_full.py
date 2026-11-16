@@ -1,3 +1,4 @@
+"""家の中の体(M5)を探す(広い範囲)。find_m5 と同じで、見る範囲が広い。"""
 import concurrent.futures
 import urllib.request
 
