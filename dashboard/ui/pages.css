@@ -129,3 +129,4 @@ html.embed .p-head { display: none; }
 .o-sound-bk .a-input { width: 100%; box-sizing: border-box; }
 .o-sound-removed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 @media (max-width: 520px) { .o-sound-main { flex-basis: 100%; } }   /* スマホ幅: 名前を 1 段、ボタンを次の段にそろえる */
+@media (max-width: 520px) { .o-sound-bk .o-sound-main { flex-basis: 0; } }   /* 取り込む行は、選ぶ印と題を同じ段に */
