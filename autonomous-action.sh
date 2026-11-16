@@ -502,6 +502,11 @@ if [ -f "${PROJECT_DIR}/scripts/room_log.py" ]; then
 fi
 
 # 家の人のスマホの部屋: この子に前に伝えてから、部屋が変わった・帰ってきた・出たときだけ 1 行(伝えたら覚える。scripts/phone_place.py changes --mark)
+# 体の数字が大きく動いたとき(2026-11-16、ぷちたちと決めた。受け取るかはその子が決める)。characters/<id>/state/body_told.json
+BODY_CHANGE=""
+if [ -f "$PROJECT_DIR/scripts/body_log.py" ]; then
+  BODY_CHANGE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$PROJECT_DIR/scripts/body_log.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
 PHONE_CHANGE=""
 if [ -f "${PROJECT_DIR}/scripts/phone_place.py" ]; then
   PHONE_CHANGE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/phone_place.py" changes --character "$CHARACTER_ID" --mark 2>/dev/null || true)
@@ -525,7 +530,7 @@ PROMPT="$(render autonomous/user \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
 
 # プロジェクトディレクトリに移動
@@ -570,6 +575,7 @@ Bash(python3 $ALLOWED_DIR/scripts/list_unread_mail.py *),
 Bash(python3 $ALLOWED_DIR/scripts/mark_mail_read.py *),
 Bash(python3 $ALLOWED_DIR/scripts/mail_tags.py *),
 Bash(python3 $ALLOWED_DIR/scripts/toolbox.py *),
+Bash(python3 $ALLOWED_DIR/scripts/body_log.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sounds.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sing.py *),
 Bash(python3 $ALLOWED_DIR/scripts/check_usage.py *),

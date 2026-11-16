@@ -25,6 +25,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+from body_sampler import BodySampler, append_sample
 from detectors import Event, ExperienceDetector
 
 DATA_DIR = Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
@@ -216,6 +217,7 @@ def run(character: str) -> None:
         )
     client = M5Client(hosts)
     detector = ExperienceDetector()
+    sampler = BodySampler()   # 体の数字を 5 分ごとに 1 行(state/body/。scripts/body_log.py)
 
     current_state = "awake"
     state_since = datetime.now()
@@ -272,6 +274,13 @@ def run(character: str) -> None:
             _append_events(character, events, now)
         except OSError:
             logging.exception("JSONL 書き込み失敗。次サイクルへ継続する。")
+
+        try:
+            row = sampler.add(now, sensors)
+            if row:
+                append_sample(_character_dir(character), row)
+        except Exception:
+            logging.exception("体の数字の記録に失敗。次サイクルへ継続する。")
 
         # まわりの Wi-Fi の強さ(家の中のどこにいるかの見立て用。設定のある子だけ)。
         # 体は探すあいだ 0.4 秒ほど止まる

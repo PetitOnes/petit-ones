@@ -65,3 +65,4 @@ user prompt の文面は `prompts/autonomous/*.md`(全体は `user.md`、節ご�
 `autonomous-action.sh` は値(日時・パス・件数・digest など)を `scripts/render_prompt.py` に渡して組み立てるだけで、日本語の文は持たない。
 家ごとの言い回しは `PETIT_DATA_DIR/prompts/autonomous/<同名>.md` を置けば上書きされる(`--dry-run` で確かめる)。書き方は `prompts/README.md`。
 
+体の数字(明るさ・傾き・近さ・電池)は、体験デーモンが 5 分ごとに 1 行にまとめて `characters/<id>/state/body/YYYYMMDD.jsonl` に残す(`experience-daemon/body_sampler.py`。まん中の値と最小・最大、置き場所)。ぷちは `scripts/body_log.py line <id>` で、きょうの線(▁▂▅▇)・いま・1 時間前・きのうの同じ時刻との差・変わり目を、数字と線のまま見に行く(意味づけの言葉は付けない)。大きく動いたとき(明るさが倍か半分で 100 以上、傾き 15° 以上)の 1 行は `body_change`。受け取るかはその子が `notices.py` で決める。

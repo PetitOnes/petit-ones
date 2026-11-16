@@ -139,6 +139,7 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── memory_sleep_all.sh   #   夜の記憶整理(characters/ の全員)
 │   ├── write_mailbox.py / mark_mail_read.py / list_unread_mail.py  # 手紙
 │   ├── mail_receipts.py      # 手紙が届いたこと(読まれた・スタンプ)を、書いたぷちに 1 回だけ知らせる
+│   ├── body_log.py           # 体の数字(明るさ・傾き)のきょうの線・差分・変わり目(材料は体験デーモンの 5 分おきの記録)
 │   ├── toolbox.py            # 🧰 道具箱: 道具の地図・だれがどれを使うか・1 つ渡す・使い心地
 │   ├── mail_tags.py          # 手紙の印(お願い / おしらせ / おしゃべり / しずかなやつ)、読んだ人の印、返事していないお願いの知らせ
 │   ├── quiet_time.py         # 何も残さなかった自律行動の回の言葉を、その子のノート「しずかな時間_YYYY-MM」に 1 行残す
