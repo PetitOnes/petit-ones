@@ -42,6 +42,18 @@
       <p class="a-label" id="hint"></p>
     </div>
 
+    <!-- 体の音を家に: 体からは取り出せないので、PC に残っている SD のバックアップから -->
+    <div class="m-card" id="bkCard" style="display:none">
+      <span class="a-heading">体の音を家に入れる</span>
+      <p class="a-label">体にもとからある音を、PC に残っている SD のバックアップから家の音に入れます(体からは取り出せないため)。題は下書きです。直してから入れてください。</p>
+      <div id="backup"></div>
+      <div class="o-sound-form-row">
+        <label class="o-sound-pick"><input type="checkbox" id="bkAll">ぜんぶ選ぶ</label>
+        <span class="o-sound-msg" id="bkMsg"></span>
+        <button class="a-btn" id="bkBtn" onclick="importBackup()">選んだ音を入れる</button>
+      </div>
+    </div>
+
     <!-- 家の音: 聞く・体へ送る・消す -->
     <div class="m-card">
       <span class="a-heading">家の音</span>
@@ -267,7 +279,48 @@
       chip.disabled = false;
     });
 
-    load();
+    // ---- バックアップから ----
+    let backup = [];
+    function bkRow(it) {
+      return `<div class="o-sound o-sound-bk" data-bk="${esc(it.name)}">
+        <label class="o-sound-pick"><input type="checkbox" data-bkpick></label>
+        <div class="o-sound-main"><span class="o-sound-file">${esc(it.name)}・${secs(it.seconds)}</span>
+          <input class="a-input" data-bktitle maxlength="${maxTitle}" value="${esc(it.title || "")}" placeholder="題">
+          <input class="a-input" data-bkdesc maxlength="${maxDesc}" placeholder="説明(なくてもよい)"></div>
+        <button class="a-btn a-btn--sub a-btn--s" data-bklisten="${esc(it.name)}">▶ 聞く</button>
+      </div>`;
+    }
+    async function loadBackup() {
+      if (!canEdit) return;
+      try { backup = (await call("GET", "/api/sounds/backup")).items || []; } catch (e) { backup = []; }
+      $("bkCard").style.display = backup.length ? "" : "none";
+      $("backup").innerHTML = backup.map(bkRow).join("");
+      $("bkAll").checked = false;
+    }
+    $("bkAll").addEventListener("change", () => document.querySelectorAll("[data-bkpick]").forEach(x => x.checked = $("bkAll").checked));
+    $("backup").addEventListener("click", e => {
+      const l = e.target.closest("[data-bklisten]");
+      if (!l) return;
+      if (audio) audio.pause();
+      audio = new Audio("/api/sounds/backup_file/" + encodeURIComponent(l.dataset.bklisten));
+      audio.play().catch(() => {});
+    });
+    async function importBackup() {
+      const items = [...document.querySelectorAll("[data-bk]")].filter(r => r.querySelector("[data-bkpick]").checked)
+        .map(r => ({ name: r.dataset.bk, title: r.querySelector("[data-bktitle]").value.trim(), description: r.querySelector("[data-bkdesc]").value.trim() }));
+      const msg = $("bkMsg");
+      if (!items.length) { msg.textContent = "入れる音を選んでください"; return; }
+      $("bkBtn").disabled = true; msg.textContent = "入れています…";
+      try {
+        const res = await call("POST", "/api/sounds/import", { items });
+        const bad = Object.entries(res.results || {}).filter(([, v]) => v !== "ok");
+        msg.textContent = bad.map(([n, v]) => `${n}: ${v}`).join(" / ");
+        await load(); await loadBackup();
+      } catch (e) { msg.textContent = e.message; }
+      $("bkBtn").disabled = false;
+    }
+
+    load().then(loadBackup);
   </script>
 </body>
 </html>

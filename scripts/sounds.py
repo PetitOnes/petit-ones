@@ -14,6 +14,9 @@
 play_sound でも鳴らさない。体の SD には残るので、戻せばすぐまた使える。
 お願いの行方は、その子の次の自律行動か会話の頭に 1 行(notice)。
 
+体の音は体から取り出せないので、PC に残っている SD のバックアップ(PETIT_DATA_DIR/sd_backups/<名前>/wav/*.wav)から
+家の音に入れられる(backup_candidates / import_backup)。体が鳴らせる形(モノラル・16 bit の WAV)なら変換せずそのまま入れる。
+
 置き場所: sounds/library.json(題・説明)、state/sounds/requests.json(お願い)、state/sounds/bodies.json(体にある音の覚え・外した音)
 
 Usage:
@@ -167,6 +170,67 @@ def delete(base: Path, name: str) -> bool:
     if len(kept) != len(reqs):
         _write_json(_requests_path(base), kept)
     return True
+
+
+# ---- SD のバックアップから家の音へ ----
+
+# 体にもとからある音の、題の下書き(取り込むときに直せる)
+TITLE_DRAFTS = {
+    "angry_cat.wav": "おこったねこ", "buzz.wav": "ブザー", "camera.wav": "カメラ", "cat.wav": "ねこ", "down.wav": "さがる音",
+    "drumroll.wav": "ドラムロール", "error_shutdown.wav": "エラーでおやすみ", "failed.wav": "しっぱい", "funny_horn.wav": "おどけたラッパ",
+    "guitar.wav": "ギター", "happy_bell.wav": "しあわせのベル", "keyboard.wav": "キーボード", "message_received.wav": "おてがみ",
+    "mouse_click.wav": "クリック", "picpico_shutdown.wav": "ぴこぴこおやすみ", "pinpon.wav": "ピンポン", "pon.wav": "ぽん",
+    "robot_high_tone_picppico.wav": "ロボット(高い ぴこぴこ)", "robot.wav": "ロボット", "scanning.wav": "スキャン中",
+    "shining.wav": "きらきら", "shutdown.wav": "おやすみ(電源)", "success.wav": "せいこう", "toy_box_sleep.wav": "おもちゃ箱のねむり",
+    "wakeup.wav": "おはよう", "wall_clock.wav": "かけ時計", "whistling.wav": "くちぶえ", "zzz.wav": "すやすや",
+}
+
+
+def _backup_files(base: Path) -> dict[str, Path]:
+    """バックアップにある音(名前 → ファイル)。同じ名前は、新しいバックアップ(名前の順で後)のもの"""
+    out: dict[str, Path] = {}
+    for f in sorted((base / "sd_backups").glob("*/wav/*.wav")):
+        if f.is_file() and is_name(f.name.lower()) and f.name.lower() not in SYSTEM_SOUNDS:
+            out[f.name.lower()] = f
+    return out
+
+
+def backup_candidates(base: Path) -> list[dict]:
+    """バックアップにあって、家の音にまだ無いもの"""
+    have = {it["name"] for it in list_library(base)}
+    return [{"name": n, "seconds": seconds_of(f), "from": f.parent.parent.name, "title": TITLE_DRAFTS.get(n, "")}
+            for n, f in sorted(_backup_files(base).items()) if n not in have]
+
+
+def backup_path(base: Path, name: str) -> Path | None:
+    return _backup_files(base).get(name) if is_name(name) else None
+
+
+def _playable(path: Path) -> bool:
+    """体がもう鳴らせている形(モノラル・16 bit の PCM WAV)か。そうなら変換しない"""
+    try:
+        with wave.open(str(path), "rb") as w:
+            return w.getnchannels() == 1 and w.getsampwidth() == 2 and w.getcomptype() == "NONE" and w.getnframes() > 0
+    except (wave.Error, OSError, EOFError):
+        return False
+
+
+def import_backup(base: Path, name: str, title: str = "", description: str = "", by: str = "") -> dict:
+    """バックアップの音を家の音に入れる。形がそのまま鳴らせるならコピー、そうでなければ変換"""
+    src = backup_path(base, name)
+    if src is None:
+        raise SoundError(f"{name} はバックアップにありません")
+    target = library_dir(base) / name
+    if target.exists():
+        raise SoundError(f"{name} はもう家の音にあります")
+    if seconds_of(src) > MAX_SECONDS or not _playable(src):
+        return save(base, name, src.read_bytes(), ".wav", title=title, description=description, by=by)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(".wav.tmp")
+    tmp.write_bytes(src.read_bytes())
+    tmp.replace(target)
+    meta = set_meta(base, name, title, description, by=by)
+    return {"name": name, "bytes": target.stat().st_size, "seconds": seconds_of(target), "title": meta["title"], "description": meta["description"]}
 
 
 # ---- 題と説明(sounds/library.json)----

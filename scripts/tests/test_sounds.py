@@ -204,3 +204,30 @@ def test_system_sounds_cannot_be_dropped(tmp_path):
     for n in ("tts_speak", "voice_memo.wav"):
         with pytest.raises(sounds.SoundError):
             sounds.drop(tmp_path, "puchiteya", n)
+
+
+def test_import_from_backup_keeps_playable_wav(tmp_path):
+    d = tmp_path / "sd_backups" / "puchiko_20260706" / "wav"
+    d.mkdir(parents=True)
+    raw = tone(d / "cat.wav", seconds=0.3, rate=44100, channels=1)   # 体がもう鳴らせている形(モノラル・44.1 kHz)
+    tone(d / "tts_speak.wav", seconds=0.1, rate=16000, channels=1)    # 声の仕組みの音は出さない
+    c = sounds.backup_candidates(tmp_path)
+    assert [x["name"] for x in c] == ["cat.wav"] and c[0]["title"] == "ねこ"
+    it = sounds.import_backup(tmp_path, "cat.wav", "ねこ", "にゃあ", by="arisan")
+    assert it["title"] == "ねこ" and (sounds.library_dir(tmp_path) / "cat.wav").read_bytes() == raw   # 変換しない
+    assert sounds.backup_candidates(tmp_path) == []
+    with pytest.raises(sounds.SoundError):
+        sounds.import_backup(tmp_path, "cat.wav")
+    with pytest.raises(sounds.SoundError):
+        sounds.import_backup(tmp_path, "nai.wav")
+
+
+@needs_ffmpeg
+def test_import_from_backup_converts_stereo(tmp_path):
+    d = tmp_path / "sd_backups" / "x" / "wav"
+    d.mkdir(parents=True)
+    tone(d / "bell.wav", seconds=0.3, rate=44100, channels=2)
+    sounds.import_backup(tmp_path, "bell.wav")
+    import wave as _w
+    with _w.open(str(sounds.library_dir(tmp_path) / "bell.wav")) as w:
+        assert w.getnchannels() == 1 and w.getframerate() == 16000
