@@ -93,13 +93,16 @@
     <section data-page="try" style="display:none">
       <div class="m-card">
         <span class="a-heading">作ってみる</span>
-        <p class="a-label">ぷちが「うたう」で使うのと同じ道具です。声(楽器と高さ)を重ねて「聞いてみる」。気に入ったら名前を付けて残すと、「作った音」に並び、ぷちに渡せます。</p>
-        <label><span class="a-label">長さ(秒)</span><input class="a-input o-try-num" id="trySec" type="number" min="0.2" max="8" step="0.1" value="3"></label>
+        <p class="a-label">ぷちが「うたう」で使うのと同じ道具です。声(楽器と高さ)を重ねて、声ごとに「▶ この声だけ」、ぜんぶで「▶ いっしょに聞く」。気に入ったら名前を付けて残すと、「作った音」に並び、ぷちに渡せます。</p>
+        <label class="o-knob"><span class="o-knob-head"><span class="a-label">ぜんたいの長さ</span><b id="trySecOut">3 秒</b></span>
+          <input type="range" id="trySec" min="0.5" max="8" step="0.5" value="3">
+          <span class="o-knob-ends"><span>みじかい</span><span>ながい</span></span></label>
+        <p class="a-label">声は、いっしょに重なって鳴ります。それぞれの声の横の帯が、全体の中でその声が鳴るところです(「いつから」をずらすと、順番に鳴らせます)。</p>
         <div id="tryVoices"></div>
         <div class="o-sound-form-row">
           <button class="a-btn a-btn--sub a-btn--s" onclick="addVoice()">＋ 声を足す</button>
           <span class="o-sound-msg" id="tryMsg"></span>
-          <button class="a-btn" id="tryBtn" onclick="tryListen()">▶ 聞いてみる</button>
+          <button class="a-btn" id="tryBtn" onclick="tryListen()">▶ いっしょに聞く</button>
         </div>
         <div id="tryResult" style="display:none">
           <div class="o-sound-shape"><span class="o-sound-line" id="tryLine"></span></div>
@@ -425,68 +428,140 @@
     showTab(location.hash.slice(1));
 
     // ---- 作ってみる ----
+    // 声ごとに、楽器と つまみ(高さ・いつから・長さ・立ち上がり・尾・うねり・大きさ)。声ごとに聞く・いっしょに聞く
     let sing = { instruments: [], max_seconds: 8, max_voices: 12 }, voices = [], tryRecipe = null;
-    const FIELDS = [["hz", "高さ(Hz か A4・ラ4)", "text"], ["to", "おわりの高さ(動かすとき)", "text"], ["start", "いつから(秒)", "number"], ["length", "長さ(秒)", "number"],
-                    ["attack", "立ち上がり(秒)", "number"], ["tail", "尾の長さ(秒)", "number"], ["detune", "ずらして重ねる(Hz。うねり)", "number"], ["vol", "大きさ(0〜1)", "number"]];
+    const NOTE = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"], KANA = ["ド", "ド#", "レ", "レ#", "ミ", "ファ", "ファ#", "ソ", "ソ#", "ラ", "ラ#", "シ"];
+    const MIDI_LO = 40, MIDI_HI = 103;   // つまみの端(82 Hz 〜 3136 Hz)。半音ごと
+    const midiHz = m => 440 * Math.pow(2, (m - 69) / 12), hzMidi = hz => 69 + 12 * Math.log2(hz / 440);
+    function hzOf(v) {   // 数字(Hz)か音名(A4・C#5・ラ4)を Hz に。読めなければ 440
+      if (typeof v === "number") return v;
+      const t = String(v ?? "").trim();
+      if (/^-?[0-9.]+$/.test(t)) return parseFloat(t);
+      const m = t.match(/^(ファ|[A-Ga-gドレミソラシ])([#♯b♭]?)(-?\d)$/);
+      if (!m) return 440;
+      const base = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11, "ド": 0, "レ": 2, "ミ": 4, "ファ": 5, "ソ": 7, "ラ": 9, "シ": 11 }[m[1].toUpperCase()];
+      return midiHz(12 * (parseInt(m[3]) + 1) + base + ({ "#": 1, "♯": 1, b: -1, "♭": -1 }[m[2]] || 0));
+    }
+    function hzLabel(hz) {
+      const m = Math.round(hzMidi(hz)), exact = Math.abs(midiHz(m) - hz) < 0.5;
+      return `${exact ? "" : "およそ "}${KANA[((m % 12) + 12) % 12]}${Math.floor(m / 12) - 1}(${NOTE[((m % 12) + 12) % 12]}${Math.floor(m / 12) - 1})・${Math.round(hz * 10) / 10} Hz`;
+    }
+    const sec = () => Math.min(sing.max_seconds, Math.max(0.5, parseFloat($("trySec").value) || 3));
+    // つまみ: [鍵, 名前, 最小, 最大, 刻み, 左の言葉, 右の言葉, 値の出し方]
+    const KNOBS = [
+      ["start", "いつから", 0, null, 0.05, "はじめから", "あとから", v => v ? `${v} 秒あと` : "はじめから"],
+      ["length", "鳴らす長さ", 0.05, null, 0.05, "みじかく", "最後まで", (v, t) => v >= t ? "最後まで" : `${v} 秒`],
+      ["attack", "はじまり", 0, 2, 0.01, "ぱっと", "ふわっと", v => v <= 0.01 ? "ぱっと(一瞬)" : `${v} 秒かけて`],
+      ["tail", "尾", 0.05, 6, 0.05, "すぐ消える", "長く残る", v => `${v} 秒かけて消える`],
+      ["detune", "うねり(少しずらして重ねる)", 0, 12, 0.5, "なし", "速い", v => v ? `1 秒に ${v} 回` : "なし"],
+      ["vol", "大きさ", 0, 1, 0.05, "小さく", "大きく", v => `${Math.round(v * 100)}%`],
+    ];
+    function defaults(inst) { const d = sing.instruments.find(x => x.id === inst) || {}; return { attack: Math.max(0, Math.min(2, d.attack ?? 0.02)), tail: Math.min(6, d.tail ?? 0.6) }; }
+    function newVoice(inst, hz) { return { inst, hz, glide: false, to: hz, start: 0, length: sing.max_seconds, detune: 0, vol: 1, ...defaults(inst) }; }
+    function knob(v, [k, label, lo, hi, step, left, right, fmt]) {
+      const total = sec(), max = hi ?? total, val = Math.min(max, Math.max(lo, v[k] ?? lo));
+      return `<label class="o-knob"><span class="o-knob-head"><span class="a-label">${label}</span><b data-out="${k}">${fmt(Math.round(val * 100) / 100, total)}</b></span>
+        <input type="range" data-f="${k}" min="${lo}" max="${max}" step="${step}" value="${val}">
+        <span class="o-knob-ends"><span>${left}</span><span>${right}</span></span></label>`;
+    }
+    function pitchKnob(v, k, label) {
+      const m = Math.min(MIDI_HI, Math.max(MIDI_LO, hzMidi(v[k])));
+      return `<label class="o-knob"><span class="o-knob-head"><span class="a-label">${label}</span><b data-out="${k}">${hzLabel(v[k])}</b></span>
+        <input type="range" data-f="${k}" data-pitch min="${MIDI_LO}" max="${MIDI_HI}" step="1" value="${Math.round(m)}">
+        <span class="o-knob-ends"><span>低い</span><span>高い</span></span></label>`;
+    }
+    function bar(v) {   // この声が、全体のどこで鳴るか
+      const total = sec(), a = Math.min(v.start || 0, total), len = Math.min(v.length ?? total, total - a);
+      return `<div class="o-try-bar" title="全体の中で、この声が鳴るところ"><span style="left:${a / total * 100}%;width:${Math.max(1, len / total * 100)}%"></span></div>`;
+    }
     function voiceRow(v, i) {
-      const inst = sing.instruments.find(x => x.id === v.inst) || {};
       const opts = sing.instruments.map(x => `<option value="${esc(x.id)}"${x.id === v.inst ? " selected" : ""}>${esc(x.id)}: ${esc(x.desc)}</option>`).join("");
-      const ph = { attack: inst.attack, tail: inst.tail, start: 0, vol: 1, detune: 0, length: "最後まで", to: "動かさない" };
       return `<div class="o-try-voice" data-voice="${i}">
-        <div class="o-sound-form-row"><b>声 ${i + 1}</b><span style="flex:1"></span>${voices.length > 1 ? `<button class="a-btn a-btn--ghost a-btn--s" data-vdel>はずす</button>` : ""}</div>
+        <div class="o-sound-form-row"><b>声 ${i + 1}</b><span data-bar style="flex:1">${bar(v)}</span>
+          <button class="a-btn a-btn--sub a-btn--s" data-vsolo>▶ この声だけ</button>
+          ${voices.length > 1 ? `<button class="a-btn a-btn--ghost a-btn--s" data-vdel>はずす</button>` : ""}</div>
         <select class="a-input" data-f="inst">${opts}</select>
-        <div class="o-try-grid">${FIELDS.map(([k, label, type]) => `<label><span class="a-label">${label}</span>
-          <input class="a-input" data-f="${k}" type="${type}" ${type === "number" ? 'step="any"' : 'autocapitalize="off"'} value="${esc(v[k] ?? "")}" placeholder="${esc(ph[k] ?? "")}"></label>`).join("")}</div>
+        ${pitchKnob(v, "hz", "高さ")}
+        <label class="o-sound-pick"><input type="checkbox" data-f="glide" ${v.glide ? "checked" : ""}>高さを動かす(はじめの高さから、おわりの高さへ)</label>
+        ${v.glide ? pitchKnob(v, "to", "おわりの高さ") : ""}
+        <details class="o-try-fine"><summary>こまかく(Hz を数字で)</summary>
+          <label><span class="a-label">高さ(Hz)</span><input class="a-input o-try-num" type="number" step="any" min="20" max="16000" data-f="hz" data-exact value="${Math.round(v.hz * 100) / 100}"></label>
+          ${v.glide ? `<label><span class="a-label">おわりの高さ(Hz)</span><input class="a-input o-try-num" type="number" step="any" min="20" max="16000" data-f="to" data-exact value="${Math.round(v.to * 100) / 100}"></label>` : ""}</details>
+        <div class="o-try-grid">${KNOBS.map(k => knob(v, k)).join("")}</div>
       </div>`;
     }
-    function renderVoices() { $("tryVoices").innerHTML = voices.map(voiceRow).join(""); }
+    function renderVoices() { $("tryVoices").innerHTML = voices.map(voiceRow).join(""); $("trySecOut").textContent = `${sec()} 秒`; }
     function addVoice() {
       if (voices.length >= sing.max_voices) return;
-      voices.push({ inst: (sing.instruments[0] || {}).id || "sine", hz: "A4" }); renderVoices();
+      const first = (sing.instruments[0] || {}).id || "sine";
+      voices.push(newVoice(voices.length ? voices[voices.length - 1].inst : first, voices.length ? midiHz(Math.min(MIDI_HI, Math.round(hzMidi(voices[voices.length - 1].hz)) + 7)) : 440));
+      renderVoices();
     }
-    function loadRecipe(r) {
+    function loadRecipe(r) {   // ぷちの作り方(音名や、省いた項目あり)を、つまみの値に
       $("trySec").value = r.seconds ?? 3;
-      voices = (r.voices || []).map(v => ({ ...v }));
+      voices = (r.voices || []).map(v => {
+        const inst = v.inst || "sine", hz = hzOf(v.hz ?? 440);
+        return { ...newVoice(inst, hz), ...Object.fromEntries(["start", "length", "attack", "tail", "detune", "vol"].filter(k => typeof v[k] === "number").map(k => [k, v[k]])),
+                 glide: v.to != null, to: v.to != null ? hzOf(v.to) : hz };
+      });
       if (!voices.length) addVoice(); else renderVoices();
       $("tryResult").style.display = "none"; $("tryKeep").style.display = "none";
     }
+    $("trySec").addEventListener("input", renderVoices);
     $("tryVoices").addEventListener("input", e => {
       const row = e.target.closest("[data-voice]"), f = e.target.dataset.f;
       if (!row || !f) return;
-      voices[+row.dataset.voice][f] = e.target.value;
-      if (f === "inst") renderVoices();   // 楽器を替えたら、立ち上がりと尾の「はじめの値」を出し直す
+      const v = voices[+row.dataset.voice];
+      if (f === "inst") { v.inst = e.target.value; Object.assign(v, defaults(v.inst)); renderVoices(); return; }   // 楽器を替えたら、はじまりと尾をその楽器のものに
+      if (f === "glide") { v.glide = e.target.checked; if (v.glide && v.to === v.hz) v.to = midiHz(Math.min(MIDI_HI, Math.round(hzMidi(v.hz)) + 12)); renderVoices(); return; }
+      const num = parseFloat(e.target.value);
+      if (isNaN(num)) return;
+      v[f] = "pitch" in e.target.dataset ? midiHz(num) : num;
+      if (f === "hz" && !v.glide) v.to = v[f];
+      if ("exact" in e.target.dataset || "pitch" in e.target.dataset) {   // つまみと数字の欄を、そろえる
+        row.querySelectorAll(`[data-f="${f}"]`).forEach(x => { if (x !== e.target) x.value = "pitch" in x.dataset ? Math.round(Math.min(MIDI_HI, Math.max(MIDI_LO, hzMidi(v[f])))) : Math.round(v[f] * 100) / 100; });
+        row.querySelector(`[data-out="${f}"]`).textContent = hzLabel(v[f]);
+      } else {
+        const k = KNOBS.find(x => x[0] === f);
+        row.querySelector(`[data-out="${f}"]`).textContent = k[7](Math.round(num * 100) / 100, sec());
+        row.querySelector("[data-bar]").innerHTML = bar(v);
+      }
     });
     $("tryVoices").addEventListener("click", e => {
       const row = e.target.closest("[data-voice]");
-      if (row && e.target.closest("[data-vdel]")) { voices.splice(+row.dataset.voice, 1); renderVoices(); }
+      if (!row) return;
+      if (e.target.closest("[data-vdel]")) { voices.splice(+row.dataset.voice, 1); renderVoices(); }
+      else if (e.target.closest("[data-vsolo]")) tryListen(+row.dataset.voice);
     });
-    function recipeNow() {
-      const out = { seconds: parseFloat($("trySec").value) || 3, voices: [] };
-      for (const v of voices) {
-        const o = { inst: v.inst };
-        for (const [k, , type] of FIELDS) {
-          const raw = String(v[k] ?? "").trim();
-          if (!raw) continue;
-          o[k] = type === "number" || /^-?[0-9.]+$/.test(raw) ? parseFloat(raw) : raw;
-        }
-        if (o.hz == null) o.hz = 440;
+    function recipeNow(only) {
+      const total = sec(), out = { seconds: total, voices: [] };
+      voices.forEach((v, i) => {
+        if (only != null && i !== only) return;
+        const o = { inst: v.inst, hz: Math.round(v.hz * 100) / 100, start: Math.min(v.start || 0, total), attack: Math.max(0.001, v.attack), tail: v.tail, vol: v.vol };
+        if (v.glide && v.to !== v.hz) o.to = Math.round(v.to * 100) / 100;
+        if ((v.length ?? total) < total - o.start) o.length = v.length;
+        if (v.detune) o.detune = v.detune;
         out.voices.push(o);
-      }
+      });
       return out;
     }
-    async function tryListen() {
-      const msg = $("tryMsg");
+    // only = 声の番号なら、その声だけ聞く(数字や「残す」は、いっしょに聞いたときのもの)
+    async function tryListen(only) {
+      const msg = $("tryMsg"), solo = typeof only === "number";
       msg.textContent = ""; $("tryBtn").disabled = true;
       try {
-        tryRecipe = recipeNow();
-        const res = await call("POST", "/api/sing/preview", { recipe: tryRecipe });
+        const recipe = recipeNow(solo ? only : null);
+        const res = await call("POST", "/api/sing/preview", { recipe });
         const url = "data:audio/wav;base64," + res.wav;
-        $("tryLine").textContent = res.shape.line; $("tryText").textContent = res.text.split("\n").slice(2).join("\n"); $("tryLack").textContent = res.lack;
-        $("tryDl").href = url; $("tryDl").download = ($("tryName").value.trim() || "tameshi") + ".wav";
-        $("tryResult").style.display = ""; $("tryKeep").style.display = "";
+        if (!solo) {
+          tryRecipe = recipe;
+          $("tryLine").textContent = res.shape.line; $("tryText").textContent = res.text.split("\n").slice(2).join("\n"); $("tryLack").textContent = res.lack;
+          $("tryDl").href = url; $("tryDl").download = ($("tryName").value.trim() || "tameshi") + ".wav";
+          $("tryResult").style.display = ""; $("tryKeep").style.display = "";
+        }
         if (audio) audio.pause();
         audio = new Audio(url); audio.play().catch(() => {});
-      } catch (e) { msg.textContent = e.message; }
+      } catch (e) { msg.textContent = (solo ? `声 ${only + 1}: ` : "") + e.message; }
       $("tryBtn").disabled = false;
     }
     async function keepTry() {
