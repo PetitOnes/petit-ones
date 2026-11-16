@@ -19,15 +19,31 @@ Usage:
     python3 toolbox.py notice --character <id> [--mark]          # 渡されたものを 1 行で(まだ伝えていない分)。--mark で伝えたと残す
     python3 toolbox.py felt <id> "<一言>" [--tool <key>] [--skip]  # 使い心地を残す。--skip は「手が向かなかった」
     python3 toolbox.py log                                       # 渡したもの・使い心地(JSON)
+    python3 toolbox.py gates                                     # 道具の門(家の config/toolbox.json)
+    python3 toolbox.py gate <alone|chat> <key> on|off            # 門を開け閉め(alone の on は、許しの一覧に無い道具を足す)
+    python3 toolbox.py disallowed --mode <alone|chat> --config <mcp.json> --project <dir>   # 止める道具(--disallowedTools 用、カンマ区切り)
+    python3 toolbox.py extra-allowed --config <mcp.json> --project <dir>                    # 自律で足す道具(--allowedTools に足す、カンマ区切り)
+    python3 toolbox.py describe --config <mcp.json> [--timeout 25]   # 部品につないで道具の説明を集め、state/toolbox/descriptions.json に
+
+道具の門(2026-11-16 ありさん: 会話と自律で渡す道具をダッシュボードから決めたい): config/toolbox.json
+    {"alone": {"on": [鍵…], "off": [鍵…]}, "chat": {"off": [鍵…]}}
+- 自律(alone): autonomous-action.sh の許しの一覧が元。on で足し、off で止める
+- 会話(chat): 権限を全部通す起動なので、つないである部品の道具は全部使える。off で止めるだけ
+- 止めるのは --disallowedTools(両方で本当に効く)。鍵は部品の名前に戻す(mcp__<server>__<tool>、台本は Bash(python3 <project>/scripts/<名前>.py *))
+- 体の部品(m5-mcp)は M5_ALLOWED_TOOLS で登録する道具を絞っている。そこに無い道具は、どちらの場にも「つないでいない」
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
+import select
+import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -35,7 +51,7 @@ from pathlib import Path
 # 棚: (id, 名前, {鍵: 短い説明 | {"label": 説明, "keys": [まとめる鍵…]}})。まとめた行は、どれかを使えば使ったことにする
 SHELVES: list[tuple[str, str, dict[str, object]]] = [
     ("body", "体", {
-        "m5:get_sensor_data": "体の感覚を読む(明るさ・近さ・傾き・電池)", "m5:take_snapshot": "写真を撮る", "m5:save_to_album": "撮ってアルバムに残す",
+        "m5:get_sensor_data": "体の感覚を読む(明るさ・近さ・傾き・電池)", "m5:take_snapshot": "写真を撮る(見るだけ。保存しない)", "m5:keep_snapshot": "さっき撮った写真を残す(撮り直さない)", "m5:save_to_album": "撮ってアルバムに残す",
         "m5:look": "目を動かす", "m5:blink": "まばたき", "m5:show_face": "顔を出す", "m5:play_icon": "アイコンを出す", "m5:play_sound": "音を鳴らす",
         "m5:list_album": "アルバムを見る", "m5:view_album_photo": "写真を見る",
         "m5:delete_album_photo": "自分の写真を消す(からだの使い方で許したときだけ)", "m5:save_tts_memo": "ボイスメモを残す",
@@ -94,6 +110,13 @@ _STAMP = re.compile(r"^(\d{8})_(\d{6})")
 
 def data_dir() -> Path:
     return Path(os.getenv("PETIT_DATA_DIR", str(Path.home() / "petit_claude")))
+
+
+def _json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
 
 
 def labels() -> dict[str, str]:
@@ -246,6 +269,206 @@ def allowed_alone(project_dir: Path) -> set[str]:
 
 
 ALWAYS = {"claude:ToolSearch"}   # Claude Code がいつも持っている道具(許しの一覧に関わらず)
+MODES = ("alone", "chat")
+
+
+# ---- 道具の門(家の config/toolbox.json) ----
+
+def gates_path(base: Path) -> Path:
+    return base / "config" / "toolbox.json"
+
+
+def gates(base: Path) -> dict[str, dict[str, list[str]]]:
+    d = _json(gates_path(base), {})
+    out = {"alone": {"on": [], "off": []}, "chat": {"on": [], "off": []}}
+    for mode in MODES:
+        m = d.get(mode) if isinstance(d, dict) and isinstance(d.get(mode), dict) else {}
+        for k in ("on", "off"):
+            out[mode][k] = [str(x) for x in (m.get(k) or []) if isinstance(x, str)]
+    return out
+
+
+def set_gate(base: Path, mode: str, key: str, on: bool, base_allowed: set[str] | None = None) -> dict:
+    """門を開け閉め。on は off から外し、alone で許しの一覧(base_allowed)に無い道具なら on に足す。off は on から外し off に足す"""
+    if mode not in MODES:
+        raise ValueError("mode は alone か chat")
+    g = gates(base)
+    m = g[mode]
+    m["on"] = [k for k in m["on"] if k != key]
+    m["off"] = [k for k in m["off"] if k != key]
+    if on and mode == "alone" and not (base_allowed and any(k in base_allowed for k in members(key))):
+        m["on"].append(key)
+    if not on:
+        m["off"].append(key)
+    p = gates_path(base)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(g, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(p)
+    return g
+
+
+def _servers(config_path: Path) -> dict[str, dict]:
+    d = _json(config_path, {})
+    servers = d.get("mcpServers") if isinstance(d, dict) else None
+    return {k: v for k, v in servers.items() if isinstance(v, dict)} if isinstance(servers, dict) else {}
+
+
+def _family(server: str) -> str:
+    return tool_key(f"mcp__{server}__x").split(":", 1)[0]
+
+
+def registered(config_paths: list[Path], extra_keys: set[str] | None = None) -> set[str]:
+    """その MCP 設定で、部品が実際に持っている道具の鍵。体の部品は M5_ALLOWED_TOOLS で絞られていれば、その分だけ"""
+    keys = set(labels()) | (extra_keys or set())
+    out: set[str] = set()
+    for cp in config_paths:
+        for name, cfg in _servers(cp).items():
+            fam = _family(name)
+            only = (cfg.get("env") or {}).get("M5_ALLOWED_TOOLS") if fam == "m5" else None
+            allow = {x.strip() for x in str(only).split(",") if x.strip()} if only else None
+            for k in keys:
+                f, _, t = k.partition(":")
+                if f == fam and (allow is None or t in allow):
+                    out.add(k)
+    return out
+
+
+def concrete_names(key: str, config_path: Path, project_dir: Path) -> list[str]:
+    """鍵を、Claude Code に渡す名前に戻す(その設定にあるサーバーの名前で)。台本は Bash(python3 <project>/scripts/<名前>.py *)"""
+    names: list[str] = []
+    servers = _servers(config_path)
+    for k in members(key):
+        fam, _, tool = k.partition(":")
+        if fam == "script":
+            names.append(f"Bash(python3 {project_dir}/scripts/{tool}.py *)")
+        elif fam == "claude":
+            names.append(tool)
+        else:
+            names.extend(f"mcp__{name}__{tool}" for name in servers if _family(name) == fam)
+    return names
+
+
+def disallowed(base: Path, mode: str, config_path: Path, project_dir: Path) -> list[str]:
+    """その場で止める道具(--disallowedTools 用)"""
+    out: list[str] = []
+    for key in gates(base).get(mode, {}).get("off", []):
+        out.extend(n for n in concrete_names(key, config_path, project_dir) if n not in out)
+    return out
+
+
+def extra_allowed(base: Path, config_path: Path, project_dir: Path) -> list[str]:
+    """自律で、許しの一覧に足す道具(--allowedTools に足す)"""
+    out: list[str] = []
+    g = gates(base)["alone"]
+    for key in g["on"]:
+        if key in g["off"]:
+            continue
+        out.extend(n for n in concrete_names(key, config_path, project_dir) if n not in out)
+    return out
+
+
+def effective(key: str, base_alone: set[str], reg: set[str], g: dict) -> dict:
+    """その道具が、いまそれぞれの場で渡っているか。{"alone": {"on", "can"}, "chat": {"on", "can"}}。
+    can = 画面から開け閉めできるか(Claude の道具と、部品が持っていない道具はできない)"""
+    fam = key.partition(":")[0]
+    ks = members(key)
+    present = fam in ("script", "claude") or any(k in reg for k in ks)
+    can = fam != "claude" and present
+    in_alone = any(k in base_alone for k in ks) or key in g["alone"]["on"]
+    return {"alone": {"on": present and in_alone and key not in g["alone"]["off"], "can": can},
+            "chat": {"on": present and key not in g["chat"]["off"], "can": can}}
+
+
+# ---- 道具の説明を部品から集める(2026-11-16 ありさん: 一言だけでなく、渡している説明を全部見たい) ----
+
+def descriptions_path(base: Path) -> Path:
+    return base / "state" / "toolbox" / "descriptions.json"
+
+
+def _mcp_list_tools(cmd: list[str], env: dict[str, str], timeout: float) -> list[dict]:
+    """部品を立ち上げて tools/list を聞く。小さな stdio の JSON-RPC(ライブラリ無し)。返事が無ければ空"""
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            env={**os.environ, **env}, text=True, bufsize=1)
+    try:
+        def send(obj: dict) -> None:
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps(obj) + "\n")
+            proc.stdin.flush()
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "petit-toolbox", "version": "1"}}})
+        deadline = time.monotonic() + timeout
+        got_init = False
+        while time.monotonic() < deadline:
+            r, _, _ = select.select([proc.stdout], [], [], 0.5)
+            if not r:
+                if proc.poll() is not None:
+                    break
+                continue
+            line = proc.stdout.readline() if proc.stdout else ""
+            if not line:
+                break
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("id") == 1 and not got_init:
+                got_init = True
+                send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            elif msg.get("id") == 2:
+                tools = (msg.get("result") or {}).get("tools") or []
+                return [t for t in tools if isinstance(t, dict)]
+        return []
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+def _script_doc(project_dir: Path, name: str) -> str:
+    try:
+        tree = ast.parse((project_dir / "scripts" / f"{name}.py").read_text(encoding="utf-8"))
+        return (ast.get_docstring(tree) or "").strip()
+    except (OSError, SyntaxError):
+        return ""
+
+
+def describe(base: Path, config_path: Path, project_dir: Path | None = None, timeout: float = 25.0) -> dict:
+    """部品ごとに道具の説明を集めて state/toolbox/descriptions.json に残す。つながらなかった部品は前の分を残す"""
+    cache = _json(descriptions_path(base), {})
+    tools: dict[str, dict] = dict(cache.get("tools") or {}) if isinstance(cache, dict) else {}
+    done: list[str] = []
+    failed: list[str] = []
+    for name, cfg in _servers(config_path).items():
+        cmd = [str(cfg.get("command", ""))] + [str(a) for a in (cfg.get("args") or [])]
+        env = {str(k): str(v) for k, v in (cfg.get("env") or {}).items()}
+        found = _mcp_list_tools(cmd, env, timeout) if cmd[0] else []
+        if not found:
+            failed.append(name)
+            continue
+        done.append(name)
+        for t in found:
+            key = tool_key(f"mcp__{name}__{t.get('name', '')}")
+            props = ((t.get("inputSchema") or {}).get("properties") or {})
+            params = [{"name": pn, "desc": str((pv or {}).get("description", ""))} for pn, pv in props.items() if isinstance(pv, dict) or pv is None]
+            tools[key] = {"name": t.get("name", ""), "server": name, "description": str(t.get("description") or ""), "params": params}
+    if project_dir:
+        for key in labels():
+            if key.startswith("script:"):
+                doc = _script_doc(project_dir, key.split(":", 1)[1])
+                if doc:
+                    tools[key] = {"name": key.split(":", 1)[1] + ".py", "server": "scripts", "description": doc, "params": []}
+    out = {"at": datetime.now().isoformat(timespec="minutes"), "tools": tools, "done": done, "failed": failed}
+    p = descriptions_path(base)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+    return out
+
+
+def descriptions(base: Path) -> dict:
+    d = _json(descriptions_path(base), {})
+    return d if isinstance(d, dict) else {}
 
 
 def families_in(config_paths: list[Path]) -> set[str]:
@@ -365,6 +588,11 @@ def main() -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("shelves")
     sub.add_parser("allowed", help="自律行動で許されている道具の鍵")
+    sub.add_parser("gates")
+    p = sub.add_parser("gate"); p.add_argument("mode"); p.add_argument("key"); p.add_argument("on")
+    p = sub.add_parser("disallowed"); p.add_argument("--mode", required=True); p.add_argument("--config", required=True); p.add_argument("--project", required=True)
+    p = sub.add_parser("extra-allowed"); p.add_argument("--config", required=True); p.add_argument("--project", required=True)
+    p = sub.add_parser("describe"); p.add_argument("--config", required=True); p.add_argument("--timeout", type=float, default=25.0); p.add_argument("--project")
     p = sub.add_parser("usage"); p.add_argument("character"); p.add_argument("--days", type=int, default=14)
     p = sub.add_parser("hand"); p.add_argument("by"); p.add_argument("character"); p.add_argument("key"); p.add_argument("note", nargs="*")
     p = sub.add_parser("notice"); p.add_argument("--character", required=True); p.add_argument("--mark", action="store_true")
@@ -376,6 +604,22 @@ def main() -> int:
         print(json.dumps(shelves_with({}), ensure_ascii=False, indent=1))
     elif a.cmd == "allowed":
         print("\n".join(sorted(allowed_alone(Path(__file__).resolve().parent.parent))))
+    elif a.cmd == "gates":
+        print(json.dumps(gates(base), ensure_ascii=False, indent=1))
+    elif a.cmd == "gate":
+        try:
+            g = set_gate(base, a.mode, a.key, a.on.lower() == "on")
+        except ValueError as e:
+            print(str(e), file=sys.stderr)
+            return 2
+        print(json.dumps(g[a.mode], ensure_ascii=False))
+    elif a.cmd == "disallowed":
+        print(",".join(disallowed(base, a.mode, Path(a.config), Path(a.project))))
+    elif a.cmd == "extra-allowed":
+        print(",".join(extra_allowed(base, Path(a.config), Path(a.project))))
+    elif a.cmd == "describe":
+        r = describe(base, Path(a.config), Path(a.project) if a.project else None, a.timeout)
+        print(f"集めた: {len(r['tools'])} 道具 / つながった部品 {len(r['done'])} / つながらなかった {len(r['failed'])}")
     elif a.cmd == "usage":
         print(json.dumps(usage(base, a.character, a.days), ensure_ascii=False, indent=1))
     elif a.cmd == "hand":

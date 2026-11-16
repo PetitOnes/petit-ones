@@ -90,3 +90,50 @@ def test_hand_once_a_day_notice_once_and_felt(tmp_path):
     assert s["skip"] is True
     lg = tb.log(base)
     assert len(lg["handed"]) == 2 and len(lg["felt"]) == 2 and lg["handed"][0]["told"]
+
+
+def test_gates_registered_disallowed_effective(tmp_path):
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({"mcpServers": {"m5-mcp": {"env": {"M5_ALLOWED_TOOLS": "speak,blink,take_snapshot"}}, "memory": {}, "notes": {}}}), encoding="utf-8")
+    reg = tb.registered([cfg])
+    assert {"m5:speak", "m5:blink", "memory:recall_divergent", "notes:write_note"} <= reg and "m5:print_text" not in reg   # 体は M5_ALLOWED_TOOLS で絞る
+    tb.set_gate(tmp_path, "alone", "m5:blink", False)
+    tb.set_gate(tmp_path, "chat", "m5:blink", False)
+    tb.set_gate(tmp_path, "alone", "memory:tom", True)       # 許しの一覧に無いものを足す
+    tb.set_gate(tmp_path, "chat", "script:mail_tags", False)
+    g = tb.gates(tmp_path)
+    assert g["alone"] == {"on": ["memory:tom"], "off": ["m5:blink"]} and g["chat"]["off"] == ["m5:blink", "script:mail_tags"]
+    assert tb.disallowed(tmp_path, "alone", cfg, Path("/p")) == ["mcp__m5-mcp__blink"]
+    assert tb.disallowed(tmp_path, "chat", cfg, Path("/p")) == ["mcp__m5-mcp__blink", "Bash(python3 /p/scripts/mail_tags.py *)"]
+    assert tb.extra_allowed(tmp_path, cfg, Path("/p")) == ["mcp__memory__tom"]
+    tb.set_gate(tmp_path, "alone", "m5:blink", True, base_allowed={"m5:blink"})         # 開け直すと off から消える(一覧にあるので on には入れない)
+    assert tb.gates(tmp_path)["alone"] == {"on": ["memory:tom"], "off": []}
+    base_alone = {"m5:speak"}
+    assert tb.effective("m5:speak", base_alone, reg, tb.gates(tmp_path)) == {"alone": {"on": True, "can": True}, "chat": {"on": True, "can": True}}
+    assert tb.effective("memory:tom", base_alone, reg, tb.gates(tmp_path))["alone"]["on"] is True          # on で足した
+    assert tb.effective("m5:print_text", base_alone, reg, tb.gates(tmp_path)) == {"alone": {"on": False, "can": False}, "chat": {"on": False, "can": False}}   # 部品が持っていない
+    assert tb.effective("claude:Read", base_alone, reg, tb.gates(tmp_path))["chat"] == {"on": True, "can": False}
+    try:
+        tb.set_gate(tmp_path, "nope", "x", True)
+        raise AssertionError
+    except ValueError:
+        pass
+
+
+def test_describe_with_fake_server(tmp_path):
+    fake = tmp_path / "fake_mcp.py"
+    fake.write_text(
+        "import json,sys\n"
+        "for line in sys.stdin:\n"
+        "    m=json.loads(line)\n"
+        "    if m.get('id')==1: print(json.dumps({'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05','capabilities':{},'serverInfo':{'name':'fake','version':'0'}}}),flush=True)\n"
+        "    elif m.get('id')==2: print(json.dumps({'jsonrpc':'2.0','id':2,'result':{'tools':[{'name':'remember','description':'覚える。\\n長い説明。','inputSchema':{'properties':{'content':{'description':'中身'}}}}]}}),flush=True)\n",
+        encoding="utf-8")
+    cfg = tmp_path / "mcp.json"
+    cfg.write_text(json.dumps({"mcpServers": {"memory": {"command": sys.executable, "args": [str(fake)]}, "dead": {"command": sys.executable, "args": ["-c", "pass"]}}}), encoding="utf-8")
+    (tmp_path / "scripts").mkdir(); (tmp_path / "scripts" / "sky.py").write_text('"""空のこと。\n\n月と節気。"""\n', encoding="utf-8")
+    r = tb.describe(tmp_path, cfg, tmp_path, timeout=5)
+    assert r["done"] == ["memory"] and r["failed"] == ["dead"]
+    assert r["tools"]["memory:remember"]["description"].startswith("覚える。") and r["tools"]["memory:remember"]["params"] == [{"name": "content", "desc": "中身"}]
+    assert r["tools"]["script:sky"]["description"].startswith("空のこと。")
+    assert tb.descriptions(tmp_path)["tools"]["memory:remember"]["server"] == "memory"
