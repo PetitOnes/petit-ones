@@ -51,6 +51,7 @@ def test_usage_counts_and_shelves(tmp_path):
     vol = next(t for t in sh["body"]["tools"] if t["key"] == "m5:volume")
     assert vol["usage"]["puchi"]["count"] == 2 and vol["allowed"] == {"alone": True, "chat": False} and vol["keys"] == ["m5:get_volume", "m5:set_volume"]
     assert "module:get_ble_rssi" not in tb.labels() and tb.shelf_of("m5:print_text") == "printer"
+    assert not tb._is_real("module:get_ble_rssi", tmp_path) and not tb._is_real("m5:set_voice", tmp_path)   # 出さないと決めた道具
 
 
 def test_allowed_alone_parses_action_script(tmp_path):
