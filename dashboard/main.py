@@ -3559,12 +3559,12 @@ def toolbox_page():
 
 @app.get("/api/toolbox")
 def api_toolbox(days: int = 14, request: Request = None):
-    """棚ごとの道具と、子ごとの使われ方(直近 days 日)、渡したもの、使い心地。見られる子が決まっている人には出さない"""
+    """棚ごとの道具と、子ごとの使われ方(直近 days 日、180 まで)、渡したもの、使い心地。見られる子が決まっている人には出さない"""
     username = _get_username(request) or "arisan"
     if _is_limited_user(username):
         return JSONResponse({"error": "道具箱は家の人のもの"}, status_code=403)
     tb = _toolbox()
-    days = max(1, min(int(days or 14), 90))
+    days = max(1, min(int(days or 14), 180))   # 180 日 = 使っていない道具の洗い出し用
     chars = [{"id": c["id"], "name": c.get("name", c["id"]), "color": c.get("color", "#cab8d9")} for c in list_characters()]
     usages = {c["id"]: tb.usage(DATA_DIR, c["id"], days) for c in chars}
     out = {"days": days, "chars": chars, "shelves": tb.shelves_with(usages), "today": datetime.now().strftime("%Y-%m-%d")}

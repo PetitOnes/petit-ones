@@ -45,7 +45,7 @@
 
     <div class="m-card">
       <div class="t-legend" id="legend"></div>
-      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。薄い丸は、この期間に手が向いていない道具。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
+      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。薄い丸は、この期間に手が向いていない道具(180 日にすると、使っていない道具の洗い出しになる)。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
     </div>
 
     <div id="shelves"></div>
@@ -75,7 +75,7 @@
     }
     function render() {
       $("legend").innerHTML = (st.chars || []).map(c => `<span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span>`).join("") +
-        `<span class="t-days">${[7, 14, 30].map(d => `<button class="a-pill${d === days ? " is-on" : ""}" onclick="setDays(${d})">${d} 日</button>`).join("")}</span>`;
+        `<span class="t-days">${[7, 14, 30, 180].map(d => `<button class="a-pill${d === days ? " is-on" : ""}" onclick="setDays(${d})">${d} 日</button>`).join("")}</span>`;
       // 子ごとの最大回数で濃さを決める(その子の中での相対)
       const max = {}; for (const s of st.shelves) for (const t of s.tools) for (const c of st.chars) { const u = t.usage[c.id]; if (u) max[c.id] = Math.max(max[c.id] || 0, u.count); }
       const handedToday = {}; for (const h of st.handed || []) if ((h.at || "").slice(0, 10) === st.today) handedToday[h.to] = h;
