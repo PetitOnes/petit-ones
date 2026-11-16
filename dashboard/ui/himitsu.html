@@ -58,6 +58,7 @@
     [data-view-box][hidden] { display: none; }
     .h-views { flex-wrap: wrap; }
     [data-view][hidden] { display: none; }
+    .p-wrap.is-wide { max-width: 1280px; }   /* 行動ログは、広い画面なら広く使う */
     /* 行動ログ: もとのページ(/stream-logs)を、そのままこの中に出す */
     .l-frame { display: block; width: 100%; height: calc(100dvh - 170px); min-height: 420px; border: var(--ui-line-w) solid var(--ui-line-soft); border-radius: var(--ui-radius-card); background: #0f0f1a; }
     .w-lead { margin: 0 2px 10px; font-size: var(--ui-fs-s); line-height: 1.6; color: var(--ui-text-sub); }
@@ -107,7 +108,7 @@
       <div class="p-empty" id="wEmpty">読み込み中…</div>
     </div>
     <div data-view-box="logs" hidden>
-      <p class="w-lead">ぷちが動いた 1 回ごとの記録(考えたこと・使った道具)。左上の「☰ ログ一覧」から回を選びます。</p>
+      <p class="w-lead">ぷちが動いた 1 回ごとの記録(考えたこと・使った道具)。ぷちを選んで、「☰ ログ一覧」から回を選びます。</p>
       <iframe class="l-frame" id="logFrame" title="行動ログ"></iframe>
     </div>
   </div>
@@ -283,6 +284,7 @@
       document.querySelectorAll("[data-view]").forEach(b => { const on = b.dataset.view === v; b.classList.toggle("is-on", on); b.setAttribute("aria-pressed", on); });
       document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
       if (v === "words" && !words.loaded) loadWords("");
+      document.querySelector(".p-wrap").classList.toggle("is-wide", v === "logs");
       if (v === "logs" && !$("logFrame").getAttribute("src")) $("logFrame").src = "/stream-logs?embed=1";   // 開いたときに、はじめて読む
       try { history.replaceState(null, "", v === "mail" ? location.pathname + location.search : "#" + v); } catch (e) {}
     }
