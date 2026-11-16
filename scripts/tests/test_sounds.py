@@ -93,3 +93,80 @@ def test_list_ignores_other_files(tmp_path):
     (tmp_path / "sounds" / "tone.wav.tmp").write_text("x")
     assert sounds.list_library(tmp_path) == []
     assert sounds.list_library(tmp_path / "none") == []
+
+
+# ---- 音ライブラリ: 題と説明、ぷちのお願いと外す(2026-11-16) ----
+
+def _put(base: Path, name: str, seconds: float = 0.5) -> None:
+    d = sounds.library_dir(base)
+    d.mkdir(parents=True, exist_ok=True)
+    tone(d / name, seconds=seconds, rate=16000, channels=1)
+
+
+def test_meta_shows_in_library(tmp_path):
+    _put(tmp_path, "shizuku.wav")
+    sounds.set_meta(tmp_path, "shizuku.wav", "しずく", "水が  一滴\nおちる音", by="arisan")
+    it = sounds.list_library(tmp_path)[0]
+    assert it["title"] == "しずく" and it["description"] == "水が 一滴 おちる音"
+    # library.json は音の一覧に混ざらない
+    assert [x["name"] for x in sounds.list_library(tmp_path)] == ["shizuku.wav"]
+
+
+def test_want_resolve_and_notice(tmp_path):
+    _put(tmp_path, "shizuku.wav")
+    sounds.set_meta(tmp_path, "shizuku.wav", "しずく")
+    r = sounds.want(tmp_path, "puchiru", "shizuku", "水の子だから")
+    assert r["state"] == "pending" and r["name"] == "shizuku.wav"
+    assert sounds.want(tmp_path, "puchiru", "shizuku.wav")["id"] == r["id"]   # 同じお願いは重ねない
+    assert "お願い中" in sounds.list_for(tmp_path, "puchiru")[0]
+    assert sounds.notice(tmp_path, "puchiru") == []   # まだ答えていない
+    sounds.resolve(tmp_path, r["id"], "done", by="arisan")
+    assert sounds.requests(tmp_path) == []
+    assert "体にある" in sounds.list_for(tmp_path, "puchiru")[0]
+    line = sounds.notice(tmp_path, "puchiru", mark=True)
+    assert len(line) == 1 and "しずく" in line[0] and "入れてくれた" in line[0]
+    assert sounds.notice(tmp_path, "puchiru") == []   # 伝えるのは 1 回
+    with pytest.raises(sounds.SoundError):
+        sounds.want(tmp_path, "puchiru", "shizuku")   # もう体にある
+
+
+def test_want_unknown_and_decline(tmp_path):
+    with pytest.raises(sounds.SoundError):
+        sounds.want(tmp_path, "puchiko", "nai")
+    _put(tmp_path, "bell.wav")
+    r = sounds.want(tmp_path, "puchiko", "bell")
+    sounds.resolve(tmp_path, r["id"], "declined", by="arisan", note="夜はひびくから")
+    assert "見送り" in sounds.notice(tmp_path, "puchiko")[0]
+
+
+def test_sent_fulfils_request(tmp_path):
+    _put(tmp_path, "bell.wav")
+    sounds.want(tmp_path, "puchiteya", "bell")
+    sounds.sent(tmp_path, "puchiteya", "bell.wav", by="arisan")
+    assert sounds.requests(tmp_path) == []
+    assert "bell.wav" in sounds.on_body_of(tmp_path, "puchiteya")
+
+
+def test_drop_and_undrop(tmp_path):
+    _put(tmp_path, "bell.wav")
+    sounds.remember_body(tmp_path, "puchiko", ["bell.wav", "old.wav"])
+    with pytest.raises(sounds.SoundError):
+        sounds.want(tmp_path, "puchiko", "bell")  # もう体にある(外していない)
+    sounds.drop(tmp_path, "puchiko", "old")   # 体にだけある音も外せる
+    sounds.drop(tmp_path, "puchiko", "bell")
+    assert set(sounds.removed_of(tmp_path, "puchiko")) == {"bell.wav", "old.wav"}
+    assert "外した" in sounds.list_for(tmp_path, "puchiko")[0]
+    assert sounds.requests(tmp_path) == []   # 外したら、まだのお願いは取り下げ
+    sounds.want(tmp_path, "puchiko", "bell")   # 外した音は、またお願いできる
+    sounds.undrop(tmp_path, "puchiko", "old.wav")
+    assert sounds.removed_of(tmp_path, "puchiko") == ["bell.wav"]
+    with pytest.raises(sounds.SoundError):
+        sounds.drop(tmp_path, "puchiko", "nothing")
+
+
+def test_delete_clears_meta_and_requests(tmp_path):
+    _put(tmp_path, "bell.wav")
+    sounds.set_meta(tmp_path, "bell.wav", "鐘")
+    sounds.want(tmp_path, "puchiru", "bell")
+    assert sounds.delete(tmp_path, "bell.wav")
+    assert sounds.load_meta(tmp_path) == {} and sounds.requests(tmp_path) == []
