@@ -3567,8 +3567,20 @@ def api_toolbox(days: int = 14, request: Request = None):
     days = max(1, min(int(days or 14), 180))   # 180 日 = 使っていない道具の洗い出し用
     chars = [{"id": c["id"], "name": c.get("name", c["id"]), "color": c.get("color", "#cab8d9")} for c in list_characters()]
     usages = {c["id"]: tb.usage(DATA_DIR, c["id"], days) for c in chars}
-    # どの場で許されているか: 自律 = autonomous-action.sh の一覧、会話 = この家の会話の道具(からだの使い方で止める分は見ない)
-    allowed = {"alone": tb.allowed_alone(PROJECT_DIR), "chat": tb.allowed_from_names(BASE_TOOLS + CAMERA_TOOLS + SOUND_TOOLS + MIC_TOOLS + FILE_TOOLS)}
+    # どの場で許されているか: 自律 = autonomous-action.sh の --allowedTools の一覧。
+    # 会話 = 権限を全部通す起動なので、その子の会話用 MCP 設定(chat-mcp.json、無ければ autonomous-mcp.json)につないである部品で決まる。
+    # からだの使い方で止める分(見る・聞く・消す など)と、つないだときだけの部品(optional_mcp)の出入りは、ここでは見ない
+    chat_cfgs = []
+    for c in chars:
+        for name in ("chat-mcp.json", "autonomous-mcp.json"):
+            p = char_dir(c["id"]) / "config" / name
+            if p.is_file():
+                chat_cfgs.append(p)
+                break
+        else:
+            chat_cfgs.append(PROJECT_DIR / "autonomous-mcp.json")
+    seen_keys = {k for u in usages.values() for k in u}
+    allowed = {"alone": tb.allowed_alone(PROJECT_DIR), "chat": tb.allowed_chat(chat_cfgs, seen_keys)}
     shelves = tb.shelves_with(usages, allowed)
     # 「消す」(自分の写真・ノート)は、どの子にも許していないあいだは棚に出さない
     if not any(_body().effective(get_settings(c["id"]))["switches"].get("erase") for c in chars):

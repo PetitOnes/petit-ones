@@ -248,6 +248,27 @@ def allowed_alone(project_dir: Path) -> set[str]:
 ALWAYS = {"claude:ToolSearch"}   # Claude Code がいつも持っている道具(許しの一覧に関わらず)
 
 
+def families_in(config_paths: list[Path]) -> set[str]:
+    """MCP 設定(mcpServers)につないである部品の家族(m5 / memory / sns …)"""
+    out: set[str] = set()
+    for p in config_paths:
+        try:
+            servers = json.loads(p.read_text(encoding="utf-8")).get("mcpServers", {})
+        except (OSError, json.JSONDecodeError, AttributeError):
+            continue
+        for name in servers if isinstance(servers, dict) else []:
+            out.add(tool_key(f"mcp__{name}__x").split(":", 1)[0])
+    return out
+
+
+def allowed_chat(config_paths: list[Path], extra_keys: set[str] | None = None) -> set[str]:
+    """会話で使える道具の鍵。会話のセッションは権限を全部通す起動なので、許しの一覧でなく「つないである部品」で決まる。
+    台本(script:*)と Claude の道具(claude:*)はいつも。からだの使い方で止める分(見る・聞く・消す など)はここでは見ない"""
+    fams = families_in(config_paths)
+    keys = set(labels()) | (extra_keys or set())
+    return {k for k in keys if k.split(":", 1)[0] in fams or k.startswith(("script:", "claude:"))} | ALWAYS
+
+
 def allowed_from_names(names: list[str]) -> set[str]:
     """会話の道具一覧(mcp__… や Read などの名前)を鍵に。Bash が丸ごと許されていれば、台本(script:*)もぜんぶ"""
     keys = {tool_key(n) for n in names} | ALWAYS
