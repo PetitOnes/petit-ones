@@ -132,3 +132,7 @@ html.embed .p-head { display: none; }
 @media (max-width: 520px) { .o-sound-bk .o-sound-main { flex-basis: 0; } }   /* 取り込む行は、選ぶ印と題を同じ段に */
 details.m-card[data-fold] > summary { cursor: pointer; }
 details.m-card[data-fold][open] > summary { margin-bottom: 8px; }
+details.m-card[data-fold] > summary { list-style: none; display: flex; align-items: center; gap: 6px; }
+details.m-card[data-fold] > summary::-webkit-details-marker { display: none; }
+details.m-card[data-fold] > summary::after { content: "▸"; margin-left: auto; color: var(--ui-text-sub); }
+details.m-card[data-fold][open] > summary::after { content: "▾"; }
