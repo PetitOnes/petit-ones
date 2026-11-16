@@ -24,8 +24,8 @@
     </div>
 
     <!-- 取り込む: 家の音のライブラリに足す。体が鳴らせる形に変換される -->
-    <div class="m-card" id="addCard">
-      <span class="a-heading">音を取り込む</span>
+    <details class="m-card" id="addCard" data-fold="add">
+      <summary class="a-heading">音を取り込む</summary>
       <div class="o-sound-form">
         <input class="a-input" id="fFile" type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac">
         <label><span class="a-label">名前(英小文字・数字・_ と -。体のファイル名になります)</span>
@@ -40,11 +40,11 @@
         </div>
       </div>
       <p class="a-label" id="hint"></p>
-    </div>
+    </details>
 
     <!-- 体の音を家に: 体からは取り出せないので、PC に残っている SD のバックアップから -->
-    <div class="m-card" id="bkCard" style="display:none">
-      <span class="a-heading">体の音を家に入れる</span>
+    <details class="m-card" id="bkCard" data-fold="backup" style="display:none">
+      <summary class="a-heading">体の音を家に入れる <span class="a-label" id="bkCount"></span></summary>
       <p class="a-label">体にもとからある音を、PC に残っている SD のバックアップから家の音に入れます(体からは取り出せないため)。題は下書きです。直してから入れてください。</p>
       <div id="backup"></div>
       <div class="o-sound-form-row">
@@ -52,7 +52,7 @@
         <span class="o-sound-msg" id="bkMsg"></span>
         <button class="a-btn" id="bkBtn" onclick="importBackup()">選んだ音を入れる</button>
       </div>
-    </div>
+    </details>
 
     <!-- 家の音: 聞く・体へ送る・消す -->
     <div class="m-card">
@@ -294,6 +294,7 @@
       if (!canEdit) return;
       try { backup = (await call("GET", "/api/sounds/backup")).items || []; } catch (e) { backup = []; }
       $("bkCard").style.display = backup.length ? "" : "none";
+      $("bkCount").textContent = backup.length ? `(${backup.length} 個)` : "";
       $("backup").innerHTML = backup.map(bkRow).join("");
       $("bkAll").checked = false;
     }
@@ -319,6 +320,12 @@
       } catch (e) { msg.textContent = e.message; }
       $("bkBtn").disabled = false;
     }
+
+    // 「音を取り込む」「体の音を家に入れる」は、たためる。はじめは閉じている。開け閉めはこの端末で覚える
+    document.querySelectorAll("details[data-fold]").forEach(d => {
+      try { d.open = localStorage.getItem("sounds.fold." + d.dataset.fold) === "open"; } catch (e) {}
+      d.addEventListener("toggle", () => { try { localStorage.setItem("sounds.fold." + d.dataset.fold, d.open ? "open" : "closed"); } catch (e) {} });
+    });
 
     load().then(loadBackup);
   </script>
