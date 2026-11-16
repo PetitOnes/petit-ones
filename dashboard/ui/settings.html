@@ -255,6 +255,17 @@
         <div class="s-row"><span>🗑 消す（自分の写真・ノート）</span><label class="a-toggle"><input type="checkbox" id="bodyErase"><span></span></label></div>
       </div>
       <div class="m-card">
+        <span class="a-heading">☀️ 時間外も起きている</span><a class="s-help" data-help="awake" href="/help#awake" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 6px">アクティブタイムの外でも、いまから決めた時間だけ、いつもの 30 分ごとに自律行動する。過ぎたら自然に戻る。</p>
+        <div class="s-count" id="awakeNow"></div>
+        <div class="m-pills" style="flex-wrap:wrap;margin:8px 0 4px">
+          <button class="a-pill" onclick="awakeNow(1)">いまから 1 時間</button>
+          <button class="a-pill" onclick="awakeNow(3)">3 時間</button>
+          <button class="a-pill" onclick="awakeNow(6)">6 時間</button>
+          <button class="a-pill" id="awakeOffBtn" onclick="awakeNow(0)">やめる</button>
+        </div>
+      </div>
+      <div class="m-card">
         <span class="a-heading">🌙 からだ おやすみ</span><a class="s-help" data-help="rest" href="/help#rest" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 6px">見る・話す・鳴らす を止める（聞く はそのまま）。考える・書く・調べる・手紙はいつも通り。</p>
         <div class="s-count" id="restNow"></div>
@@ -602,6 +613,18 @@
       $("restSh").innerHTML = hourOpts(sh, 23); $("restSm").innerHTML = minOpts(sm); $("restEh").innerHTML = hourOpts(eh, 24); $("restEm").innerHTML = minOpts(em);
       renderRestHours();
     }
+    function renderAwake(v) {
+      $("awakeNow").innerHTML = v && v.on ? `いま: <b>起きている</b>（${esc(v.until)} まで）` : "いま: アクティブタイムだけ";
+      $("awakeOffBtn").style.display = v && v.on ? "" : "none";
+    }
+    async function awakeNow(hours) {
+      try {
+        const r = await fetch(`/api/${active}/awake`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({hours})});
+        if (!r.ok) { toast("できなかった"); return; }
+        renderAwake(await r.json());
+        toast(hours ? `${hours} 時間 起きている` : "起きているのをやめた");
+      } catch (e) { toast("できなかった"); }
+    }
     function renderRestHours() { $("restHours").style.display = $("restHoursOn").checked ? "" : "none"; }
     async function restNow(minutes) {
       try {
@@ -650,6 +673,7 @@
       document.getElementById("cronInfo").textContent = cronWords(cron.entries || []);
       const bv = await fetch(`/api/${id}/switches`).then(r => r.json()).catch(() => null);
       renderBody(bv);
+      renderAwake(await fetch(`/api/${id}/awake`).then(r => r.json()).catch(() => null));
       document.getElementById("hosts").innerHTML = (m5.m5_hosts || []).map(hostRow).join("");
       renderDayType();
       lockSections();
@@ -661,7 +685,7 @@
       document.getElementById("paneChar").addEventListener(ev, e => {
         if (e.target.closest("#saveBtn")) return;
         if (ev === "click" && !e.target.closest("button, .a-pill, .s-hour, [onclick]")) return;   // 押して中身が変わるもの(時間帯の升・✕・足す)
-        if (e.target.closest('[onclick^="restNow"]')) return;   // 「いまから」のボタンは、すぐ効く(保存は要らない)
+        if (e.target.closest('[onclick^="restNow"], [onclick^="awakeNow"]')) return;   // 「いまから」のボタンは、すぐ効く(保存は要らない)
         setDirty(true);
       });
     }
@@ -710,7 +734,7 @@
     })();
   
     // ---- できないことになっている段は、薄くして、押せなくする ----
-    const SECTION_CAN = [["アクティブタイム", "schedule"], ["自律行動", "autonomous"], ["変わったときの一言", "autonomous"], ["からだの使い方", "switches"], ["からだ おやすみ", "rest"], ["くわしい設定", "advanced"]];
+    const SECTION_CAN = [["アクティブタイム", "schedule"], ["時間外も起きている", "schedule"], ["自律行動", "autonomous"], ["変わったときの一言", "autonomous"], ["からだの使い方", "switches"], ["からだ おやすみ", "rest"], ["くわしい設定", "advanced"]];
     function lockSections() {
       const can = meInfo.can;
       if (!can) return;

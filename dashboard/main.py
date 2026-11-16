@@ -569,6 +569,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("hello", "POST", r"/api/hello"),
     ("notebook", "POST", r"/api/notebook"),
     ("rest", "POST", r"/api/switches/rest|/api/[^/]+/switches/rest"),
+    ("schedule", "POST", r"/api/[^/]+/awake"),
     ("body", "POST", r"/api/[^/]+/body"),
     ("album_delete", "DELETE", r"/api/album/.+"),
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
@@ -6653,6 +6654,33 @@ def api_switches_rest(character_id: str, body: RestBody):
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return _body().view(get_settings(character_id))
+
+
+def _awake():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import awake
+    return awake
+
+
+class AwakeBody(BaseModel):
+    hours: float | None = None   # いまから何時間、active time の外でも動いてよいか(None・0 でやめる)
+
+
+@app.get("/api/{character_id}/awake")
+def api_get_awake(character_id: str):
+    """「いまから n 時間は時間外でも自律行動してよい」の様子(設定ページ用。決まりは scripts/awake.py)"""
+    return _awake().view(get_settings(character_id))
+
+
+@app.post("/api/{character_id}/awake")
+def api_set_awake(character_id: str, body: AwakeBody):
+    try:
+        s = _awake().set_awake(character_id, body.hours, DATA_DIR)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return _awake().view(s)
 
 
 @app.get("/api/{character_id}/settings")
