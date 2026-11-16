@@ -242,12 +242,18 @@ def allowed_alone(project_dir: Path) -> set[str]:
     keys = {tool_key(m) for m in _ALLOW_MCP.findall(block)}
     keys |= {f"script:{m}" for m in _ALLOW_SCRIPT.findall(block)}
     keys |= {f"claude:{m}" for m in _ALLOW_CLAUDE.findall(block)}
-    return keys
+    return keys | ALWAYS
+
+
+ALWAYS = {"claude:ToolSearch"}   # Claude Code がいつも持っている道具(許しの一覧に関わらず)
 
 
 def allowed_from_names(names: list[str]) -> set[str]:
-    """会話の道具一覧(mcp__… や Read などの名前)を鍵に"""
-    return {tool_key(n) for n in names}
+    """会話の道具一覧(mcp__… や Read などの名前)を鍵に。Bash が丸ごと許されていれば、台本(script:*)もぜんぶ"""
+    keys = {tool_key(n) for n in names} | ALWAYS
+    if "Bash" in names:
+        keys |= {k for k in labels() if k.startswith("script:")}
+    return keys
 
 
 # ---- 渡す・使い心地 ----
