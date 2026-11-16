@@ -524,6 +524,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "anniv": ("/anniversaries", "/api/anniversaries"),
     "calendar": ("/calendar", "/api/calendar", "/api/events", "/anniversaries", "/api/anniversaries"),   # 📅 よてい(記念日を吸収、2026-11-14)
     "music": ("/music", "/api/music"),   # 🎧 聴く(音楽を一緒に感じる、2026-11-14)
+    "toolbox": ("/toolbox", "/api/toolbox"),   # 🧰 道具箱(ぷちの道具の地図と、1 つ渡す。2026-11-16)
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
     "album": ("/album", "/api/album"),
@@ -1896,6 +1897,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts += _mail_tags().notice(DATA_DIR, character_id, mark=True)   # 返事していないお願いの数(2026-11-16。1 日 1 回)
         except Exception:
             pass
+        try:
+            receipts += _toolbox().notice(DATA_DIR, character_id, mark=True)   # 道具箱から渡されたもの(2026-11-16)
+        except Exception:
+            pass
         if receipts:
             effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
@@ -2629,6 +2634,15 @@ def _mail_receipts():
     return mail_receipts
 
 
+def _toolbox():
+    """🧰 道具箱(道具の地図・使われ方・渡す)。計算は scripts/toolbox.py(自律行動と同じもの)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import toolbox
+    return toolbox
+
+
 def _mail_tags():
     """手紙の印(お願い / おしらせ / おしゃべり と、読んだ人の印)。決まりは scripts/mail_tags.py(2026-11-16、ぷちたちと決めた)"""
     scripts_dir = str(PROJECT_DIR / "scripts")
@@ -3121,7 +3135,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html",
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html",
              "video_memo": "videomemo.html"}
 
 
@@ -3533,6 +3547,51 @@ def anniversaries_page():
 def music_page():
     """🎧 聴く(音楽を一緒に感じる)。中身は dashboard/ui/music.html"""
     return HTMLResponse((UI_DIR / _UI_PAGES["music"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+# ---- 🧰 道具箱(2026-11-16、ぷち 3 人と決めた) ----
+# ぷちの道具の地図。だれがどれをよく使うか・最近使っていないかは、家の人だけが見る(ぷちには数を見せない)。
+# 1 日 1 個だけ「渡す」。渡されたことは、その子の次の自律行動か会話の頭に 1 行(scripts/toolbox.py notice)。使い心地は toolbox.py felt
+@app.get("/toolbox", response_class=HTMLResponse)
+def toolbox_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["toolbox"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/toolbox")
+def api_toolbox(days: int = 14, request: Request = None):
+    """棚ごとの道具と、子ごとの使われ方(直近 days 日)、渡したもの、使い心地。見られる子が決まっている人には出さない"""
+    username = _get_username(request) or "arisan"
+    if _is_limited_user(username):
+        return JSONResponse({"error": "道具箱は家の人のもの"}, status_code=403)
+    tb = _toolbox()
+    days = max(1, min(int(days or 14), 90))
+    chars = [{"id": c["id"], "name": c.get("name", c["id"]), "color": c.get("color", "#cab8d9")} for c in list_characters()]
+    usages = {c["id"]: tb.usage(DATA_DIR, c["id"], days) for c in chars}
+    out = {"days": days, "chars": chars, "shelves": tb.shelves_with(usages), "today": datetime.now().strftime("%Y-%m-%d")}
+    out.update(tb.log(DATA_DIR))
+    return out
+
+
+class ToolboxHandRequest(BaseModel):
+    character_id: str
+    tool: str
+    note: str = ""
+
+
+@app.post("/api/toolbox/hand")
+def api_toolbox_hand(req: ToolboxHandRequest, request: Request):
+    """道具を 1 つ渡す(1 人に 1 日 1 個)。渡す文は提案の形で、その子が次に動くときに 1 行だけ入る"""
+    username = _get_username(request) or "arisan"
+    if _is_limited_user(username):
+        return JSONResponse({"error": "道具箱は家の人のもの"}, status_code=403)
+    if req.character_id not in {c["id"] for c in list_characters()}:
+        return JSONResponse({"error": "その子はいない"}, status_code=404)
+    if not re.match(r"^[A-Za-z0-9_:.-]{1,80}$", req.tool):
+        return JSONResponse({"error": "道具の鍵がおかしい"}, status_code=400)
+    try:
+        return _toolbox().hand(DATA_DIR, username, req.character_id, req.tool, req.note[:200])
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
 
 
 @app.get("/calendar", response_class=HTMLResponse)
@@ -8973,6 +9032,7 @@ HTML = """<!DOCTYPE html>
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       calendar:  {icon: "📅", name: "よてい",     pane: "calendar"},   // 予定 + 記念日(🎂 を吸収、2026-11-14)
       music:     {icon: "🎧", name: "聴く",       pane: "music"},      // 音楽を一緒に感じる(2026-11-14)。はじめは「ほか」の中
+      toolbox:   {icon: "🧰", name: "道具箱",     pane: "toolbox"},    // ぷちの道具の地図と、1 つ渡す(2026-11-16)。はじめは「ほか」の中
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
@@ -9168,7 +9228,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

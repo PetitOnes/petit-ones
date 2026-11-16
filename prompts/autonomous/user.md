@@ -45,6 +45,10 @@
 
 {{mail_ask_notice}}
 {{/if}}
+{{#if toolbox_notice}}
+
+{{toolbox_notice}}
+{{/if}}
 {{#if note_mark_notice}}
 
 {{note_mark_notice}}
