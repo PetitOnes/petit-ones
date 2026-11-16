@@ -21,8 +21,12 @@
     .t-shelf h2 small { font-weight: 400; font-size: 0.75rem; color: var(--ui-text-sub, #999); }
     .t-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 7px 4px; border-top: 1px solid var(--ui-line, #eee); }
     .t-where { display: inline-flex; gap: 3px; margin-left: 6px; vertical-align: middle; }
-    .t-where span { font-size: 0.6rem; padding: 0 5px; border-radius: 6px; border: 1px solid var(--ui-line, #ddd); color: var(--ui-text-sub, #aaa); background: transparent; }
-    .t-where span.on { background: var(--ui-text); color: #fff; border-color: var(--ui-text); }
+    .t-where .t-gate { font-size: 0.6rem; padding: 0 6px; height: 18px; border-radius: 6px; border: 1px solid var(--ui-line, #ddd); color: var(--ui-text-sub, #aaa); background: transparent; cursor: pointer; font-family: inherit; }
+    .t-where .t-gate.on { background: var(--ui-text); color: #fff; border-color: var(--ui-text); }
+    .t-where .t-gate:disabled { cursor: default; opacity: 0.45; }
+    .t-desc { grid-column: 1 / -1; font-size: 0.78rem; line-height: 1.55; color: var(--ui-text-sub, #666); white-space: pre-wrap; padding: 4px 8px 6px; border-left: 3px solid var(--ui-line, #eee); margin: 0 0 4px; }
+    .t-desc b { color: var(--ui-text); }
+    .t-desc .prm { display: block; margin-top: 2px; }
     .t-row:first-of-type { border-top: none; }
     .t-row .lab { font-size: 0.9rem; line-height: 1.3; }
     .t-row .key { display: block; font-size: 0.68rem; color: var(--ui-text-sub, #aaa); font-family: ui-monospace, monospace; }
@@ -48,7 +52,12 @@
 
     <div class="m-card">
       <div class="t-legend" id="legend"></div>
-      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。「自律」の札は ひとりの時間に許されている道具、「会話」の札は 会話につないである部品の道具(会話は権限を全部通すので、つないであれば使える)。薄いほうでは渡っていない。薄い丸は、この期間に手が向いていない道具(180 日にすると、使っていない道具の洗い出しになる)。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <button class="a-pill" id="descToggle" onclick="toggleDesc()">説明を全部</button>
+        <button class="a-btn a-btn--sub a-btn--s" onclick="redescribe()">説明を読み直す</button>
+        <span class="a-hint" id="descAt"></span>
+      </div>
+      <p class="a-hint" style="margin:8px 0 0">濃い丸はよく使う道具、数字は回数。「自律」「会話」の札は、その場でぷちに渡している道具。押すと止める・渡すを切り替えられる(次のセッションから。薄くて押せないのは、部品が持っていない道具か、Claude がいつも持っている道具)。「説明を全部」で、ぷちに渡っている説明文をそのまま出す。薄い丸は、この期間に手が向いていない道具(180 日にすると、使っていない道具の洗い出しになる)。ぷちには見せていない(数を見せると、責められている気になるから)。「渡す」は 1 人に 1 日 1 個、提案の形でその子に届く。</p>
     </div>
 
     <div id="shelves"></div>
@@ -63,7 +72,7 @@
   <script>
     const { esc } = PetitPage;
     const $ = id => document.getElementById(id);
-    let st = null, days = 14, openKey = null, pick = null;
+    let st = null, days = 14, openKey = null, pick = null, showDesc = false;
     function toast(t) { const el = $("toast"); el.textContent = t; el.classList.add("on"); setTimeout(() => el.classList.remove("on"), 1800); }
     const nameOf = id => ((st.chars || []).find(c => c.id === id) || {}).name || id;
     const colorOf = id => ((st.chars || []).find(c => c.id === id) || {}).color || "#ccc";
@@ -77,6 +86,7 @@
       render();
     }
     function render() {
+      $("descAt").textContent = st.described_at ? `説明は ${when(st.described_at)} に集めたもの` : "説明はまだ集めていない";
       $("legend").innerHTML = (st.chars || []).map(c => `<span><i style="background:${esc(c.color)}"></i>${esc(c.name)}</span>`).join("") +
         `<span class="t-days">${[7, 14, 30, 180].map(d => `<button class="a-pill${d === days ? " is-on" : ""}" onclick="setDays(${d})">${d} 日</button>`).join("")}</span>`;
       // 子ごとの最大回数で濃さを決める(その子の中での相対)
@@ -95,8 +105,10 @@
                 <input class="a-input" id="handNote" placeholder="一言(「紫を引いてみる?」など。無くてもいい)" maxlength="200">
                 <div style="display:flex;gap:8px;margin-top:8px;align-items:center"><button class="a-btn a-btn--s" onclick="hand('${esc(t.key)}')">渡す</button><button class="a-btn a-btn--sub a-btn--s" onclick="openForm(null)">やめる</button><span class="t-msg" id="handMsg"></span></div>
               </div>` : "";
-            const where = t.allowed ? `<span class="t-where"><span class="${t.allowed.alone ? "on" : ""}" title="${t.allowed.alone ? "ひとりの時間(自律行動)で使える" : "ひとりの時間では渡していない"}">自律</span><span class="${t.allowed.chat ? "on" : ""}" title="${t.allowed.chat ? "会話で使える(部品がつないである)" : "会話にはつないでいない"}">会話</span></span>` : "";
-            return `<div class="t-row"><span class="lab">${esc(t.label)}${where}<span class="key">${esc(t.key)}</span></span><span class="t-dots">${dots}</span><button class="a-btn a-btn--sub t-hand" onclick="openForm('${esc(t.key)}')">渡す</button>${form}</div>`;
+            const gateBtn = (mode, label) => { const gt = (t.gate || {})[mode] || {}; const ttl = gt.can ? (gt.on ? `${label}で渡している(押すと止める)` : `${label}では止めている(押すと渡す)`) : (gt.on ? `${label}でいつも使える` : "部品が持っていない道具"); return `<button class="t-gate${gt.on ? " on" : ""}" ${gt.can ? `onclick="setGate('${esc(t.key)}','${mode}',${gt.on ? "false" : "true"})"` : "disabled"} title="${ttl}">${label}</button>`; };
+            const where = t.gate ? `<span class="t-where">${gateBtn("alone", "自律")}${gateBtn("chat", "会話")}</span>` : "";
+            const descHtml = showDesc ? `<div class="t-desc">${(t.desc || []).length ? t.desc.map(d => `<b>${esc(d.name)}</b>(${esc(d.server)})\n${esc(d.description)}${(d.params || []).map(p => `<span class="prm">・${esc(p.name)}${p.desc ? ": " + esc(p.desc) : ""}</span>`).join("")}`).join("\n\n") : "(説明はまだ集めていない。「説明を読み直す」で部品から集める)"}</div>` : "";
+            return `<div class="t-row"><span class="lab">${esc(t.label)}${where}<span class="key">${esc(t.key)}</span></span><span class="t-dots">${dots}</span><button class="a-btn a-btn--sub t-hand" onclick="openForm('${esc(t.key)}')">渡す</button>${descHtml}${form}</div>`;
           }).join("") + `</div>`;
       }).join("");
       const feltBy = {}; for (const f of st.felt || []) (feltBy[f.who + "|" + f.tool] = feltBy[f.who + "|" + f.tool] || []).push(f);
@@ -108,6 +120,22 @@
       $("log").innerHTML = items.length ? items.join("") : `<span class="a-hint">まだ無い</span>`;
     }
     function setDays(d) { days = d; load(); }
+    function toggleDesc() { showDesc = !showDesc; $("descToggle").classList.toggle("is-on", showDesc); render(); }
+    async function redescribe() {
+      toast("部品につないで説明を集めています(1〜2 分)…");
+      const r = await fetch("/api/toolbox/describe", {method: "POST"});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.error || "集められなかった"); return; }
+      toast(`集めた: ${d.tools} 道具(つながらなかった部品: ${(d.failed || []).length})`);
+      showDesc = true; $("descToggle").classList.add("is-on"); load();
+    }
+    async function setGate(key, mode, on) {
+      const r = await fetch("/api/toolbox/gate", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({tool: key, mode, on})});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast(d.error || "変えられなかった"); return; }
+      toast(`${labelOf(key)} を ${mode === "alone" ? "ひとりの時間" : "会話"}で${on ? "渡す" : "止める"}(次のセッションから)`);
+      load();
+    }
     function openForm(key) { openKey = key; pick = null; render(); if (key) { const el = $("handNote"); if (el) el.focus(); } }
     function pickChar(id) { pick = id; const note = ($("handNote") || {}).value || ""; render(); const el = $("handNote"); if (el) el.value = note; }
     async function hand(key) {

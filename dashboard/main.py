@@ -1873,6 +1873,12 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         disallowed_tools = list(disallowed_tools) + [t for t in _optional_drop if t not in disallowed_tools]
     except Exception:
         pass
+    # 道具の門(2026-11-16): 🧰 道具箱で「会話では止める」と決めた道具(家の config/toolbox.json)
+    try:
+        _gate_off = _toolbox().disallowed(DATA_DIR, "chat", Path(mcp_config), PROJECT_DIR)
+        disallowed_tools = list(disallowed_tools) + [t for t in _gate_off if t not in disallowed_tools]
+    except Exception:
+        pass
     # 制限の各行は自律行動と同じ prompts/autonomous/permission_rules.md
     restriction_text = _render_prompt.render("autonomous/permission_rules", _bs.template_vars(body_eff), data_dir=DATA_DIR, project_dir=PROJECT_DIR).strip()
     user_display_name = _USER_DISPLAY.get(username or "arisan", _USER_DISPLAY["arisan"])["name"]
@@ -3656,13 +3662,22 @@ def api_toolbox(days: int = 14, request: Request = None):
         else:
             chat_cfgs.append(PROJECT_DIR / "autonomous-mcp.json")
     seen_keys = {k for u in usages.values() for k in u}
-    allowed = {"alone": tb.allowed_alone(PROJECT_DIR), "chat": tb.allowed_chat(chat_cfgs, seen_keys)}
-    shelves = tb.shelves_with(usages, allowed)
+    base_alone = tb.allowed_alone(PROJECT_DIR)
+    reg = tb.registered(chat_cfgs, seen_keys)        # 部品が実際に持っている道具(体は M5_ALLOWED_TOOLS で絞られる)
+    g = tb.gates(DATA_DIR)                           # 道具箱で決めた門(自律 on/off、会話 off)
+    shelves = tb.shelves_with(usages)
+    desc = tb.descriptions(DATA_DIR).get("tools") or {}
+    for s in shelves:
+        for t in s["tools"]:
+            t["gate"] = tb.effective(t["key"], base_alone, reg, g)
+            t["allowed"] = {"alone": t["gate"]["alone"]["on"], "chat": t["gate"]["chat"]["on"]}
+            t["desc"] = [desc[k] for k in t["keys"] if k in desc]
     # 「消す」(自分の写真・ノート)は、どの子にも許していないあいだは棚に出さない
     if not any(_body().effective(get_settings(c["id"]))["switches"].get("erase") for c in chars):
         for s in shelves:
             s["tools"] = [t for t in s["tools"] if not set(t["keys"]) & tb.ERASE_KEYS]
-    out = {"days": days, "chars": chars, "shelves": shelves, "today": datetime.now().strftime("%Y-%m-%d")}
+    out = {"days": days, "chars": chars, "shelves": shelves, "today": datetime.now().strftime("%Y-%m-%d"),
+           "described_at": tb.descriptions(DATA_DIR).get("at", ""), "chat_config": str(chat_cfgs[0]) if chat_cfgs else ""}
     out.update(tb.log(DATA_DIR))
     return out
 
@@ -3671,6 +3686,54 @@ class ToolboxHandRequest(BaseModel):
     character_id: str
     tool: str
     note: str = ""
+
+
+class ToolboxGateRequest(BaseModel):
+    mode: str     # alone(ひとりの時間)/ chat(会話)
+    tool: str
+    on: bool
+
+
+def _toolbox_chat_cfgs() -> list[Path]:
+    out = []
+    for c in list_characters():
+        for name in ("chat-mcp.json", "autonomous-mcp.json"):
+            p = char_dir(c["id"]) / "config" / name
+            if p.is_file():
+                out.append(p)
+                break
+        else:
+            out.append(PROJECT_DIR / "autonomous-mcp.json")
+    return out
+
+
+@app.post("/api/toolbox/gate")
+def api_toolbox_gate(req: ToolboxGateRequest, request: Request):
+    """道具の門: その道具を ひとりの時間 / 会話 で渡すか止めるか(家の config/toolbox.json)。次のセッションから効く"""
+    username = _get_username(request) or "arisan"
+    if _is_limited_user(username):
+        return JSONResponse({"error": "道具箱は家の人のもの"}, status_code=403)
+    tb = _toolbox()
+    if not re.match(r"^[A-Za-z0-9_:.-]{1,80}$", req.tool) or req.tool.startswith("claude:"):
+        return JSONResponse({"error": "その道具は開け閉めできない"}, status_code=400)
+    try:
+        g = tb.set_gate(DATA_DIR, req.mode, req.tool, req.on, base_allowed=tb.allowed_alone(PROJECT_DIR))
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "gates": g}
+
+
+@app.post("/api/toolbox/describe")
+async def api_toolbox_describe(request: Request):
+    """部品につないで、道具の説明(ぷちに渡っている文)を集め直す。1〜2 分かかることがある"""
+    username = _get_username(request) or "arisan"
+    if _is_limited_user(username):
+        return JSONResponse({"error": "道具箱は家の人のもの"}, status_code=403)
+    cfgs = _toolbox_chat_cfgs()
+    if not cfgs:
+        return JSONResponse({"error": "MCP の設定が見つからない"}, status_code=404)
+    r = await asyncio.to_thread(_toolbox().describe, DATA_DIR, cfgs[0], PROJECT_DIR, 25.0)
+    return {"ok": True, "tools": len(r["tools"]), "done": r["done"], "failed": r["failed"], "at": r["at"]}
 
 
 @app.post("/api/toolbox/hand")

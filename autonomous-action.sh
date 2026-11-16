@@ -601,6 +601,7 @@ mcp__m5-mcp__sleep,
 mcp__m5-mcp__wake,
 mcp__m5-mcp__wait_for_menu_select,
 mcp__m5-mcp__save_to_album,
+mcp__m5-mcp__keep_snapshot,
 mcp__m5-mcp__list_album,
 mcp__m5-mcp__view_album_photo,
 mcp__m5-mcp__delete_album_photo,
@@ -731,6 +732,20 @@ else
       DISALLOWED_TOOLS="${DISALLOWED_TOOLS:+$DISALLOWED_TOOLS,}$OPTIONAL_MCP_DROP"
       DISALLOW_ARGS=(--disallowedTools "$DISALLOWED_TOOLS")
       echo "[optional-mcp] 機体が見つからない道具: $OPTIONAL_MCP_DROP" >> "$LOG_FILE"
+    fi
+  fi
+  # 道具の門(2026-11-16 ありさん): 🧰 道具箱で決めた「ひとりの時間に渡す / 止める」。家の config/toolbox.json。scripts/toolbox.py
+  if [ -f "${PROJECT_DIR}/scripts/toolbox.py" ]; then
+    TOOLBOX_OFF=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/toolbox.py" disallowed --mode alone --config "$MCP_CONFIG" --project "$PROJECT_DIR" 2>/dev/null || true)
+    TOOLBOX_ON=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/toolbox.py" extra-allowed --config "$MCP_CONFIG" --project "$PROJECT_DIR" 2>/dev/null || true)
+    if [ -n "$TOOLBOX_OFF" ]; then
+      DISALLOWED_TOOLS="${DISALLOWED_TOOLS:+$DISALLOWED_TOOLS,}$TOOLBOX_OFF"
+      DISALLOW_ARGS=(--disallowedTools "$DISALLOWED_TOOLS")
+      echo "[toolbox] 止める道具: $TOOLBOX_OFF" >> "$LOG_FILE"
+    fi
+    if [ -n "$TOOLBOX_ON" ]; then
+      ALLOWED_TOOLS="${ALLOWED_TOOLS},${TOOLBOX_ON}"
+      echo "[toolbox] 足す道具: $TOOLBOX_ON" >> "$LOG_FILE"
     fi
   fi
   echo "[mcp-config] $MCP_CONFIG" >> "$LOG_FILE"
