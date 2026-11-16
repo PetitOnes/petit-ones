@@ -126,9 +126,10 @@
             <button class="a-btn a-btn--sub a-btn--s" onclick="savePresets()">決める</button></span>
         </div>
         <p class="a-hint" id="nowPresetsHint" style="margin:4px 0 10px"></p>
-        <p class="a-hint" style="margin:0 0 8px">📍 の「👋 ここにいるよ」と「🌙 からだ おやすみ」を、だれに届けるか。押して選ぶ。</p>
+        <p class="a-hint" style="margin:0 0 8px">📍 の「👋 ここにいるよ」「🌙 からだ おやすみ」「☀️ 時間外も起きている」を、だれに届けるか。押して選ぶ。</p>
         <div class="s-row"><span>👋 ここにいるよ</span><span class="s-pin" id="pinHello"></span></div>
         <div class="s-row"><span>🌙 からだ おやすみ</span><span class="s-pin" id="pinRest"></span></div>
+        <div class="s-row"><span>☀️ 時間外も起きている</span><span class="s-pin" id="pinAwake"></span></div>
       </div>
       <div class="m-card" id="notifyCard">
         <span class="a-heading">🔔 Slack 通知(わたしあての手紙)</span>
@@ -361,7 +362,8 @@
       document.getElementById("pinCard").style.display = "";
       document.getElementById("pinHello").closest(".s-row").style.display = chars.length ? "" : "none";
       document.getElementById("pinRest").closest(".s-row").style.display = chars.length ? "" : "none";
-      for (const [key, id] of [["hello_to", "pinHello"], ["rest_to", "pinRest"]]) {
+      document.getElementById("pinAwake").closest(".s-row").style.display = chars.length ? "" : "none";
+      for (const [key, id] of [["hello_to", "pinHello"], ["rest_to", "pinRest"], ["awake_to", "pinAwake"]]) {
         const picked = Array.isArray(ui[key]) && ui[key].length ? ui[key] : chars.map(c => c.id);
         document.getElementById(id).innerHTML = chars.map(c => `<button class="a-pill${picked.includes(c.id) ? " is-on" : ""}" data-pin="${key}" data-char="${esc(c.id)}"><span class="s-dot" style="background:${esc(c.color || "#cab8d9")}"></span>${esc(c.name || c.id)}</button>`).join("");
       }
