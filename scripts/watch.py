@@ -225,11 +225,11 @@ def sync(report: dict, base: Path | None = None, now: datetime | None = None) ->
                 n["mita_at"] = _iso(now)
         _save_notices(items, base)
     after = int(report.get("after") or 0)
-    if after > (max((int(n.get("id", 0)) for n in items), default=0)):
-        after = 0   # 家の側が作り直された(時計が先の番号を覚えている)
+    last = max((int(n.get("id", 0)) for n in items), default=0)
+    # 時計は last_id を覚え直す(家の側が作り直されて番号が戻っても、次から受け取れる)
     out = [{"id": n["id"], "from": n["from"], "text": n["text"], "at": n["at"]} for n in items if int(n.get("id", 0)) > after]
     cfg = config(base)
-    return {"notices": out[-5:], "notify": bool(cfg.get("notify")), "now": int(now.timestamp())}
+    return {"notices": out[-5:], "last_id": last, "notify": bool(cfg.get("notify")), "now": int(now.timestamp())}
 
 
 # ---- 「見たよ」を、送った子に伝える ----

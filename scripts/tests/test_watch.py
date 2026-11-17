@@ -63,7 +63,8 @@ def test_send_limits_and_delivery(tmp_path):
     assert watch.send("puchiru", "ぷちるは別に数える", tmp_path, NOON)[0]
     got = watch.sync({"still_s": 0, "after": 0}, tmp_path, NOON)["notices"]
     assert [n["id"] for n in got] == [1, 2, 3, 4]
-    assert watch.sync({"still_s": 0, "after": 4}, tmp_path, NOON)["notices"] == []
+    r = watch.sync({"still_s": 0, "after": 4}, tmp_path, NOON)
+    assert r["notices"] == [] and r["last_id"] == 4
     # 次の日はまた 3 回
     _held(tmp_path, now=NOON + timedelta(days=1))
     assert "あと 3 回" in watch.line("puchiko", tmp_path, NOON + timedelta(days=1))
