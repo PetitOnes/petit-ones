@@ -3027,7 +3027,24 @@ async def api_watch_sync(request: Request):
         n["name"], n["color"] = names.get(n["from"], n["from"]), colors.get(n["from"], "")
     if new_key:
         res["key"] = new_key
+    res["ts_ip"] = _tailnet_ip()   # 家の外(テザリング)から、時計が Tailscale でこの PC に来るときの番号
     return res
+
+
+_TAILNET_IP: list[str] = []
+
+
+def _tailnet_ip() -> str:
+    """この PC の Tailscale の番号(100.x)。分かったら覚える。無ければ空"""
+    if not _TAILNET_IP:
+        try:
+            out = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3).stdout.split()
+        except (OSError, subprocess.SubprocessError):
+            out = []
+        if not out:
+            return ""   # Tailscale が止まっている(覚えずに、次にまた調べる)
+        _TAILNET_IP.append(out[0])
+    return _TAILNET_IP[0]
 
 
 def _watch_view(request: Request) -> dict:
