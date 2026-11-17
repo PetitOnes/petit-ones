@@ -461,6 +461,15 @@ if [ -f "${PROJECT_DIR}/scripts/sing.py" ]; then
   SING_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sing.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# ぷち時計(2026-11-17、ありさんと 3 人で決めた): 家の人が時計を持っていて、夜(0〜7 時)でなく、通知がオンのときだけ 1 行。
+# 送れないときは何も足さない(手元にないことも言わない)。「見たよ」が返ってきた分も 1 行。決まりは scripts/watch.py
+WATCH_LINE=""
+WATCH_NOTICE=""
+if [ -f "${PROJECT_DIR}/scripts/watch.py" ]; then
+  WATCH_LINE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/watch.py" line --character "$CHARACTER_ID" 2>/dev/null || true)
+  WATCH_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/watch.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
+
 # いま どこ(2026-11-14): 家の人の「いま」(自室・お外・会社 など。ダッシュボードの右上で決める。state/whereabouts.json)と、
 # ぷちの体の居場所(家 / お外。体験デーモンが書く体の Wi-Fi から)。この子の体は「あなたの体」。無ければ何も足さない
 WHEREABOUTS=""
@@ -521,7 +530,7 @@ PROMPT="$(render autonomous/user \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
 
 # プロジェクトディレクトリに移動
@@ -569,6 +578,7 @@ Bash(python3 $ALLOWED_DIR/scripts/toolbox.py *),
 Bash(python3 $ALLOWED_DIR/scripts/body_log.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sounds.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sing.py *),
+Bash(python3 $ALLOWED_DIR/scripts/watch.py send *),
 Bash(python3 $ALLOWED_DIR/scripts/check_usage.py *),
 Bash(python3 $ALLOWED_DIR/scripts/anniversaries.py *),
 Bash(python3 $ALLOWED_DIR/scripts/events.py *),
