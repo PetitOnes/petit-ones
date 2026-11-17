@@ -29,15 +29,31 @@
     .h-body section:target, .h-body :target { scroll-margin-top: 70px; }
     .h-body section.hit { outline: 2px solid var(--ui-accent-line); }
     .h-empty { color: var(--ui-text-sub); text-align: center; padding: 24px 0; }
+    /* 教科書(読むだけ)。上の粒で 使い方 / 本 を切り替え、本はページの粒 → 本文 */
+    .h-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+    .h-tabs a, .h-toc a { text-decoration: none; }
+    .tb-page { padding: 14px 16px; background: var(--ui-surface); border-radius: var(--ui-radius-card); box-shadow: var(--ui-shadow-card); }
+    .tb-page h1 { display: block; margin: 0 0 8px; font-family: var(--ui-font-head); font-size: 1.15rem; color: var(--ui-heading); }
+    .tb-page table { border-collapse: collapse; font-size: 0.9em; display: block; overflow-x: auto; }
+    .tb-page th, .tb-page td { border: 1px solid var(--ui-line, #ddd); padding: 4px 8px; vertical-align: top; }
+    .tb-page blockquote { margin: 6px 0; padding: 4px 12px; border-left: 3px solid var(--ui-accent-line); color: var(--ui-text-sub); }
   </style>
 </head>
 <body>
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>📖 使い方</h1></div>
-    <div class="o-bar"><input class="a-input" id="q" placeholder="さがす（例: 声 / 設定 / 写真）" autocomplete="off" style="flex:1"></div>
-    <div class="h-toc" id="toc"></div>
-    <div class="h-body" id="helpBody"></div>
-    <div class="h-empty" id="empty" style="display:none">見つからなかった</div>
+    <div class="h-tabs" id="tabs"></div>
+    <div id="helpPane">
+      <div class="o-bar"><input class="a-input" id="q" placeholder="さがす（例: 声 / 設定 / 写真）" autocomplete="off" style="flex:1"></div>
+      <div class="h-toc" id="toc"></div>
+      <div class="h-body" id="helpBody"></div>
+      <div class="h-empty" id="empty" style="display:none">見つからなかった</div>
+    </div>
+    <div id="tbPane" style="display:none">
+      <p class="a-hint" id="tbHint" style="margin:0 0 6px"></p>
+      <div class="h-toc" id="tbToc"></div>
+      <div class="h-body tb-page" id="tbBody"></div>
+    </div>
   </div>
   <script>
     const { esc } = PetitPage;
@@ -59,7 +75,7 @@
         (sec || body).appendChild(node);
       }
       document.getElementById("toc").innerHTML = sections.map(s => `<a class="a-pill" href="#${esc(s.id)}">${esc(s.querySelector("h2").textContent)}</a>`).join("");
-      if (location.hash) jump();
+      if (location.hash && !location.hash.startsWith("#tb/")) jump();
     }
     // 見られる子が決まっている人には、できないこと・見せないページの行を出さない(/api/me の can・hide_tools・chat)。
     // 行の頭の太字(「**アクティブタイム**: …」の アクティブタイム)で見分ける。本文(help.md)に印は付けていない
@@ -94,13 +110,45 @@
       }
     }
     function jump() {
+      if (!location.hash || location.hash.startsWith("#tb/")) return;
       const t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
       if (!t) return;
       sections.forEach(s => s.classList.remove("hit"));
       (t.closest("section") || t).classList.add("hit");
       t.scrollIntoView({block: "start"});
     }
-    window.addEventListener("hashchange", jump);
+    // ---- 教科書(読むだけ。/api/textbook)。#tb/<本>/<ページ> で開く ----
+    let books = [];
+    const TB_HINT = {house: "この家で、ぷちたちとありさんが話して決めたこと。ぷちは 家/<名前> で読む。", petit: "どの家のぷちも同じ決まり。ぷちが迷ったときに開く本。"};
+    function drawTabs(cur) {
+      document.getElementById("tabs").innerHTML = [`<a class="a-pill${cur ? "" : " is-on"}" href="#">📖 使い方</a>`]
+        .concat(books.map(b => `<a class="a-pill${cur === b.id ? " is-on" : ""}" href="#tb/${esc(b.id)}">${b.id === "house" ? "🏠" : "📗"} ${esc(b.name)}</a>`)).join("");
+    }
+    async function openBook(bookId, pageId) {
+      const b = books.find(x => x.id === bookId);
+      if (!b) return false;
+      document.getElementById("helpPane").style.display = "none";
+      document.getElementById("tbPane").style.display = "";
+      drawTabs(b.id);
+      const page = b.pages.find(p => p.id === pageId) || b.pages[0];
+      document.getElementById("tbHint").textContent = TB_HINT[b.id] || "";
+      document.getElementById("tbToc").innerHTML = b.pages.map(p => `<a class="a-pill${page && p.id === page.id ? " is-on" : ""}" href="#tb/${esc(b.id)}/${esc(p.id)}">${esc(p.title)}</a>`).join("");
+      const out = document.getElementById("tbBody");
+      if (!page) { out.textContent = "まだページが無い"; return true; }
+      try { out.innerHTML = marked.parse(await fetch(`/api/textbook/${encodeURIComponent(b.id)}/${encodeURIComponent(page.id)}`).then(r => r.ok ? r.text() : Promise.reject())); }
+      catch (e) { out.textContent = "読めなかった"; }
+      return true;
+    }
+    async function route() {
+      const m = decodeURIComponent(location.hash).match(/^#tb\/([^/]+)(?:\/(.+))?$/);
+      if (m && await openBook(m[1], m[2])) { window.scrollTo(0, 0); return; }
+      document.getElementById("helpPane").style.display = "";
+      document.getElementById("tbPane").style.display = "none";
+      drawTabs("");
+      jump();
+    }
+    window.addEventListener("hashchange", route);
+    fetch("/api/textbook").then(r => r.json()).then(d => { books = d.books || []; route(); }).catch(() => drawTabs(""));
     document.getElementById("q").addEventListener("input", e => {
       const q = e.target.value.trim().toLowerCase();
       let n = 0;

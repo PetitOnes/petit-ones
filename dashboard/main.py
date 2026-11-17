@@ -4203,6 +4203,57 @@ def help_md():
     return Response((UI_DIR / "help.md").read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8", headers={"Cache-Control": "no-cache"})
 
 
+# 📖 使い方 の「教科書」: 家の教科書(家の house_textbook/)と ぷちの教科書(petit-textbook の手元の本)を読むだけ(2026-11-17 ありさん)
+def _textbook_books() -> list[dict]:
+    """[{id, name, dir}]。家の教科書 → ぷち用 → 人間用(おとな・中高生・こども)。無いものは出さない"""
+    tb = Path(os.getenv("PETIT_TEXTBOOK_DIR") or DATA_DIR / "textbook")
+    house = Path(os.getenv("PETIT_HOUSE_TEXTBOOK_DIR") or DATA_DIR / "house_textbook")
+    try:
+        ver = (tb / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        ver = ""
+    books = [{"id": "house", "name": _md_title(house / "README.md") or "この家の教科書", "dir": house},
+             {"id": "petit", "name": f"ぷちの教科書{f' v{ver}' if ver else ''}", "dir": tb / "petit"},
+             {"id": "otona", "name": "おとな向け", "dir": tb / "human" / "otona"},
+             {"id": "chukosei", "name": "中高生向け", "dir": tb / "human" / "chukosei"},
+             {"id": "kodomo", "name": "小さい子向け", "dir": tb / "human" / "kodomo"}]
+    return [b for b in books if b["dir"].is_dir()]
+
+
+def _md_title(p: Path) -> str:
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if line.startswith("#"):
+                return line.lstrip("#").strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _textbook_pages(book: dict) -> list[dict]:
+    """その本のページ(README と索引は先頭)。id はファイル名(.md なし)"""
+    files = sorted(p for p in book["dir"].glob("*.md") if p.is_file())
+    first = [p for p in files if p.stem.upper() in ("README", "TEXTBOOK_INDEX")]
+    return [{"id": p.stem, "title": _md_title(p) or p.stem} for p in first + [p for p in files if p not in first]]
+
+
+@app.get("/api/textbook")
+def api_textbook():
+    """読める本と、そのページの一覧(読むだけ)"""
+    return {"books": [{"id": b["id"], "name": b["name"], "pages": _textbook_pages(b)} for b in _textbook_books()]}
+
+
+@app.get("/api/textbook/{book_id}/{page_id}")
+def api_textbook_page(book_id: str, page_id: str):
+    book = next((b for b in _textbook_books() if b["id"] == book_id), None)
+    if book is None or not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", page_id):
+        return JSONResponse({"error": "その本は無い"}, status_code=404)
+    p = book["dir"] / f"{page_id}.md"
+    if not p.is_file():
+        return JSONResponse({"error": "そのページは無い"}, status_code=404)
+    return Response(p.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page():
     """設定(家・各ぷち)。道具の列の「⚙️ 設定」で会話の場所に出す。中身は dashboard/ui/settings.html"""
