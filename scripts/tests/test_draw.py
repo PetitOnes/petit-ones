@@ -67,3 +67,17 @@ def test_bad_recipe_messages():
         draw.check({"shapes": []})
     with pytest.raises(draw.DrawError, match="#rrggbb"):
         draw.check({"shapes": [{"type": "dot", "color": "blue"}]})
+
+
+def test_hand_drawn_image_by_person(tmp_path):
+    import io
+
+    from PIL import Image
+    base = _house(tmp_path)
+    buf = io.BytesIO()
+    Image.new("RGB", (640, 480), (0xca, 0xb8, 0xd9)).save(buf, "PNG")
+    info = draw.make_image(base, "arisan", "yuugata", buf.getvalue(), why="てすと")
+    assert info["recipe"]["hand"] and info["numbers"]["colors"][0]["hex"] == "#cab8d9"
+    assert "灰色" in info["lacks"][0]["note"]
+    draw.give(base, "arisan", "yuugata", "ru", "ゆうがた")
+    assert "手で描いた絵" in draw.look_text(base, "ru", "arisan", "yuugata")

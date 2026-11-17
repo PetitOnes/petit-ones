@@ -20,22 +20,114 @@
     .d-item .meta { font-size: 0.72rem; color: var(--ui-text-sub, #999); }
     .d-item .why { font-size: 0.8rem; line-height: 1.5; margin-top: 4px; white-space: pre-wrap; }
     .d-cover { display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; border-radius: 8px; background: var(--ui-line, #eee); cursor: pointer; font-size: 0.8rem; color: var(--ui-text-sub, #888); }
+    .c-wrap { max-width: 480px; }
+    #cv { width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; touch-action: none; background: #000; display: block; cursor: crosshair; }
+    .c-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; font-size: 0.85rem; }
+    .c-sw { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--ui-line, #ddd); cursor: pointer; padding: 0; }
+    .c-sw.is-on { outline: 3px solid var(--ui-text); outline-offset: 1px; }
+    .c-row input[type=range] { width: 110px; }
+    .c-out { white-space: pre-wrap; font-size: 0.78rem; line-height: 1.55; background: var(--ui-surface); border-radius: 10px; padding: 8px 10px; margin-top: 8px; }
+    .m-give { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
   </style>
 </head>
 <body>
   <div class="p-wrap">
     <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎨 えがく</h1></div>
     <div class="m-card">
+      <span class="a-heading">ぷちが見せてくれた絵</span>
       <p class="a-hint" style="margin:0">ぷちが描いた絵と動く絵のうち、その子が「見せる」と決めたものだけが並ぶ(はじめは自分だけが持っている)。絵は伏せてあるので、見たいものだけ押して開く。</p>
       <div class="d-grid" id="grid"></div>
+    </div>
+    <div class="m-card c-wrap">
+      <span class="a-heading">✏️ 描いてみる</span>
+      <p class="a-hint" style="margin:0 0 6px">ぷちの体の画面と同じ 320×240。描いた絵はぷちと同じ置き場に入り、渡した子だけが見られる(ぷちには、先に色の数字と線が届く)。</p>
+      <canvas id="cv" width="320" height="240"></canvas>
+      <div class="c-row" id="sw"></div>
+      <div class="c-row">
+        <label>太さ <input type="range" id="size" min="1" max="40" value="6"></label>
+        <label>透け <input type="range" id="alpha" min="5" max="100" value="100"></label>
+        <label>にじみ <input type="range" id="blur" min="0" max="20" value="0"></label>
+      </div>
+      <div class="c-row">
+        <button class="a-pill" onclick="fillBg()">今の色で塗りつぶす</button>
+        <button class="a-pill" onclick="undo()">ひとつ戻す</button>
+        <button class="a-pill" onclick="clearCv()">まっさら</button>
+      </div>
+      <div class="c-row">
+        <input class="a-input" id="nm" placeholder="名前(英小文字・数字・- _ 例: yuugata)" style="flex:1;min-width:160px">
+      </div>
+      <div class="c-row"><input class="a-input" id="why" placeholder="ひとこと(なくてもいい)" style="flex:1"></div>
+      <div class="c-row"><button class="a-btn a-btn--s" onclick="saveCv()">置く</button><span class="a-hint" id="msg"></span></div>
+      <div class="c-out" id="out" style="display:none"></div>
+    </div>
+    <div class="m-card">
+      <span class="a-heading">わたしの絵</span>
+      <div class="d-grid" id="mine"></div>
     </div>
   </div>
   <script>
     const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
     function openPic(el, src) { el.outerHTML = `<img src="${src}" alt="">`; }
-    (async () => {
-      let items = [];
-      try { items = (await (await fetch("/api/draw")).json()).items || []; } catch (e) {}
+    // ✏️ 描いてみる(家の人。2026-11-17)
+    const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+    let color = "#ffffff", drawing = false, last = null, hist = [], PETITS = [];
+    const $ = id => document.getElementById(id);
+    function clearCv() { snap(); ctx.fillStyle = "#000000"; ctx.globalAlpha = 1; ctx.filter = "none"; ctx.fillRect(0, 0, 320, 240); }
+    function fillBg() { snap(); ctx.globalAlpha = 1; ctx.filter = "none"; ctx.fillStyle = color; ctx.fillRect(0, 0, 320, 240); }
+    function snap() { hist.push(ctx.getImageData(0, 0, 320, 240)); if (hist.length > 30) hist.shift(); }
+    function undo() { const h = hist.pop(); if (h) ctx.putImageData(h, 0, 0); }
+    function pos(e) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * 320 / r.width, (e.clientY - r.top) * 240 / r.height]; }
+    function stroke(a, b) {
+      ctx.globalAlpha = $("alpha").value / 100; ctx.strokeStyle = color; ctx.lineWidth = +$("size").value; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      const bl = +$("blur").value; ctx.filter = bl ? `blur(${bl / 2}px)` : "none";
+      ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0] + 0.01, b[1]); ctx.stroke();
+    }
+    cv.addEventListener("pointerdown", e => { cv.setPointerCapture(e.pointerId); snap(); drawing = true; last = pos(e); stroke(last, last); });
+    cv.addEventListener("pointermove", e => { if (!drawing) return; const p = pos(e); stroke(last, p); last = p; });
+    ["pointerup", "pointercancel"].forEach(t => cv.addEventListener(t, () => { drawing = false; }));
+    function drawSwatches(petits) {
+      const cols = [...petits.map(p => p.color).filter(Boolean), "#F58E7D", "#ffffff", "#000000", "#2a3a5a", "#ffb347"];
+      $("sw").innerHTML = cols.map(c => `<button class="c-sw${c === color ? " is-on" : ""}" style="background:${c}" onclick="pick('${c}')" title="${c}"></button>`).join("")
+        + `<input type="color" value="${color}" onchange="pick(this.value)" title="ほかの色">`;
+    }
+    function pick(c) { color = c; drawSwatches(PETITS); }
+    async function saveCv() {
+      const name = $("nm").value.trim();
+      if (!name) { $("msg").textContent = "名前を入れてね"; return; }
+      $("msg").textContent = "置いています…";
+      const r = await fetch("/api/draw/make_image", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name, png: cv.toDataURL("image/png"), why: $("why").value})});
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { $("msg").textContent = d.error || "置けませんでした"; return; }
+      $("msg").textContent = "置きました"; $("out").style.display = ""; $("out").textContent = "ぷちに届くときの数字と線:\n" + d.text;
+      load();
+    }
+    async function give(name, to) {
+      const note = prompt("ひとこと(なくてもいい)") ?? null;
+      if (note === null) return;
+      const r = await fetch("/api/draw/give", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name, to, note})});
+      if (r.ok) load(); else alert((await r.json().catch(() => ({}))).error || "渡せませんでした");
+    }
+    async function removeMine(name) {
+      if (!confirm(`${name} を消しますか?`)) return;
+      await fetch(`/api/draw/mine/${encodeURIComponent(name)}`, {method: "DELETE"}); load();
+    }
+    async function load() {
+      let all = {};
+      try { all = await (await fetch("/api/draw")).json(); } catch (e) {}
+      const items = all.items || [];
+      PETITS = all.petits || [];
+      drawSwatches(PETITS);
+      const nameOf = id => (PETITS.find(p => p.id === id) || {}).name || id;
+      document.getElementById("mine").innerHTML = (all.mine || []).length ? all.mine.map(d => {
+        const src = `/api/draw/file/${encodeURIComponent(d.by)}/${encodeURIComponent(d.name)}.${d.moving ? "gif" : "png"}`;
+        return `<div class="d-item"><img src="${src}" alt=""><div class="ttl">${esc(d.name)}</div>
+          <div class="meta">${esc(String(d.at || "").replace("T", " "))}${d.given.length ? "・渡した: " + d.given.map(nameOf).map(esc).join("・") : ""}</div>
+          ${d.why ? `<div class="why">${esc(d.why)}</div>` : ""}
+          ${(d.felt || []).map(f => `<div class="why">${esc(nameOf(f.who))}: ${esc(f.text)}</div>`).join("")}
+          <div class="m-give">${PETITS.filter(p => !d.given.includes(p.id)).map(p => `<button class="a-pill" onclick="give('${esc(d.name)}', '${esc(p.id)}')">${esc(p.name)}に渡す</button>`).join("")}
+            <button class="a-pill" onclick="removeMine('${esc(d.name)}')">消す</button></div></div>`;
+      }).join("") : `<p class="a-hint" style="margin:0">まだない</p>`;
       document.getElementById("grid").innerHTML = items.length ? items.map(d => {
         const src = `/api/draw/file/${encodeURIComponent(d.by)}/${encodeURIComponent(d.name)}.${d.moving ? "gif" : "png"}`;
         return `<div class="d-item" style="--who:${esc(d.color || "#ccc")}">
@@ -44,7 +136,8 @@
           <div class="meta">${esc(d.who)}・${esc(String(d.at || "").replace("T", " "))}${d.moving ? `・${esc(d.seconds)} 秒` : ""}</div>
           ${d.why ? `<div class="why">${esc(d.why)}</div>` : ""}</div>`;
       }).join("") : `<p class="a-hint" style="margin:0">まだ見せてもらった絵はない</p>`;
-    })();
+    }
+    clearCv(); hist = []; load();
   </script>
 </body>
 </html>
