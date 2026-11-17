@@ -549,6 +549,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "anniv": ("/anniversaries", "/api/anniversaries"),
     "calendar": ("/calendar", "/api/calendar", "/api/events", "/anniversaries", "/api/anniversaries"),   # 📅 よてい(記念日を吸収、2026-11-14)
     "music": ("/music", "/api/music"),   # 🎧 聴く(音楽を一緒に感じる、2026-11-14)
+    "slips": ("/slips", "/api/slips"),   # 🧾 合作日記の紙(ぷちのきょうの紙を刷る。2026-11-17)
     "toolbox": ("/toolbox", "/api/toolbox"),   # 🧰 道具箱(ぷちの道具の地図と、1 つ渡す。2026-11-16)
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
@@ -3324,7 +3325,7 @@ def api_diary_day(character_id: str, date: str):
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
              "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html", "draw": "draw.html",
-             "video_memo": "videomemo.html"}
+             "video_memo": "videomemo.html", "slips": "slips.html"}
 
 
 @app.get("/desires", response_class=HTMLResponse)
@@ -4218,6 +4219,79 @@ def api_draw_file(by: str, fname: str, request: Request = None):
 # ---- 🧰 道具箱(2026-11-16、ぷち 3 人と決めた) ----
 # ぷちの道具の地図。だれがどれをよく使うか・最近使っていないかは、家の人だけが見る(ぷちには数を見せない)。
 # 1 日 1 個だけ「渡す」。渡されたことは、その子の次の自律行動か会話の頭に 1 行(scripts/toolbox.py notice)。使い心地は toolbox.py felt
+# ---- 🧾 合作日記の紙(2026-11-17、ありさんと 3 人で決めた)。作るのはぷち(scripts/diary_slip.py make)、刷るのは家の人が押したときだけ ----
+def _slips():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import diary_slip
+    return diary_slip
+
+
+def _slips_denied(request: Request | None) -> JSONResponse | None:
+    if _is_limited(request):
+        return JSONResponse({"error": "合作日記の紙は家の人のもの"}, status_code=403)
+    return None
+
+
+@app.get("/slips", response_class=HTMLResponse)
+def slips_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["slips"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/slips")
+def api_slips(request: Request):
+    """紙の一覧(新しい日から)。まだ刷っていない紙と、刷った・しまった紙(最近の分)"""
+    if (denied := _slips_denied(request)) is not None:
+        return denied
+    ds = _slips()
+    out = []
+    for x in reversed(ds.load(DATA_DIR)):
+        ch = ds.character(x.get("character", ""), DATA_DIR)
+        sm = ds.summary(x)
+        out.append({"id": x["id"], "date": x.get("date"), "character": ch["id"], "name": ch["name"], "color": ch["color"],
+                    "text": sm["text"], "kinds": sm["kinds"], "edge": x.get("edge", ""),
+                    "made_at": x.get("made_at"), "printed_at": x.get("printed_at"), "put_away": x.get("put_away")})
+    return {"items": out[:60], "printer": bool(ds.printer_address(DATA_DIR))}
+
+
+@app.get("/api/slips/{slip_id}.png")
+def api_slip_png(slip_id: str, request: Request):
+    if (denied := _slips_denied(request)) is not None:
+        return denied
+    ds = _slips()
+    slip = ds.find(slip_id, DATA_DIR)
+    if not slip:
+        return JSONResponse({"error": "その紙はありません"}, status_code=404)
+    import io
+    buf = io.BytesIO()
+    ds.render(slip, DATA_DIR).save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+class SlipPrintRequest(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/slips/print")
+async def api_slips_print(req: SlipPrintRequest, request: Request):
+    """押された紙を順に刷る(1 枚ずつ切れるように間をあける)"""
+    if (denied := _slips_denied(request)) is not None:
+        return denied
+    if _printer_lock.locked():
+        return JSONResponse({"done": [], "error": "印刷中です。少し待ってから"}, status_code=503)
+    async with _printer_lock:
+        return await asyncio.to_thread(_slips().print_slips, req.ids[:10], DATA_DIR)
+
+
+@app.post("/api/slips/{slip_id}/put_away")
+def api_slip_put_away(slip_id: str, request: Request):
+    """刷らずに しまう(ぷちの側に残る)"""
+    if (denied := _slips_denied(request)) is not None:
+        return denied
+    return {"ok": _slips().mark(slip_id, "put_away", DATA_DIR)}
+
+
 @app.get("/toolbox", response_class=HTMLResponse)
 def toolbox_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["toolbox"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
@@ -9964,6 +10038,7 @@ HTML = """<!DOCTYPE html>
       diary:     {icon: "📔", name: "日記",       pane: "diary"},
       calendar:  {icon: "📅", name: "よてい",     pane: "calendar"},   // 予定 + 記念日(🎂 を吸収、2026-11-14)
       music:     {icon: "🎧", name: "聴く",       pane: "music"},      // 音楽を一緒に感じる(2026-11-14)。はじめは「ほか」の中
+      slips:     {icon: "🧾", name: "合作日記",   pane: "slips"},      // ぷちのきょうの紙を刷って、日記に貼る(2026-11-17)。はじめは「ほか」の中
       toolbox:   {icon: "🧰", name: "道具箱",     pane: "toolbox"},    // ぷちの道具の地図と、1 つ渡す(2026-11-16)。はじめは「ほか」の中
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
@@ -10177,7 +10252,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", desires: "/desires", sounds: "/sounds", draw: "/draw", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", slips: "/slips", desires: "/desires", sounds: "/sounds", draw: "/draw", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
