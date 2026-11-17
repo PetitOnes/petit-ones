@@ -27,19 +27,37 @@ _LOCAL_BIN = str(Path.home() / ".local" / "bin")
 if _LOCAL_BIN not in os.environ.get("PATH", "").split(os.pathsep):
     os.environ["PATH"] = _LOCAL_BIN + os.pathsep + os.environ.get("PATH", "")
 
-# 音声認識(ASR :8765)・音声合成(TTS :8766)を動かしている PC。同じ PC なら localhost(m5-petit-mcp と同じ既定)
-VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "localhost")
-_ASR_URL = f"http://{VOICE_API_HOST}:8765"
-# 同じ PC の m5-petit-voice-recognition は :8767(:8765 はこのダッシュボード自身)
+# 音声認識(ASR :8765)・音声合成(TTS :8766)を動かしている PC。家の config/voice.json(⚙️ 設定 → 家)→ 環境変数 VOICE_API_HOST → localhost
+# (決まりは scripts/voice_host.py。呼ぶたびに読むので、切り替えても再起動は要らない)
+# 同じ PC の m5-petit-voice-recognition は :8767(:8765 はこのダッシュボード自身)、声は :8766
 _ASR_FALLBACK_URL = os.environ.get("ASR_FALLBACK_URL", "http://localhost:8767")
+_TTS_FALLBACK_URL = os.environ.get("TTS_FALLBACK_URL", "http://localhost:8766")
+
+
+def _voice_host() -> str:
+    sd = str(Path(__file__).resolve().parent.parent / "scripts")
+    if sd not in sys.path:
+        sys.path.insert(0, sd)
+    import voice_host
+    return voice_host.current(Path(os.getenv("PETIT_DATA_DIR", Path.home() / "petit_claude")))
+
+
+def _asr_urls() -> list[str]:
+    """文字起こし・話者に聞きに行く順(選んだ機械 → この PC)"""
+    return list(dict.fromkeys([f"http://{_voice_host()}:8765", _ASR_FALLBACK_URL]))
+
+
+def _tts_urls() -> list[str]:
+    """声を作りに行く順(選んだ機械 → この PC)"""
+    return list(dict.fromkeys([f"http://{_voice_host()}:8766", _TTS_FALLBACK_URL]))
 
 
 def _asr_post(path: str, *, data: dict | None, filename: str, wav_bytes: bytes, timeout: int = 30):
-    """ASR に音声を POST する。まず VOICE_API_HOST:8765、だめなら ASR_FALLBACK_URL。
+    """ASR に音声を POST する。まず 選んだ機械の :8765、だめなら ASR_FALLBACK_URL。
     VOICE_API_HOST=localhost のとき :8765 は自分自身なので 404 → それも次へ回す。最後まで失敗したら例外。"""
     import requests as _rq
     last: Exception | None = None
-    for url in (_ASR_URL, _ASR_FALLBACK_URL):
+    for url in _asr_urls():
         try:
             r = _rq.post(f"{url}{path}", data=data, files={"file": (filename, io.BytesIO(wav_bytes), "audio/wav")}, timeout=timeout)
             r.raise_for_status()
@@ -166,7 +184,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         buf.seek(0)
 
         def _analyze():
-            for _asr_url in [_ASR_URL, _ASR_FALLBACK_URL]:
+            for _asr_url in _asr_urls():
                 try:
                     buf.seek(0)
                     r = _requests.post(
@@ -2487,6 +2505,31 @@ def _optional_mcp():
 class OptionalMcpBody(BaseModel):
     server: str
     on: bool
+
+
+class VoiceHostBody(BaseModel):
+    host: str | None = None   # "localhost"(この PC)/ "puchipuchi"(GPU)。空なら決めない(環境変数のまま)
+
+
+@app.get("/api/voice_host")
+def api_voice_host():
+    """声(合成)と聞き取り(文字起こし・話者)をどの機械でするか、と それぞれの機械が返事をするか"""
+    _voice_host()   # scripts を sys.path に
+    import voice_host
+    return voice_host.view(DATA_DIR)
+
+
+@app.post("/api/voice_host")
+def api_voice_host_set(body: VoiceHostBody, request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "決められるのは、家の世話人だけです"}, status_code=403)
+    _voice_host()
+    import voice_host
+    try:
+        voice_host.set_host(DATA_DIR, body.host or None)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return voice_host.view(DATA_DIR)
 
 
 @app.get("/api/optional_mcp")
@@ -5046,7 +5089,7 @@ async def api_cancel_register_speaker_next(character_id: str, request: Request):
 async def api_speakers():
     """GPU serverの登録済み話者一覧を返す。"""
     import requests as _requests
-    for _asr_url in [_ASR_URL, _ASR_FALLBACK_URL]:
+    for _asr_url in _asr_urls():
         try:
             r = _requests.get(f"{_asr_url}/speakers", timeout=5)
             return r.json()
@@ -5293,8 +5336,6 @@ async def _speak_direct(character_id: str, text: str):
         vs = json.loads(vs_path.read_text()) if vs_path.exists() else {}
         speaker = vs.get("voicevox_speaker", 1)
 
-        tts_url = f"http://{VOICE_API_HOST}:8766"
-
         def _wav_to_mono16k(wav_bytes: bytes) -> io.BytesIO:
             import subprocess
             import tempfile as _tf
@@ -5317,10 +5358,18 @@ async def _speak_direct(character_id: str, text: str):
 
         def _tts_and_play():
             # TTS生成
-            r = req.post(f"{tts_url}/speak", json={
-                "text": text, "engine": "voicevox", "voicevox_speaker": speaker,
-            }, timeout=15)
-            r.raise_for_status()
+            r = None
+            for tts_url in _tts_urls():   # 選んだ機械 → この PC
+                try:
+                    r = req.post(f"{tts_url}/speak", json={
+                        "text": text, "engine": "voicevox", "voicevox_speaker": speaker,
+                    }, timeout=15)
+                    r.raise_for_status()
+                    break
+                except Exception:
+                    r = None
+            if r is None:
+                raise RuntimeError("声を作れなかった")
             wav_bytes = r.content
             mono_buf = _wav_to_mono16k(wav_bytes)
 
@@ -6120,11 +6169,18 @@ async def api_public_chat(req: PublicChatRequest, request: Request):
                     "pre_phoneme_length", "post_phoneme_length"):
             if key in vs:
                 tts_payload[key] = vs[key]
-        tts_url = f"http://{VOICE_API_HOST}:8766"
-        r = await asyncio.to_thread(lambda: req_lib.post(
-            f"{tts_url}/speak", json=tts_payload, timeout=15,
-        ))
-        if r.status_code == 200:
+        def _tts():
+            last = None
+            for tts_url in _tts_urls():   # 選んだ機械 → この PC
+                try:
+                    last = req_lib.post(f"{tts_url}/speak", json=tts_payload, timeout=15)
+                    if last.status_code == 200:
+                        return last
+                except Exception:
+                    continue
+            return last
+        r = await asyncio.to_thread(_tts)
+        if r is not None and r.status_code == 200:
             audio_id = str(_uuid.uuid4())
             _public_audio_cache[audio_id] = {"wav": r.content, "created_at": time.time()}
             # 10分後にキャッシュを自動削除するタスク
@@ -7000,7 +7056,7 @@ def _transcribe_audio_file(path: Path) -> str | None:
     try:
         subprocess.run(["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(wav_path)],
                        capture_output=True, check=True, timeout=60)
-        for url in [_ASR_URL, _ASR_FALLBACK_URL]:
+        for url in _asr_urls():
             try:
                 with open(wav_path, "rb") as wf:
                     r = _rq.post(f"{url}/transcribe", files={"file": (path.stem + ".wav", wf, "audio/wav")}, timeout=60)

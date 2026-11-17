@@ -35,6 +35,9 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import voice_host  # noqa: E402
+
 CACHE_S = 120
 PROBE_TIMEOUT_S = 0.7
 Probe = Callable[[str, int], bool]
@@ -129,21 +132,24 @@ def status(base: Path, now: datetime | None = None, probe: Probe | None = None, 
 
 
 def apply(base: Path, mcp_config: Path, now: datetime | None = None, probe: Probe | None = None) -> tuple[Path, list[str]]:
-    """MCP の設定から、いま渡さないサーバーを外す。(使う設定のパス, 止める道具) を返す。
+    """MCP の設定から、いま渡さないサーバーを外す(と、声と聞き取りの機械を家の決めたものに)。(使う設定のパス, 止める道具) を返す。
 
-    外すものが無ければ元のパスのまま。外すときは PETIT_DATA_DIR/state/mcp_filtered/ に写しを置く
+    変えるものが無ければ元のパスのまま。変えるときは PETIT_DATA_DIR/state/mcp_filtered/ に写しを置く
     (設定には鍵が入っていることがあるので、持ち主だけが読める形で)。読めない設定は、元のまま返す
     """
     st = status(base, now, probe)
     d = _json(mcp_config, None)
     servers = d.get("mcpServers") if isinstance(d, dict) else None
-    if not st or not isinstance(servers, dict):
+    if not isinstance(servers, dict):
         return mcp_config, []
     gone = [n for n, s in st.items() if n in servers and not s["use"]]
     drop = [t for n, s in st.items() if n in servers and s["use"] for t in s["drop_tools"]]
-    if not gone:
+    orig = d
+    if gone:
+        d = {**d, "mcpServers": {k: v for k, v in servers.items() if k not in gone}}
+    d = voice_host.override(d, voice_host.get(base))   # 声と聞き取りの機械(config/voice.json)
+    if d is orig:
         return mcp_config, drop
-    d = {**d, "mcpServers": {k: v for k, v in servers.items() if k not in gone}}
     out_dir = base / "state" / "mcp_filtered"
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / f"{hashlib.sha1(str(mcp_config).encode()).hexdigest()[:12]}.json"
