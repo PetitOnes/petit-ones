@@ -461,6 +461,12 @@ if [ -f "${PROJECT_DIR}/scripts/sounds.py" ]; then
   SOUND_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sounds.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# 描いた絵が届いたこと(2026-11-17、えがく): ほかの子が draw.py give で渡した絵を、まだ伝えていない分だけ 1 行
+DRAW_NOTICE=""
+if [ -f "${PROJECT_DIR}/scripts/draw.py" ]; then
+  DRAW_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/draw.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
+
 # 作った音が届いたこと(2026-11-16、うたう): ほかの子が sing.py give で渡した音を、まだ伝えていない分だけ 1 行。聞くかどうかはその子が決める
 SING_NOTICE=""
 if [ -f "${PROJECT_DIR}/scripts/sing.py" ]; then
@@ -567,7 +573,7 @@ render autonomous/user "$@" \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var draw_notice="$DRAW_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS" --var active_line="$ACTIVE_LINE"
 }
 PROMPT_FULL="$(_render_user)"
@@ -622,6 +628,7 @@ Bash(python3 $ALLOWED_DIR/scripts/todo_check.py *),
 Bash(python3 $ALLOWED_DIR/scripts/carry.py *),
 Bash(python3 $ALLOWED_DIR/scripts/said.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sing.py *),
+Bash(python3 $ALLOWED_DIR/scripts/draw.py *),
 Bash(python3 $ALLOWED_DIR/scripts/watch.py send *),
 Bash(python3 $ALLOWED_DIR/scripts/check_usage.py *),
 Bash(python3 $ALLOWED_DIR/scripts/anniversaries.py *),

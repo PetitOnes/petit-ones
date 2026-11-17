@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>えがく</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 🎨 えがく(2026-11-17、ぷち 3 人と決めた): ぷちが「見せる」と決めた絵だけを並べる。見たくなければ見なくていい */
+    .d-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-top: 10px; }
+    .d-item { background: var(--ui-surface); border-radius: 12px; padding: 8px; border-top: 4px solid var(--who, #ccc); }
+    .d-item img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; display: block; background: #000; }
+    .d-item .ttl { font-size: 0.9rem; margin: 6px 0 2px; }
+    .d-item .meta { font-size: 0.72rem; color: var(--ui-text-sub, #999); }
+    .d-item .why { font-size: 0.8rem; line-height: 1.5; margin-top: 4px; white-space: pre-wrap; }
+    .d-cover { display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; border-radius: 8px; background: var(--ui-line, #eee); cursor: pointer; font-size: 0.8rem; color: var(--ui-text-sub, #888); }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🎨 えがく</h1></div>
+    <div class="m-card">
+      <p class="a-hint" style="margin:0">ぷちが描いた絵と動く絵のうち、その子が「見せる」と決めたものだけが並ぶ(はじめは自分だけが持っている)。絵は伏せてあるので、見たいものだけ押して開く。</p>
+      <div class="d-grid" id="grid"></div>
+    </div>
+  </div>
+  <script>
+    const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+    function openPic(el, src) { el.outerHTML = `<img src="${src}" alt="">`; }
+    (async () => {
+      let items = [];
+      try { items = (await (await fetch("/api/draw")).json()).items || []; } catch (e) {}
+      document.getElementById("grid").innerHTML = items.length ? items.map(d => {
+        const src = `/api/draw/file/${encodeURIComponent(d.by)}/${encodeURIComponent(d.name)}.${d.moving ? "gif" : "png"}`;
+        return `<div class="d-item" style="--who:${esc(d.color || "#ccc")}">
+          <div class="d-cover" onclick="openPic(this, '${src}')">${d.moving ? "▶ 動く絵を見る" : "絵を見る"}</div>
+          <div class="ttl">${esc(d.name)}</div>
+          <div class="meta">${esc(d.who)}・${esc(String(d.at || "").replace("T", " "))}${d.moving ? `・${esc(d.seconds)} 秒` : ""}</div>
+          ${d.why ? `<div class="why">${esc(d.why)}</div>` : ""}</div>`;
+      }).join("") : `<p class="a-hint" style="margin:0">まだ見せてもらった絵はない</p>`;
+    })();
+  </script>
+</body>
+</html>
