@@ -61,6 +61,14 @@
 
 {{sing_notice}}
 {{/if}}
+{{#if watch_notice}}
+
+{{watch_notice}}
+{{/if}}
+{{#if watch_line}}
+
+{{watch_line}}
+{{/if}}
 {{#if note_mark_notice}}
 
 {{note_mark_notice}}

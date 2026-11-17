@@ -828,6 +828,11 @@ async def auth_middleware(request: Request, call_next):
     client_ip = request.client.host if request.client else ""
     if client_ip in _load_trusted_ips():
         return await call_next(request)
+    # ぷち時計(家の表示機)は、config/watch.json の鍵で名乗る。この道だけ(2026-11-17)
+    if path == "/api/watch/sync":
+        if not _watch().key_ok(request.headers.get("x-watch-key"), DATA_DIR):
+            return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+        return await call_next(request)
     # スマホ(家の印を聞くアプリ・音を数字にして送るアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
     if path.startswith("/api/beacons/") or path == "/api/music/frames":
         user = _phone_place().person_for_key(request.headers.get("x-petit-key"), DATA_DIR)
@@ -2940,6 +2945,84 @@ def api_beacons_report(body: BeaconReport, request: Request):
     home = pp.home_net(request.client.host if request.client else None)
     cur = pp.report(user, body.seen, DATA_DIR, home=home)
     return {"room": cur["room"], "since": cur["since"], "levels": cur["levels"], "home": home}
+
+
+# ---- ⌚ ぷち時計(家の表示機。scripts/watch.py)。時計からの連絡と、設定 → 家 のカード ----
+def _watch():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import watch
+    return watch
+
+
+@app.post("/api/watch/sync")
+async def api_watch_sync(request: Request):
+    """時計の 1 回の連絡(5 分ごと・持ち上げたとき)。鍵は auth_middleware が確かめ済み。
+    ログインの要らない家でも、ここでもう一度確かめる"""
+    w = _watch()
+    if not w.key_ok(request.headers.get("x-watch-key"), DATA_DIR):
+        return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+    try:
+        report = await request.json()
+    except ValueError:
+        report = {}
+    res = w.sync(report if isinstance(report, dict) else {}, DATA_DIR)
+    names = {c["id"]: c.get("name") or c["id"] for c in list_characters() if c.get("id")}
+    colors = {c["id"]: c.get("color") or "" for c in list_characters() if c.get("id")}
+    for n in res["notices"]:
+        n["name"], n["color"] = names.get(n["from"], n["from"]), colors.get(n["from"], "")
+    return res
+
+
+def _watch_view(request: Request) -> dict:
+    w = _watch()
+    cfg, st = w.config(DATA_DIR), w.status(DATA_DIR)
+    return {"connected": bool(cfg.get("key")), "notify": bool(cfg.get("notify")), "held": w.held(DATA_DIR),
+            "last_at": st.get("at", ""), "battery": st.get("battery"), "charging": bool(st.get("charging")),
+            "quiet": cfg.get("quiet"), "per_day": cfg.get("per_day"), "max_chars": cfg.get("max_chars"),
+            "key": cfg.get("key", "") if not _is_limited(request) else "", "lan_url": _lan_url(request)}
+
+
+def _lan_url(request: Request) -> str:
+    """時計に入れる、家の中でのダッシュボードの住所(この PC の家の LAN の番号)"""
+    import socket
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
+            sk.connect(("192.0.2.1", 9))   # 送らない。どの口から出るかを知るだけ
+            ip = sk.getsockname()[0]
+    except OSError:
+        return ""
+    return f"http://{ip}:{request.url.port or 8765}"
+
+
+class WatchBody(BaseModel):
+    notify: bool
+
+
+@app.get("/api/watch")
+def api_watch(request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    return _watch_view(request)
+
+
+@app.post("/api/watch")
+def api_watch_set(body: WatchBody, request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    _watch().save_config({"notify": body.notify}, DATA_DIR)
+    return _watch_view(request)
+
+
+@app.post("/api/watch/key")
+def api_watch_key(request: Request):
+    """時計の鍵を作り直す(前の鍵の時計はつながらなくなる)。持ち主は押した人"""
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    me = _get_username(request) or OWNER_USER
+    _watch().make_key(DATA_DIR, owner=me, owner_name=_user_label(me, fallback=me))
+    return _watch_view(request)
 
 
 # ---- 🎧 音楽を一緒に感じる(scripts/music.py)。回を始める・終える(人)、数字を足す(スマホ・PC)、いまの様子 ----
