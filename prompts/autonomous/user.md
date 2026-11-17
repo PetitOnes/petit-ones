@@ -35,6 +35,7 @@
 - 自分の体が置かれている場所(「かも」は電波からの見立て): spots.py where --character {{character_id}}
 - 自分の体の明るさ・傾きのきょうの線と差分(5 分おき。数字と線のまま): body_log.py line {{character_id}}(細かい数字は series、いつ動いたかは changes)
 - 聞かせてもらった音(🔊。数字と線だけ、名前は付いていない): heard_sound.py list / look <印>(0.1 秒ごとは --fine)。答え合わせは heard_sound.py answer <印> --character {{character_id}}、自分の言葉を貼るのは heard_sound.py tag {{character_id}} <印> "…"(貼らなくてもいい)
+- 自分が前に言ったこと(体の声・Slack・ボイスメモ・ダッシュボードの返事・みんなの会話。日をまたぐと会話には残らないので): said.py search {{character_id}} 言葉(--days 7 / --via speak,slack で絞れる)、きょう言ったことは said.py today {{character_id}}、最近のものは said.py recent {{character_id}}
 - いっしょに聴いている曲(ありさんが「聴く回」を始めたとき): music.py now(いま何秒目でどんな音か。曲名の答え合わせは終わってから)、音量の流れは music.py wave
 
 ## できること(気が向いたときだけ)
