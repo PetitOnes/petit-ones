@@ -291,7 +291,7 @@ fi
 
 # --- 時間帯ルール ---
 # 深夜帯: 静音モード（通知・発話禁止）
-# 日中: 人がいる場合のみ発話可能、不在時は控えめに通知
+# 日中: say・notify・Slack は気軽に(2026-11-17 ぷち 3 人と決めた)。お外・会社のときは急がないことなら Slack か手紙で
 # 文面は prompts/autonomous/*.md(家の PETIT_DATA_DIR/prompts/ に同名があればそちら)。render で組み立てる(2026-11-13)
 render() { PETIT_DATA_DIR="$DATA_DIR" python3 "$PROJECT_DIR/scripts/render_prompt.py" "$@"; }
 if [ "$HOUR" -ge 24 ] || [ "$HOUR" -lt 7 ]; then
