@@ -202,9 +202,18 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
         text = (result.get("transcript") or "").strip()
         speaker = result.get("speaker", "unknown")
         speaker_conf = result.get("speaker_confidence", 0.0)
-        environment = result.get("environment", "")
-        voice_state = result.get("voice_state", "")
-        print(f"[m5_watcher] {character_id}: mic_end → ASR: {text!r} speaker={speaker}({speaker_conf:.2f}) env={environment} voice={voice_state}")
+        # 環境音の名前・声の状態(疲れ など)は、ぷちに渡さない(2026-11-17。名前は先に来ない、判断の言葉は付けない)。
+        # 代わりに、その人のいつもの声の数字と大きく違うときだけ数字を 1 行(scripts/voice_usual.py)
+        voice_diff = ""
+        try:
+            sd = str(PROJECT_DIR / "scripts")
+            if sd not in sys.path:
+                sys.path.insert(0, sd)
+            import voice_usual
+            voice_diff = voice_usual.note(DATA_DIR, speaker, result.get("voice_numbers"))
+        except Exception as e:
+            print(f"[m5_watcher] {character_id}: voice_usual error: {e}")
+        print(f"[m5_watcher] {character_id}: mic_end → ASR: {len(text)} 字 speaker={speaker}({speaker_conf:.2f}){' voice_diff' if voice_diff else ''}")
 
         scripts_dir = PROJECT_DIR / "scripts"
 
@@ -214,8 +223,6 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             **{c["id"]: c.get("name", c["id"]) for c in list_characters()},
         }
         speaker_name = speaker_label_map.get(speaker, "誰か")
-        env_hint = environment if environment and environment not in ("speech", "unknown") else ""
-        state_hint = voice_state if voice_state and voice_state != "unknown" else ""
         target_name = _user_label(target)
         message = _prompt(
             "event_mic",
@@ -224,7 +231,7 @@ async def _m5_mic_transcribe_and_respond(character_id: str, host: str, pcm_bytes
             is_self=(speaker == character_id),
             is_unknown=(speaker not in speaker_label_map),
             speaker_name=speaker_name, text=text,
-            environment=env_hint, voice_state=state_hint, both_hints=bool(env_hint and state_hint), has_hint=bool(env_hint or state_hint),
+            voice_diff=voice_diff,
             scripts_dir=str(scripts_dir), character_id=character_id, target=target, target_name=target_name,
         )
         mic_backend = os.getenv("M5_MIC_BACKEND")

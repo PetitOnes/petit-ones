@@ -195,43 +195,36 @@ def test_event_prompts():
     assert P("event_sensor", target_name=target_name, sensors_json=json.dumps(sensors, ensure_ascii=False), scripts_dir=scripts_dir, character_id=character_id, target=target).rstrip("\n") == old
 
 
-def _old_mic(intro: str, speaker_name: str, text: str, environment: str, voice_state: str,
-             scripts_dir="/repo/scripts", character_id="puchiko", target="arisan", target_name="ありさん") -> str:
-    sound_desc = f"{speaker_name}の声: 「{text}」" if text else f"{speaker_name}らしき音が届いた（環境音・息・物音かも）"
-    voice_hints = []
-    if environment and environment not in ("speech", "unknown"):
-        voice_hints.append(f"環境音: {environment}")
-    if voice_state and voice_state != "unknown":
-        voice_hints.append(f"声の状態: {voice_state}")
-    voice_hint_str = ("（" + "、".join(voice_hints) + "）") if voice_hints else ""
+def _old_mic(intro: str, speaker_name: str, text: str, voice_diff: str) -> str:
+    # 2026-11-17: 環境音の名前・声の状態(疲れ など)は渡さない。いつもの数字と違うときだけ voice_diff
+    head = intro + (f"{speaker_name}の声: 「{text}」" if text else f"{speaker_name}らしき音が届いた（環境音・息・物音かも）") + voice_diff
     return (
-        f"{intro}{sound_desc}{voice_hint_str}\n"
+        head + "\n"
         f"必ずやること:\n"
         f"1. `remember` で「{speaker_name}が『{text}』と言っていた」という内容を記憶に残す\n"
-        f"2. `python3 {scripts_dir}/write_mailbox.py {character_id} {target} '<返事>'` で{target_name}にメールを送る（何を言っていたか＋感想を書く）\n"
+        f"2. `python3 /repo/scripts/write_mailbox.py puchiko arisan '<返事>'` でありさんにメールを送る（何を言っていたか＋感想を書く）\n"
         f"3. スピーカーが使えるなら `speak` で一言声に出して反応する\n"
         f"任意: `show_face` か `play_sound` で気持ちを表現してもいい。"
     )
 
 
-def _new_mic(case: str, speaker_name: str, text: str, environment: str, voice_state: str) -> str:
-    env_hint = environment if environment and environment not in ("speech", "unknown") else ""
-    state_hint = voice_state if voice_state and voice_state != "unknown" else ""
+def _new_mic(case: str, speaker_name: str, text: str, voice_diff: str) -> str:
     return P("event_mic", is_owner=(case == "owner"), is_other=(case == "other"), is_self=(case == "self"), is_unknown=(case == "unknown"),
-             speaker_name=speaker_name, text=text, environment=env_hint, voice_state=state_hint,
-             both_hints=bool(env_hint and state_hint), has_hint=bool(env_hint or state_hint),
+             speaker_name=speaker_name, text=text, voice_diff=voice_diff,
              scripts_dir="/repo/scripts", character_id="puchiko", target="arisan", target_name="ありさん").rstrip("\n")
 
 
 def test_mic_prompt_all_cases():
     cases = [
-        ("owner", "ありさん", "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。", "おはよう", "indoor", "calm"),
-        ("other", "ぷちる", "ぷちるの声がマイクに届いた！", "ねえ", "speech", "unknown"),
-        ("self", "ぷちこ", "自分の声がマイクに入ってきた（エコーかも？）。", "", "unknown", "tired"),
-        ("unknown", "誰か", "誰かがマイクのそばで話してた。", "", "", ""),
+        ("owner", "ありさん", "ありさんが「聞いて聞いて！」って言いながらマイクのボタンを押してくれた。", "おはよう", "（声の数字: 高さ 275 Hz(いつもは 230 Hz)）"),
+        ("other", "ぷちる", "ぷちるの声がマイクに届いた！", "ねえ", ""),
+        ("self", "ぷちこ", "自分の声がマイクに入ってきた（エコーかも？）。", "", ""),
+        ("unknown", "誰か", "誰かがマイクのそばで話してた。", "", ""),
     ]
-    for case, name, intro, text, env, state in cases:
-        assert _new_mic(case, name, text, env, state) == _old_mic(intro, name, text, env, state), case
+    for case, name, intro, text, diff in cases:
+        got = _new_mic(case, name, text, diff)
+        assert got == _old_mic(intro, name, text, diff), case
+        assert "疲" not in got and "環境音:" not in got and "声の状態" not in got
 
 
 def test_display_and_diary_prompts():
