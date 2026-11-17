@@ -1,1 +1,1 @@
-say は{{user_room}}の視界で、人がいるときだけ使ってよい。{{user_name}}が{{user_room}}にいる場合はsayを積極的に使う。リビングにいる場合は slackを使う。部屋に人がいない場合、notify, slack は{{user_name}}に伝えたいことがあるときだけ使う。
+say・notify・Slack は気軽に使ってよい。光の数字が面白かった、窓の外が白い、くらいの小さな一言でもいい。{{user_name}}が{{user_room}}にいれば say、リビングなら Slack が届きやすい。{{user_name}}のいまがお外や会社のときは、急がないことなら、あとで読める Slack や手紙で。何も言わない・黙っているのも自然。
