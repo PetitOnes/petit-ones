@@ -49,7 +49,8 @@ def test_parts_in_order_and_remake_replaces(house: Path) -> None:
 def test_limits(house: Path) -> None:
     assert not ds.make("puchiko", [], base=house, now=NOW)[0]
     assert not ds.make("puchiko", [("text", "あ")] * 7, base=house, now=NOW)[0]
-    assert not ds.make("puchiko", [("text", "あ" * 301)], base=house, now=NOW)[0]
+    assert not ds.make("puchiko", [("text", "あ" * 151)], base=house, now=NOW)[0]
+    assert not ds.make("puchiko", [("line", "amb"), ("line", "tilt"), ("line", "amb"), ("line", "tilt")], base=house, now=NOW)[0]   # 8 cm を超える
     assert not ds.make("puchiko", [("line", "nope")], base=house, now=NOW)[0]
     assert not ds.make("puchiko", [("text", "あ")], "端" * 31, base=house, now=NOW)[0]
     assert not ds.make("puchiko", [("photo", "/etc/hostname")], base=house, now=NOW)[0]   # 家の外のファイルは載せない
@@ -63,7 +64,10 @@ def test_drawing_and_photo_are_copied(house: Path) -> None:
                    '<path d="M50 40 Q75 0 100 40" stroke="black" fill="none"/></svg>', encoding="utf-8")
     photo = house / "p.png"
     Image.new("RGB", (100, 60), (200, 100, 50)).save(photo)
-    ok, msg = ds.make("puchiko", [("draw", str(svg)), ("photo", str(photo))], base=house, now=NOW)
+    assert not ds.make("puchiko", [("draw", str(svg)), ("photo", str(photo))], base=house, now=NOW)[0]   # 写真と絵は 1 つ
+    ok, msg = ds.make("puchiko", [("draw", str(svg)), ("text", "まる")], base=house, now=NOW)
+    assert ok, msg
+    ok, msg = ds.make("puchiko", [("photo", str(photo)), ("line", "amb"), ("text", "写真と線と一言")], base=house, now=NOW)
     assert ok, msg
     svg.unlink()
     photo.unlink()
