@@ -104,6 +104,10 @@
 
 {{watch_line}}
 {{/if}}
+{{#if diary_slip_line}}
+
+{{diary_slip_line}}
+{{/if}}
 {{#if note_mark_notice}}
 
 {{note_mark_notice}}

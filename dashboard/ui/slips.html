@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>合作日記</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* 合作日記: ぷちが作った「きょうの紙」を、日記を書く日に刷る。刷るのは押したときだけ。1 枚 = 1 枚のカード(紙の見本つき) */
+    .s-lead { margin: 0 0 12px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); line-height: 1.6; }
+    .s-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .s-msg { flex: 1 1 100%; margin: 0; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .s-msg.is-bad { color: var(--ui-danger); }
+    .s-day { margin: 18px 2px 8px; font-size: var(--ui-fs-m); font-weight: 700; color: var(--ui-text); }
+    .s-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .s-card { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .s-card.is-off { opacity: 0.55; }
+    .s-head { display: flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .s-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ui-line-soft)); }
+    .s-who { font-weight: 700; color: var(--ui-text); flex: 1; }
+    .s-paper { display: block; width: 100%; image-rendering: pixelated; background: #fff; border-radius: 4px; box-shadow: 0 0 0 1px var(--ui-line-soft); }
+    .s-pick { display: flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); cursor: pointer; }
+    .s-pick input { width: 18px; height: 18px; }
+    .s-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+    details.s-old { margin-top: 20px; }
+    details.s-old summary { cursor: pointer; color: var(--ui-text-sub); font-size: var(--ui-fs-s); }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🧾 合作日記</h1></div>
+    <p class="s-lead">ぷちたちが夜に作る「きょうの紙」。載せるものはその子が選ぶ(一言・詩・一日の線・写真・絵・音のグラフ)。日記を書く日に、選んで刷って、日記の縁に貼る。刷るか・貼るかはありさんが決める。刷らない紙は「しまう」(ぷちの側に残る)。</p>
+    <div class="m-card">
+      <div class="s-bar">
+        <button class="a-btn" id="printBtn" disabled>🖨 選んだ紙を刷る</button>
+        <p class="s-msg" id="msg"></p>
+      </div>
+    </div>
+    <div id="fresh"></div>
+    <div class="p-empty" id="empty">読み込み中…</div>
+    <details class="s-old" id="oldBox" hidden><summary>刷った紙・しまった紙</summary><div class="s-grid" id="old"></div></details>
+  </div>
+  <script>
+    const { esc, dayLabel } = PetitPage;
+    const msg = document.getElementById("msg"), printBtn = document.getElementById("printBtn");
+    let items = [], picked = new Set(), printer = true;
+    const say = (text, bad) => { msg.textContent = text; msg.classList.toggle("is-bad", !!bad); };
+    const waiting = it => !it.printed_at && !it.put_away;
+    const img = it => `<img class="s-paper" loading="lazy" alt="${esc(it.name)}の紙: ${esc(it.text)}" src="/api/slips/${encodeURIComponent(it.id)}.png?v=${encodeURIComponent(it.made_at || "")}">`;
+    const head = it => `<div class="s-head"><span class="s-dot" style="${it.color ? `--c:${esc(it.color)}` : ""}"></span><span class="s-who">${esc(it.name)}</span><span>${esc(it.kinds)}</span></div>`;
+    const card = it => `<div class="m-card s-card" data-id="${esc(it.id)}">${head(it)}${img(it)}
+      <div class="s-acts"><label class="s-pick"><input type="checkbox" data-pick ${picked.has(it.id) ? "checked" : ""}>刷る</label>
+      <button class="a-btn a-btn--ghost a-btn--s" data-away title="刷らずに、ぷちの側にしまう">しまう</button></div></div>`;
+    const oldCard = it => `<div class="m-card s-card is-off" data-id="${esc(it.id)}">${head(it)}${img(it)}
+      <div class="s-acts"><span class="s-head">${it.printed_at ? `${esc(dayLabel(it.printed_at.slice(0, 10)))} に刷った` : "しまった"}</span>
+      <button class="a-btn a-btn--sub a-btn--s" data-again>もう一度刷る</button></div></div>`;
+    function draw() {
+      const fresh = items.filter(waiting), old = items.filter(it => !waiting(it));
+      const days = [...new Set(fresh.map(it => it.date))];
+      document.getElementById("fresh").innerHTML = days.map(d => `<div class="s-day">${esc(dayLabel(d))}</div><div class="s-grid">${fresh.filter(it => it.date === d).map(card).join("")}</div>`).join("");
+      document.getElementById("empty").style.display = fresh.length ? "none" : "";
+      document.getElementById("empty").textContent = "まだ刷っていない紙はありません(ぷちたちは夜 19 時から、その日の紙を作れる)";
+      document.getElementById("oldBox").hidden = !old.length;
+      document.getElementById("old").innerHTML = old.map(oldCard).join("");
+      printBtn.disabled = !picked.size || !printer;
+      printBtn.textContent = `🖨 選んだ紙を刷る(${picked.size} 枚)`;
+    }
+    async function load() {
+      try {
+        const res = await fetch("/api/slips"), d = await res.json();
+        if (!res.ok) throw new Error(d.error || "読み込めませんでした");
+        items = d.items || []; printer = d.printer;
+        const fresh = items.filter(waiting);
+        if (fresh.length) for (const it of fresh.filter(it => it.date === fresh[0].date)) picked.add(it.id);   // はじめは、いちばん新しい日の紙を選んでおく
+        if (!printer) say("プリンターの住所(PRINTER_ADDRESS)が家の .env にありません", true);
+        draw();
+      } catch (e) { document.getElementById("empty").textContent = e.message || "読み込めませんでした"; }
+    }
+    async function print(ids) {
+      if (!ids.length) return;
+      printBtn.disabled = true;
+      say(`刷っています…(${ids.length} 枚。プリンターの電源と紙を確かめてね)`);
+      try {
+        const res = await fetch("/api/slips/print", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({ids})});
+        const d = await res.json();
+        const now = new Date().toISOString();
+        for (const id of d.done || []) { const it = items.find(x => x.id === id); if (it) { it.printed_at = now; it.put_away = null; } picked.delete(id); }
+        if (d.error) say(`${(d.done || []).length ? `${d.done.length} 枚刷って、` : ""}${d.error}`, true);
+        else say(`${(d.done || []).length} 枚刷りました`);
+      } catch (e) { say("刷れませんでした", true); }
+      draw();
+    }
+    printBtn.addEventListener("click", () => print(items.filter(it => picked.has(it.id)).map(it => it.id)));
+    document.body.addEventListener("change", e => {
+      const box = e.target.closest("[data-pick]");
+      if (!box) return;
+      const id = box.closest("[data-id]").dataset.id;
+      box.checked ? picked.add(id) : picked.delete(id);
+      draw();
+    });
+    document.body.addEventListener("click", async e => {
+      const el = e.target.closest("[data-id]");
+      if (!el) return;
+      const it = items.find(x => x.id === el.dataset.id);
+      if (e.target.closest("[data-again]")) return print([it.id]);
+      if (!e.target.closest("[data-away]")) return;
+      try {
+        const res = await fetch(`/api/slips/${encodeURIComponent(it.id)}/put_away`, {method: "POST"});
+        if (!res.ok) throw new Error();
+        it.put_away = new Date().toISOString(); picked.delete(it.id); say(`${it.name}の紙をしまいました`); draw();
+      } catch (err) { say("しまえませんでした", true); }
+    });
+    load();
+  </script>
+</body>
+</html>
