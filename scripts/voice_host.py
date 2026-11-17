@@ -4,6 +4,7 @@
 家の設定 PETIT_DATA_DIR/config/voice.json(git には入れない):
 
     {"host": "puchipuchi"}      # GPU 機。"localhost" ならこの PC
+    {"sound_host": "puchipuchi"}  # 🔊 音を聞かせる(音の種類 /sound_events)をする機械。無ければ host と同じ
 
 - 無ければ何もしない(MCP 設定の env と、ダッシュボードの環境変数 VOICE_API_HOST のまま)
 - ぷちを呼ぶ直前に、MCP 設定の env VOICE_API_HOST を書き換えた写しを使う(optional_mcp.apply の中。元の設定ファイルは書き換えない)
@@ -47,6 +48,42 @@ def get(base: Path) -> str | None:
     return h if isinstance(h, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", h) else None
 
 
+def _read(base: Path) -> dict:
+    try:
+        d = json.loads(config_path(base).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def sound_host(base: Path) -> str:
+    """音の種類を見分ける機械: 家で決めた sound_host → 声と聞き取りの機械"""
+    h = _read(base).get("sound_host")
+    return h if isinstance(h, str) and h in CHOICES else current(base)
+
+
+def set_sound_host(base: Path, host: str | None) -> None:
+    if host and host not in CHOICES:
+        raise ValueError(f"選べるのは {', '.join(CHOICES)}")
+    d = _read(base)
+    if host:
+        d["sound_host"] = host
+    else:
+        d.pop("sound_host", None)
+    _write(base, d)
+
+
+def _write(base: Path, d: dict) -> None:
+    p = config_path(base)
+    if not d:
+        p.unlink(missing_ok=True)
+        return
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(p)
+
+
 def current(base: Path) -> str:
     """いま使う機械: 家で決めたもの → 環境変数 VOICE_API_HOST → localhost"""
     return get(base) or os.environ.get(ENV_KEY) or "localhost"
@@ -55,14 +92,12 @@ def current(base: Path) -> str:
 def set_host(base: Path, host: str | None) -> None:
     if host and host not in CHOICES:
         raise ValueError(f"選べるのは {', '.join(CHOICES)}")
-    p = config_path(base)
-    if not host:
-        p.unlink(missing_ok=True)
-        return
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps({"host": host}, ensure_ascii=False) + "\n", encoding="utf-8")
-    tmp.replace(p)
+    d = _read(base)
+    if host:
+        d["host"] = host
+    else:
+        d.pop("host", None)
+    _write(base, d)
 
 
 def override(mcp: dict, host: str | None) -> dict:
@@ -94,7 +129,7 @@ def probe(host: str, timeout: float = 1.5) -> dict[str, bool]:
 
 def view(base: Path, check: bool = True) -> dict:
     host = current(base)
-    return {"host": host, "decided": get(base), "choices": CHOICES, "env": os.environ.get(ENV_KEY) or None,
+    return {"host": host, "decided": get(base), "sound_host": sound_host(base), "choices": CHOICES, "env": os.environ.get(ENV_KEY) or None,
             "alive": {h: probe(h) for h in CHOICES} if check else {}}
 
 

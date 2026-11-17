@@ -180,6 +180,8 @@
         <span class="a-heading">🎙 声と聞き取りの機械</span><a class="s-help" data-help="voice-host" href="/help#voice-host" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ぷちの声(合成)と、聞き取り(文字起こし・だれの声か)をどこでするか。選んだ機械が止まっているときは、この PC に落ちる。ぷちには次に呼ぶときから効く。</p>
         <div id="voiceHostRows"></div>
+        <p class="a-hint" style="margin:10px 0 4px">🔊 音を聞かせる(何の音か・音のかたち。文字起こしはしない)をする機械</p>
+        <div class="m-pills" id="soundHostPills"></div>
       </div>
       <div class="m-card" id="optMcpCard" style="display:none">
         <span class="a-heading">🔌 つないだときだけ使う道具</span>
@@ -442,13 +444,15 @@
         return `<div class="s-row"><span style="min-width:0"><b>${esc(label)}</b><br><span class="a-hint">${esc(st)}</span></span>
           <span class="m-pills" style="flex:0 0 auto"><button class="a-pill${d.host === h ? " is-on" : ""}" onclick="setVoiceHost('${esc(h)}')">${d.host === h ? "使っている" : "これにする"}</button></span></div>`;
       }).join("");
+      document.getElementById("soundHostPills").innerHTML = Object.entries(d.choices).map(([h, label]) =>
+        `<button class="a-pill${d.sound_host === h ? " is-on" : ""}" onclick="setVoiceHost('${esc(h)}', 'sound_host')">${esc(label)}</button>`).join("");
     }
     async function loadVoiceHost() {
       try { drawVoiceHost(await (await fetch("/api/voice_host")).json()); } catch (e) {}
     }
-    async function setVoiceHost(host) {
+    async function setVoiceHost(host, key) {
       try {
-        const res = await fetch("/api/voice_host", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({host})});
+        const res = await fetch("/api/voice_host", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({[key || "host"]: host})});
         const d = await res.json();
         if (!res.ok) { toast(d.error || "決められませんでした"); return; }
         drawVoiceHost(d); toast("決めました");
