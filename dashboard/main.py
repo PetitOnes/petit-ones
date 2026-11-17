@@ -4110,9 +4110,85 @@ def draw_page():
     return HTMLResponse((UI_DIR / _UI_PAGES["draw"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
 
+class DrawImageBody(BaseModel):
+    name: str
+    png: str            # data:image/png;base64,…(キャンバスから)
+    why: str = ""
+
+
+class DrawRecipeBody(BaseModel):
+    name: str
+    recipe: dict
+    why: str = ""
+
+
+class DrawGiveBody(BaseModel):
+    name: str
+    to: str
+    note: str = ""
+
+
+@app.post("/api/draw/make_image")
+async def api_draw_make_image(body: DrawImageBody, request: Request):
+    """家の人が手で描いた絵(置き場はぷちと同じ drawings/made/<自分の id>/)"""
+    import base64
+    dr = _draw()
+    me = _get_username(request) or OWNER_USER
+    try:
+        raw = base64.b64decode(body.png.split(",", 1)[-1], validate=False)
+        if len(raw) > 3_000_000:
+            raise dr.DrawError("絵が大きすぎます")
+        info = await asyncio.to_thread(lambda: dr.make_image(DATA_DIR, me, body.name.strip(), raw, why=body.why))
+    except (dr.DrawError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "text": dr.numbers_text(info)}
+
+
+@app.post("/api/draw/make")
+async def api_draw_make(body: DrawRecipeBody, request: Request):
+    """家の人が作り方(JSON)で描く。ぷちと同じ make"""
+    dr = _draw()
+    me = _get_username(request) or OWNER_USER
+    try:
+        info = await asyncio.to_thread(lambda: dr.make(DATA_DIR, me, body.name.strip(), body.recipe, why=body.why))
+    except dr.DrawError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "text": dr.numbers_text(info)}
+
+
+@app.post("/api/draw/give")
+def api_draw_give(body: DrawGiveBody, request: Request):
+    dr = _draw()
+    me = _get_username(request) or OWNER_USER
+    try:
+        dr.give(DATA_DIR, me, body.name, body.to, body.note)
+    except dr.DrawError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True}
+
+
+@app.delete("/api/draw/mine/{name}")
+def api_draw_remove(name: str, request: Request):
+    me = _get_username(request) or OWNER_USER
+    try:
+        return {"ok": _draw().remove(DATA_DIR, me, name)}
+    except _draw().DrawError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
 @app.get("/api/draw")
-def api_draw():
+def api_draw(request: Request = None):
     chars = {c["id"]: c for c in list_characters()}
+    me = (_get_username(request) if request else None) or OWNER_USER
+    gifts = _draw().gifts(DATA_DIR)
+    mine = []
+    for d in _draw().made(DATA_DIR, me):
+        frames = (d.get("numbers") or {}).get("frames", 1)
+        mine.append({"by": me, "name": d["name"], "at": d.get("at", ""), "why": d.get("why", ""), "moving": frames > 1,
+                     "seconds": (d.get("recipe") or {}).get("seconds", 0),
+                     "given": [g["to"] for g in gifts if g.get("from") == me and g.get("name") == d["name"]],
+                     "felt": [f for f in d.get("felt", []) if f.get("who") != me]})
+    mine.sort(key=lambda x: x["at"], reverse=True)
     items = []
     for d in _draw().made(DATA_DIR):
         if not d.get("shown") or d.get("by") not in chars:
@@ -4122,17 +4198,19 @@ def api_draw():
         items.append({"by": d["by"], "name": d["name"], "who": c.get("name") or d["by"], "color": c.get("color", ""),
                       "at": d.get("at", ""), "why": d.get("why", ""), "moving": frames > 1, "seconds": (d.get("recipe") or {}).get("seconds", 0)})
     items.sort(key=lambda x: x["at"], reverse=True)
-    return {"items": items}
+    return {"items": items, "mine": mine, "me": me,
+            "petits": [{"id": c["id"], "name": c.get("name") or c["id"], "color": c.get("color", "")} for c in chars.values()]}
 
 
 @app.get("/api/draw/file/{by}/{fname}")
-def api_draw_file(by: str, fname: str):
+def api_draw_file(by: str, fname: str, request: Request = None):
     m = re.fullmatch(r"([a-z0-9][a-z0-9_-]{0,39})\.(png|gif)", fname)
     if not m or not re.fullmatch(r"[a-zA-Z0-9_]{1,40}", by):
         return JSONResponse({"error": "not found"}, status_code=404)
     info = _draw().info_of(DATA_DIR, by, m.group(1))
     p = _draw().made_dir(DATA_DIR, by) / fname
-    if not info or not info.get("shown") or not p.is_file():   # 見せると決めたものだけ
+    me = (_get_username(request) if request else None) or OWNER_USER
+    if not info or not (info.get("shown") or by == me) or not p.is_file():   # ぷちが見せると決めたものと、自分が描いたものだけ
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(p, media_type="image/gif" if m.group(2) == "gif" else "image/png", headers={"Cache-Control": "no-cache"})
 

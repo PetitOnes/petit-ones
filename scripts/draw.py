@@ -458,6 +458,36 @@ def make(base: Path, cid: str, name: str, recipe: dict, why: str = "", now: date
     return info
 
 
+def make_image(base: Path, who: str, name: str, png: bytes, why: str = "", now: datetime | None = None) -> dict:
+    """手で描いた絵(ダッシュボードのキャンバス。家の人も描ける)を置く。作り方の代わりに絵そのもの。数字と線は同じように出す"""
+    import io
+
+    from PIL import Image
+    _check_name(who, name)
+    d = made_dir(base, who)
+    if not (d / f"{name}.json").exists() and len(list(d.glob("*.json"))) >= MAX_MADE:
+        raise DrawError(f"置いておけるのは {MAX_MADE} 個までです")
+    try:
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+    except Exception as e:
+        raise DrawError("絵が読めませんでした") from e
+    if img.size != (W, H):
+        img = img.resize((W, H))
+    d.mkdir(parents=True, exist_ok=True)
+    img.save(d / f"{name}.png")
+    for p in (d / f"{name}.gif", d / f"{name}_sheet.png"):
+        p.unlink(missing_ok=True)
+    nums = numbers([img])
+    old = info_of(base, who, name) or {}
+    info = {"name": name, "by": who, "at": (now or datetime.now()).isoformat(timespec="minutes"),
+            "recipe": {"hand": True, "seconds": 0, "fps": 1, "shapes": []}, "numbers": nums,
+            "lacks": [{"hex": c["hex"], "panel": hexof(to565(rgb(c["hex"]))), "note": color_lack(rgb(c["hex"]))} for c in nums["colors"]],
+            "banding": [], "why": _note(why) or old.get("why", ""), "guess": old.get("guess", []), "felt": old.get("felt", []),
+            "shown": bool(old.get("shown", False))}
+    _save(base, info)
+    return info
+
+
 def _need(base: Path, by: str, name: str) -> dict:
     info = info_of(base, by, name)
     if info is None:
@@ -560,7 +590,8 @@ def look_text(base: Path, cid: str, by: str, name: str) -> str:
     if not can_see(base, cid, by, name):
         raise DrawError(f"{by} の {name} は、渡されていないので見られません")
     info = _need(base, by, name)
-    rows = [numbers_text(info), "作り方: " + json.dumps(info["recipe"], ensure_ascii=False)]
+    rows = [numbers_text(info)]
+    rows.append("手で描いた絵(作り方は無い)" if info["recipe"].get("hand") else "作り方: " + json.dumps(info["recipe"], ensure_ascii=False))
     if info.get("why"):
         rows.append(f"思い: {info['why']}")
     for kind, label in (("guess", "予想"), ("felt", "見て思ったこと")):
