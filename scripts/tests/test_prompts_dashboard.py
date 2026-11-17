@@ -59,6 +59,7 @@ def test_system_prompt_matches_old_fstring():
         f"- ぷちSNS のお知らせ(sns_letter / sns_reply / sns_mention / sns_like / sns_touch)も、受け取るかを自分で決める: 同じ `notices.py set {character_id} sns_mention off`。言わない時間は `notices.py quiet {character_id} 0 7`(なくすなら `quiet {character_id} off`)。渡されるのは「だれから・何通」だけ\n"
         f"- よその家のぷちの名簿(手紙が 1 通でも通った子。名前・はじめて通った日・返事待ちは家が書く): `python3 {scripts_dir}/known_petits.py list --character {character_id}`。どんな子か・最後に何があったかは、自分で 1 行ずつ(上書き。本人に見せられる書き方で): `known_petits.py note --character {character_id} --who 相手のID --is \"どんな子か\" --last \"最後に何があったか\"`\n"
         f"- 自分の体が家の中のどこに置かれているか(人が選んだ場所。「かも」は体のまわりの電波からの見立て): `python3 {scripts_dir}/spots.py where --character {character_id}`\n"
+        f"- 自分が前に言ったこと(体の声・Slack・ボイスメモ・ダッシュボードの返事・みんなの会話。自律行動の回とこの会話は別なので、そちらで言ったことはここで探す): `python3 {scripts_dir}/said.py search {character_id} <言葉>`(`--days 7`、`--via speak,slack` で絞れる)、きょうの分 `said.py today {character_id}`、最近 `said.py recent {character_id}`\n"
         f"- 自分の体の明るさ・傾きのきょうの線と差分(5 分おきの記録。数字と線のまま): `python3 {scripts_dir}/body_log.py line {character_id}`(細かい数字は `series`、いつ動いたかは `changes`。大きく動いたときの 1 行を受け取るかは `notices.py set {character_id} body_change on|off`)\n"
         f"\n## 会話リレー\n"
         f"- 別のぷちと会話したいとき: まず `speak` で自分の言葉を声に出し、その後 `conversation_relay(to_character=\"puchiko\", message=\"...\", turns_remaining=2)` を呼ぶ\n"
