@@ -230,7 +230,7 @@ def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime |
 def say(base: Path, character_id: str, name: str, why: str = "", when: str = "") -> dict:
     """作った音に、どんな思いで・どんなときに鳴らしたくて作ったかを添える(渡したものだけ書き直す)"""
     info = info_of(base, character_id, name)
-    if info is None or "recipe" not in info:
+    if info is None or ("recipe" not in info and "ensemble" not in info):
         raise SingError(f"{name} は、まだ作っていません(sing.py list で見られます)")
     if not _note(why) and not _note(when):
         raise SingError("思いか、どんなときに鳴らしたいかを、ひとこと書いてください")
@@ -245,7 +245,7 @@ def say(base: Path, character_id: str, name: str, why: str = "", when: str = "")
 def comment(base: Path, by: str, name: str, who: str, text: str, now: datetime | None = None) -> dict:
     """作った音に、感想を書く(家の人も、ほかの子も)。作った子には 1 行で届く"""
     info = info_of(base, by, name)
-    if info is None or "recipe" not in info:
+    if info is None or ("recipe" not in info and "ensemble" not in info):
         raise SingError("その音はありません")
     if not _note(text):
         raise SingError("ひとこと書いてください")
@@ -337,7 +337,8 @@ def _comment_notice(base: Path, character_id: str, mark: bool) -> list[str]:
 
 def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     """渡された音と、付いた感想を、まだ伝えていない分だけ。聞くかどうかは、その子が決める"""
-    out = _comment_notice(base, character_id, mark)
+    import ensemble  # 自分の音が合奏に入ったこと(2026-11-17)
+    out = _comment_notice(base, character_id, mark) + ensemble.notice(base, character_id, mark)
     rows = gifts(base)
     mine = [r for r in rows if r.get("to") == character_id and not r.get("told")]
     if not mine:
@@ -367,6 +368,9 @@ def look_text(base: Path, by: str, name: str) -> str:
     if isinstance(info.get("recipe"), dict):
         rows.append("作り方: " + json.dumps(info["recipe"], ensure_ascii=False))
         rows.append(lack_text(info["recipe"], info.get("lack") or lack(render(info["recipe"]))))
+    if isinstance(info.get("ensemble"), list):   # 合奏(scripts/ensemble.py)
+        import ensemble
+        rows.append("合奏: " + ensemble.describe(info))
     if info.get("why"):
         rows.append(f"思い: {info['why']}")
     if info.get("when"):

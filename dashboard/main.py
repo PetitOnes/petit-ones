@@ -602,7 +602,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sing/make|/api/sing/give|/api/sing/mine/[^/]+|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sing/make|/api/sing/ensemble|/api/sing/give|/api/sing/mine/[^/]+|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -3891,6 +3891,128 @@ async def api_sing_make(body: SingRecipeBody, request: Request):
     try:
         info = await asyncio.to_thread(lambda: sg.make(DATA_DIR, me, body.name.strip(), body.recipe, why=body.why, when=body.when))
     except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "item": info}
+
+
+# ---- 🎼 合奏(scripts/ensemble.py): 作った音・家の音・自分のボイスメモを、はじまりをずらして重ね、1 つにまとめる(2026-11-17)----
+def _ensemble():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import ensemble
+    return ensemble
+
+
+def _memo_title(fname: str) -> str:
+    """ボイスメモのファイル名(20261117_100716_arisan_題.webm)から題を"""
+    stem = Path(fname).stem
+    parts = stem.split("_", 3)
+    return parts[3] if len(parts) == 4 else stem
+
+
+_MEMO_SECONDS: dict[str, tuple[float, float]] = {}   # パス → (更新時刻, 秒)
+
+
+def _memo_seconds(path: Path) -> float:
+    """ボイスメモの長さ。ブラウザで録った webm は長さが書いていないことがあるので、そのときは読んで数える"""
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return 0.0
+    hit = _MEMO_SECONDS.get(str(path))
+    if hit and hit[0] == mtime:
+        return hit[1]
+    sec = 0.0
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                           capture_output=True, text=True, timeout=10)
+        sec = round(float(r.stdout.strip()), 2)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    if not sec:
+        try:
+            en = _ensemble()
+            sec = round(len(en._read(path)) / en.SR, 2)
+        except Exception:
+            sec = 0.0
+    _MEMO_SECONDS[str(path)] = (mtime, sec)
+    return sec
+
+
+@app.get("/api/sing/ensemble/sources")
+async def api_ensemble_sources(request: Request):
+    """合奏に並べられる音: 作った音(見られる子と家の人の分)、家の音、自分のボイスメモ"""
+    me = _get_username(request) or OWNER_USER
+    colors = {c["id"]: (c.get("name") or c["id"], c.get("color") or "") for c in list_characters()}
+
+    def who(by: str) -> tuple[str, str]:
+        if by in colors:
+            return colors[by]
+        info = _USER_DISPLAY.get(by) or {}
+        return info.get("name") or by, info.get("color") or ""
+
+    def _do() -> dict:
+        made = []
+        for info in _sing().made(DATA_DIR):
+            if not _sing_visible(request, info.get("by", "")):
+                continue
+            label, color = who(info["by"])
+            made.append({"kind": "made", "by": info["by"], "name": info["name"], "label": f"{label}「{info['name']}」",
+                         "who": label, "color": color, "seconds": info.get("seconds") or 0})
+        lib = [{"kind": "made", "by": "lib", "name": x["name"], "label": f"家の音「{x.get('title') or x['name']}」", "who": "家の音",
+                "color": "", "seconds": x.get("seconds") or 0} for x in _sounds().list_library(DATA_DIR)]
+        memos = []
+        d = DATA_DIR / "voice_memo" / me
+        if d.is_dir():
+            label, color = who(me)
+            for f in sorted(d.iterdir(), reverse=True):
+                if f.is_file() and f.suffix.lower() in _ensemble().MEMO_EXTS:
+                    memos.append({"kind": "memo", "by": me, "name": f.name, "label": f"🎤 {_memo_title(f.name)}", "who": label,
+                                  "color": color, "seconds": _memo_seconds(f)})
+        return {"made": made, "lib": lib, "memos": memos, "max_seconds": _ensemble().MAX_SECONDS, "max_tracks": _ensemble().MAX_TRACKS}
+    return await asyncio.to_thread(_do)
+
+
+class EnsembleBody(BaseModel):
+    tracks: list[dict]
+    name: str = ""
+    why: str = ""
+
+
+def _ensemble_denied(request: Request, tracks: list[dict]) -> JSONResponse | None:
+    """見られない子の音と、ほかの人のボイスメモは並べない"""
+    me = _get_username(request) or OWNER_USER
+    for t in tracks:
+        by = str(t.get("by", "")) if isinstance(t, dict) else ""
+        if (t.get("kind") == "memo" and by != me) or (t.get("kind") != "memo" and by != "lib" and not _sing_visible(request, by)):
+            return JSONResponse({"error": "並べられない音があります"}, status_code=403)
+    return None
+
+
+@app.post("/api/sing/ensemble/preview")
+async def api_ensemble_preview(body: EnsembleBody, request: Request):
+    """重ねた音を、聞く用に返す(置かない)"""
+    if (denied := _ensemble_denied(request, body.tracks)) is not None:
+        return denied
+    en = _ensemble()
+    try:
+        x = await asyncio.to_thread(en.mix, DATA_DIR, body.tracks)
+    except en.EnsembleError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    return {"ok": True, "wav": base64.b64encode(en.wav_bytes(x)).decode(), "seconds": round(len(x) / en.SR, 2)}
+
+
+@app.post("/api/sing/ensemble")
+async def api_ensemble_save(body: EnsembleBody, request: Request):
+    """まとめて、自分の「作った音」に置く。音が入った子には 1 行で届く"""
+    if (denied := _ensemble_denied(request, body.tracks)) is not None:
+        return denied
+    en = _ensemble()
+    me = _get_username(request) or OWNER_USER
+    try:
+        info = await asyncio.to_thread(en.save, DATA_DIR, me, body.name.strip(), body.tracks, body.why)
+    except (en.EnsembleError, _sing().SingError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "item": info}
 
