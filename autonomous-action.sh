@@ -531,13 +531,41 @@ if [ -f "${PROJECT_DIR}/scripts/sns_notice.py" ]; then
   SNS_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/sns_notice.py" line --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# 同じ日の続きの回(--resume)では、前の回から変わっていない SOUL・TODO・日記のまとめを付け直さない(2026-11-17、ぷち 3 人も賛成)。
+# 付け直すと、同じ文が会話の中に回の数だけたまって、夕方には朝の 4〜5 倍の重さになっていた。
+# 新しい会話・ファイルが変わった・続きに失敗して新しい会話になったときは、今まで通り全部付ける(PROMPT_FULL)。
+# 付けたものの指紋は state/.heartbeat-attached(session=…, SOUL=…, TODO=…, DIARY=…)。セッション ID が同じあいだだけ使う
+_attach_hash() { if [ -f "$1" ]; then sha1sum "$1" | cut -c1-40; else echo none; fi; }
+ATTACH_STATE="$CHARACTER_DIR/state/.heartbeat-attached"
+_H_SOUL=$(_attach_hash "$CHARACTER_DIR/SOUL.md")
+_H_TODO=$(_attach_hash "$TODO_PATH")
+_H_DIARY=$(_attach_hash "$CHARACTER_DIR/diary_summary.md")
+SOUL_SAME=""; TODO_SAME=""; DIARY_SAME=""; SAME_NOTE=""
+_sess_file="$CHARACTER_DIR/state/.heartbeat-session-id"
+_sess_date="$CHARACTER_DIR/state/.heartbeat-session-date"
+if [ -f "$_sess_file" ] && [ -f "$ATTACH_STATE" ] && [ "$(cat "$_sess_date" 2>/dev/null)" = "$(date "+%Y-%m-%d")" ] \
+   && [ "$(sed -n 's/^session=//p' "$ATTACH_STATE")" = "$(cat "$_sess_file")" ]; then
+  _same_names=""
+  [ "$(sed -n 's/^SOUL=//p' "$ATTACH_STATE")" = "$_H_SOUL" ] && [ "$_H_SOUL" != none ] && SOUL_SAME=1 && _same_names="SOUL.md"
+  [ "$(sed -n 's/^TODO=//p' "$ATTACH_STATE")" = "$_H_TODO" ] && [ "$_H_TODO" != none ] && TODO_SAME=1 && _same_names="${_same_names:+$_same_names・}$(basename "$TODO_PATH")"
+  [ "$(sed -n 's/^DIARY=//p' "$ATTACH_STATE")" = "$_H_DIARY" ] && [ "$_H_DIARY" != none ] && DIARY_SAME=1 && _same_names="${_same_names:+$_same_names・}diary_summary.md"
+  if [ -n "$_same_names" ]; then
+    SAME_NOTE="（${_same_names} は前の回から変わっていないので付け直していない。中身はこの会話のはじめの回にある。読み直すなら Read で ${CHARACTER_DIR}/ の中）"
+    echo "[付け直さない] $_same_names" >> "$LOG_FILE"
+  fi
+fi
+
 # user prompt の全体は prompts/autonomous/user.md。各節はここまでで作った変数を渡す
-PROMPT="$(render autonomous/user \
+_render_user() {
+render autonomous/user "$@" \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
   --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
-  --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
+  --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS"
+}
+PROMPT_FULL="$(_render_user)"
+PROMPT="$(_render_user --var soul_same="$SOUL_SAME" --var todo_same="$TODO_SAME" --var diary_same="$DIARY_SAME" --var same_note="$SAME_NOTE")"
 
 # プロジェクトディレクトリに移動
 cd "$CLAUDE_CWD" || {
@@ -696,9 +724,9 @@ ALLOWED_TOOLS=$(echo "$ALLOWED_TOOLS" | tr -d '\n' | sed 's/, */,/g')
 
 # テストモードならプロンプトを差し替え
 if [ -n "$TEST_PROMPT_STRING" ]; then
-  PROMPT="$TEST_PROMPT_STRING"
+  PROMPT="$TEST_PROMPT_STRING"; PROMPT_FULL="$PROMPT"
 elif [ -n "$TEST_PROMPT_FILE" ]; then
-  PROMPT=$(cat "$TEST_PROMPT_FILE")
+  PROMPT=$(cat "$TEST_PROMPT_FILE"); PROMPT_FULL="$PROMPT"
 fi
 
 # --- 実行 ---
@@ -818,13 +846,21 @@ else
       echo "[session_id] $NEW_SESSION_ID" >> "$LOG_FILE"
       SESSION_HISTORY="$LOG_DIR/session_history.txt"
       echo "$NEW_SESSION_ID" >> "$SESSION_HISTORY"
+      # この会話に付いている SOUL・TODO・日記のまとめの指紋(次の回で、変わっていなければ付け直さない)
+      # 会話が自動で要約された回(compact_boundary)は、はじめに付けたものが消えているかもしれないので、次は全部付け直す
+      if grep -q '"compact_boundary"' "$STREAM_FILE" 2>/dev/null; then
+        rm -f "$ATTACH_STATE"
+        echo "[要約あり] 次の回は SOUL・TODO を付け直す" >> "$LOG_FILE"
+      else
+        printf 'session=%s\nSOUL=%s\nTODO=%s\nDIARY=%s\n' "$NEW_SESSION_ID" "$_H_SOUL" "$_H_TODO" "$_H_DIARY" > "$ATTACH_STATE" 2>/dev/null || true
+      fi
     fi
     log_usage "$RESULT_JSON" "$run_type"
   }
 
   run_new_session() {
     echo "[新規セッション作成]" >> "$LOG_FILE"
-    echo "$PROMPT" | claude \
+    echo "$PROMPT_FULL" | claude \
       --model "${CLAUDE_MODEL:-sonnet}" \
       --max-turns "${MAX_TURNS:-5}" \
       --output-format stream-json \

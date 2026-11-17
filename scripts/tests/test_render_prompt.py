@@ -80,3 +80,16 @@ def test_chat_system_single_and_multi(tmp_path):
                       data_dir=tmp_path, project_dir=REPO)
     assert multi.startswith("あなたたちは2人のキャラクターです。")
     assert "## A（ID: a）の魂" in multi and "## B（ID: b）の魂" in multi and "複数人チャットのルール" in multi
+
+
+def test_autonomous_user_skips_unchanged_files(tmp_path):
+    base = {"current_date": "2026-11-17 12:00:00", "character_dir": "/h/c/x", "todo_path": "/h/c/x/TODO_ACTIVE.md",
+            "diary_summary_line": "@/h/c/x/diary_summary.md", "routine_mode": "通常回。", "time_rule": "昼",
+            "project_dir": "/repo", "character_id": "x"}
+    full = rp.render("autonomous/user", base, data_dir=tmp_path, project_dir=REPO)
+    assert "@/h/c/x/SOUL.md" in full and "@/h/c/x/TODO_ACTIVE.md" in full and "付け直していない" not in full
+    same = rp.render("autonomous/user", {**base, "soul_same": "1", "diary_same": "1",
+                                         "same_note": "（SOUL.md・diary_summary.md は前の回から変わっていないので付け直していない）"},
+                     data_dir=tmp_path, project_dir=REPO)
+    assert "@/h/c/x/SOUL.md" not in same and "@/h/c/x/diary_summary.md" not in same
+    assert "@/h/c/x/TODO_ACTIVE.md" in same and "付け直していない" in same

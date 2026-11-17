@@ -9,10 +9,19 @@
 {{event_notice}}
 {{/if}}
 
+{{#unless soul_same}}
 @{{character_dir}}/SOUL.md
+{{/unless}}
 {{reflection_index_line}}
+{{#unless todo_same}}
 @{{todo_path}}
+{{/unless}}
+{{#unless diary_same}}
 {{diary_summary_line}}
+{{/unless}}
+{{#if same_note}}
+{{same_note}}
+{{/if}}
 
 {{routine_mode}}
 {{#if heavy_section}}
