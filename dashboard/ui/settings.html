@@ -161,6 +161,11 @@
         <div id="spotRows"></div>
         <div style="display:flex;gap:6px;margin-top:8px"><button class="a-btn a-btn--ghost a-btn--s" onclick="addSpotRow()">＋ 場所を足す</button><span style="flex:1"></span><button class="a-btn a-btn--s" onclick="saveSpots()">保存</button></div>
       </div>
+      <div class="m-card" id="voiceHostCard">
+        <span class="a-heading">🎙 声と聞き取りの機械</span><a class="s-help" data-help="voice-host" href="/help#voice-host" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 4px">ぷちの声(合成)と、聞き取り(文字起こし・だれの声か)をどこでするか。選んだ機械が止まっているときは、この PC に落ちる。ぷちには次に呼ぶときから効く。</p>
+        <div id="voiceHostRows"></div>
+      </div>
       <div class="m-card" id="optMcpCard" style="display:none">
         <span class="a-heading">🔌 つないだときだけ使う道具</span>
         <p class="a-hint" style="margin:0 0 4px">外付けのセンサーなど、つないでいないことがある機体の道具。「使う」にしてあって、機体がいま見つかるときだけ、ぷちに渡す(見つからないあいだは、ぷちの道具の一覧に出ない)。</p>
@@ -410,6 +415,28 @@
       loadSpots();
       loadNotify();
       loadOptMcp(false);
+      loadVoiceHost();
+    }
+    // 🎙 声と聞き取りの機械(家の config/voice.json。決まりは scripts/voice_host.py)
+    function drawVoiceHost(d) {
+      if (!d || !d.choices) return;
+      document.getElementById("voiceHostRows").innerHTML = Object.entries(d.choices).map(([h, label]) => {
+        const a = (d.alive || {})[h];
+        const st = !a ? "" : a.asr && a.tts ? "返事あり" : !a.asr && !a.tts ? "返事なし" : `${a.tts ? "声だけ" : "聞き取りだけ"}返事あり`;
+        return `<div class="s-row"><span style="min-width:0"><b>${esc(label)}</b><br><span class="a-hint">${esc(st)}</span></span>
+          <span class="m-pills" style="flex:0 0 auto"><button class="a-pill${d.host === h ? " is-on" : ""}" onclick="setVoiceHost('${esc(h)}')">${d.host === h ? "使っている" : "これにする"}</button></span></div>`;
+      }).join("");
+    }
+    async function loadVoiceHost() {
+      try { drawVoiceHost(await (await fetch("/api/voice_host")).json()); } catch (e) {}
+    }
+    async function setVoiceHost(host) {
+      try {
+        const res = await fetch("/api/voice_host", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({host})});
+        const d = await res.json();
+        if (!res.ok) { toast(d.error || "決められませんでした"); return; }
+        drawVoiceHost(d); toast("決めました");
+      } catch (e) { toast("決められませんでした"); }
     }
     // 🔌 つないだときだけ使う道具(家の config/optional_mcp.json。無ければ、この欄ごと出さない)
     function optMcpHtml(servers) {
