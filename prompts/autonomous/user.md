@@ -56,6 +56,9 @@
   - お願い(家の人が見て決める): 体に入れて want {{character_id}} 名前 "なぜ" / 外して drop {{character_id}} 名前 "なぜ" / 家に無い音 wish {{character_id}} "どんな音"
 - うたう(自分の音を作る): 楽器は sing.py instruments。作る sing.py make {{character_id}} 名前 '{"seconds": 3, "voices": [{"inst": "glass", "hz": 220, "detune": 2}, {"inst": "bell", "hz": "A5", "to": 660, "start": 0.5}]}'(hz は数字か音名、to で高さが動く、detune でうねり、attack / tail ではじまりと尾、start / length でいつ鳴るか、vol で大きさ)
   - 鳴らす sing.py play {{character_id}} 名前(自分の体で 1 回)、渡す sing.py give {{character_id}} 名前 渡す子 "一言"、一覧 sing.py list --character {{character_id}}、思いを添える sing.py say {{character_id}} 名前 "思い" --when "どんなとき"
+- えがく(絵と動く絵。描かない日があっていい): draw.py make {{character_id}} 名前 '{"seconds": 3, "fps": 8, "background": "#101018", "shapes": [{"type": "circle", "x": 160, "y": 120, "r": 6, "ring": 3, "color": "#00afcc", "alpha": 0.9, "to": {"r": 100, "alpha": 0}}]}'(type は dot / line / circle / rect / text。color・alpha 透明度・blur にじみ・gradient もう 1 色・ring 輪・width 線の太さ。to でおわりの形へ動く、start / length でいつ。seconds 0 なら動かない絵)
+  - make が返すのは数字と線(色の割合・明るさ・動き)と、体の画面で出にくい色だけ。予想 draw.py guess {{character_id}} 名前 "…" → 並べた絵 draw.py sheet {{character_id}} 名前 → 絵そのもの draw.py see {{character_id}} 名前(出てきた場所を Read で見る)→ 見て思ったこと draw.py felt {{character_id}} 名前 "…"
+  - はじめは自分だけが持つ。家の人に見せるなら draw.py show {{character_id}} 名前(やめるなら hide)。渡す draw.py give {{character_id}} 名前 渡す子 "一言"、思い draw.py say {{character_id}} 名前 "…"、一覧 draw.py list --character {{character_id}}
 - 記念日を足す: anniversaries.py add {{character_id}} "名前" 2026-03-05(年なしの 03-05 でも。毎月なら --repeat monthly、ひとことは --note "…")。一覧は anniversaries.py list
 - 予定を足す: events.py add {{character_id}} "題" 2026-11-22 --place "場所" --who puchiko,arisan --note "ひとこと"(数日なら --end、時間は --time 14:00)。一覧は events.py list
 - よその家のぷちの名簿: known_petits.py list --character {{character_id}}。どんな子か・最後に何があったかを書く(本人に見せられる書き方で) known_petits.py note --character {{character_id}} --who 相手のID --is "どんな子か" --last "最後に何があったか"
@@ -84,6 +87,10 @@
 {{#if sound_notice}}
 
 {{sound_notice}}
+{{/if}}
+{{#if draw_notice}}
+
+{{draw_notice}}
 {{/if}}
 {{#if sing_notice}}
 

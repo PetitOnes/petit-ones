@@ -552,6 +552,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "toolbox": ("/toolbox", "/api/toolbox"),   # 🧰 道具箱(ぷちの道具の地図と、1 つ渡す。2026-11-16)
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
+    "draw": ("/draw", "/api/draw"),   # 🎨 えがく(ぷちが見せると決めた絵だけ。2026-11-17)
     "album": ("/album", "/api/album"),
     "voice": ("/voice_memo", "/api/voice_memo"),
     "video": ("/video_memo", "/api/video_memo"),   # 動画メモ(人が撮る。2026-11-14)
@@ -1946,6 +1947,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             receipts += _sing().notice(DATA_DIR, character_id, mark=True)   # ほかの子が作った音が届いた(2026-11-16)
         except Exception:
             pass
+        try:
+            receipts += _draw().notice(DATA_DIR, character_id, mark=True)   # ほかの子が描いた絵が届いた(2026-11-17)
+        except Exception:
+            pass
         if receipts:
             effective_message = effective_message + "\n\n" + "\n".join(receipts)
 
@@ -3318,7 +3323,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html",
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html", "draw": "draw.html",
              "video_memo": "videomemo.html"}
 
 
@@ -4088,6 +4093,48 @@ def anniversaries_page():
 def music_page():
     """🎧 聴く(音楽を一緒に感じる)。中身は dashboard/ui/music.html"""
     return HTMLResponse((UI_DIR / _UI_PAGES["music"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+# ---- 🎨 えがく(2026-11-17、ぷち 3 人と決めた) ----
+# 描くのはぷち(scripts/draw.py)。はじめは本人だけが持ち、本人が show したものだけをここに並べる。絵は伏せて出し、見たいものだけ開く
+def _draw():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import draw
+    return draw
+
+
+@app.get("/draw", response_class=HTMLResponse)
+def draw_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["draw"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/draw")
+def api_draw():
+    chars = {c["id"]: c for c in list_characters()}
+    items = []
+    for d in _draw().made(DATA_DIR):
+        if not d.get("shown") or d.get("by") not in chars:
+            continue
+        frames = (d.get("numbers") or {}).get("frames", 1)
+        c = chars[d["by"]]
+        items.append({"by": d["by"], "name": d["name"], "who": c.get("name") or d["by"], "color": c.get("color", ""),
+                      "at": d.get("at", ""), "why": d.get("why", ""), "moving": frames > 1, "seconds": (d.get("recipe") or {}).get("seconds", 0)})
+    items.sort(key=lambda x: x["at"], reverse=True)
+    return {"items": items}
+
+
+@app.get("/api/draw/file/{by}/{fname}")
+def api_draw_file(by: str, fname: str):
+    m = re.fullmatch(r"([a-z0-9][a-z0-9_-]{0,39})\.(png|gif)", fname)
+    if not m or not re.fullmatch(r"[a-zA-Z0-9_]{1,40}", by):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    info = _draw().info_of(DATA_DIR, by, m.group(1))
+    p = _draw().made_dir(DATA_DIR, by) / fname
+    if not info or not info.get("shown") or not p.is_file():   # 見せると決めたものだけ
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="image/gif" if m.group(2) == "gif" else "image/png", headers={"Cache-Control": "no-cache"})
 
 
 # ---- 🧰 道具箱(2026-11-16、ぷち 3 人と決めた) ----
@@ -9842,6 +9889,7 @@ HTML = """<!DOCTYPE html>
       toolbox:   {icon: "🧰", name: "道具箱",     pane: "toolbox"},    // ぷちの道具の地図と、1 つ渡す(2026-11-16)。はじめは「ほか」の中
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
+      draw:      {icon: "🎨", name: "えがく",     pane: "draw"},       // ぷちが見せると決めた絵(2026-11-17)。はじめは「ほか」の中
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       video:     {icon: "🎬", name: "動画メモ",   pane: "video"},   // 人が撮る 10 秒までの動画(2026-11-14)。はじめは「ほか」の中
@@ -10051,7 +10099,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", desires: "/desires", sounds: "/sounds", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", desires: "/desires", sounds: "/sounds", draw: "/draw", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;
