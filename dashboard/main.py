@@ -7308,6 +7308,7 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
         import heard_sound
         rec = heard_sound.save(DATA_DIR, username, media_path.name, result or {}, suffix=media_path.stem.split("_")[2] if media_path.stem.count("_") >= 3 else "")
         rec = await asyncio.to_thread(heard_sound.refine, DATA_DIR, rec)   # 粒(1 秒ごとの数)と 0.1 秒ごとの細かい線
+        await asyncio.to_thread(heard_sound.prune, DATA_DIR)   # 録った音そのものは 7 日で消す(数字と見立ては残る)
         prompt = _prompt("media_sound", who=who, id=rec["id"], duration=f"{rec.get('duration') or 0:.0f}",
                          shape=heard_sound.shape_text(rec), scripts_dir=str(PROJECT_DIR / "scripts"), message=message).rstrip()
     elif media_path and kind == "audio":
@@ -10484,19 +10485,46 @@ HTML = """<!DOCTYPE html>
       return div;
     }
 
-    // 送った声の下に「ダウンロード」と「ボイスメモに登録」(2026-11-17 ありさん)
+    // 送った声の下に「ダウンロード」と「ボイスメモに登録」(2026-11-17 ありさん)。🔊 音を聞かせた音は「🔔 音に登録」(家の音のライブラリ)
     function _voiceActions(url) {
       const row = document.createElement("div"); row.className = "chat-voice-actions";
       const dl = document.createElement("a");
       dl.className = "a-btn a-btn--sub a-btn--s"; dl.href = url; dl.download = url.split("/").pop(); dl.textContent = "⬇ ダウンロード";
       row.appendChild(dl);
-      if (url.startsWith("/api/chat-media/")) {   // 自分の声だけ、自分のボイスメモに入れられる(だれの声かは押したときに見る。_myId はあとから届くので)
+      if (url.startsWith("/api/chat-media/") && /_sound\\.[a-z0-9]+$/.test(url)) {   // 🔊 録った音は 7 日で消える。残したいときはライブラリへ
+        const reg = document.createElement("button");
+        reg.className = "a-btn a-btn--sub a-btn--s"; reg.textContent = "🔔 音に登録";
+        reg.title = "家の音のライブラリ(🔔 音)に入れる。録った音そのものは 7 日で消えるので、残したいときに";
+        reg.onclick = () => registerSoundLib(url, reg);
+        row.appendChild(reg);
+      } else if (url.startsWith("/api/chat-media/")) {   // 自分の声だけ、自分のボイスメモに入れられる(だれの声かは押したときに見る。_myId はあとから届くので)
         const reg = document.createElement("button");
         reg.className = "a-btn a-btn--sub a-btn--s"; reg.textContent = "🎤 ボイスメモに登録";
         reg.onclick = () => registerVoiceMemo(url, reg);
         row.appendChild(reg);
       }
       return row;
+    }
+    async function registerSoundLib(url, btn) {
+      const title = prompt("音の題(🔔 音のページに出る。20 秒まで)", "聞かせた音");
+      if (title === null) return;
+      btn.disabled = true; btn.textContent = "登録中…";
+      try {
+        const blob = await (await fetch(url)).blob();
+        if (!blob.size) throw new Error("録った音はもう消えています(7 日で消える)");
+        const fd = new FormData();
+        const fname = url.split("/").pop();
+        fd.append("file", blob, fname);
+        fd.append("name", fname.replace(/\\.[^.]+$/, ""));
+        fd.append("title", title.trim() || "聞かせた音");
+        const res = await fetch("/api/sounds/upload", {method: "POST", body: fd});
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || ("http " + res.status));
+        btn.textContent = "✓ 🔔 音に入れた";
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "🔔 音に登録";
+        addMsg("音に入れられませんでした: " + e.message, "system");
+      }
     }
     async function registerVoiceMemo(url, btn) {
       if (url.split("/")[3] !== _myId) { addMsg("ボイスメモに入れられるのは、自分の声だけです", "system"); return; }

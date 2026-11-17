@@ -64,3 +64,18 @@ def test_quiet_has_no_grains_and_fine_text(tmp_path):
     text = hs.fine_text(rec)
     assert "細かい線(0.1 秒ごと" in text and "粒(1 秒ごと): 4 0 0" in text
     assert "粒(その 1 秒に" in hs.shape_text(rec)
+
+
+def test_prune_only_old_sound_files(tmp_path):
+    import os
+    d = tmp_path / "chat_media" / "arisan"
+    d.mkdir(parents=True)
+    old, new, voice = d / "a_sound.webm", d / "b_sound.webm", d / "c_voice.webm"
+    for f in (old, new, voice):
+        f.write_bytes(b"x")
+    t = datetime(2026, 11, 17, 12, 0).timestamp()
+    os.utime(old, (t - 8 * 86400, t - 8 * 86400))
+    os.utime(voice, (t - 30 * 86400, t - 30 * 86400))
+    os.utime(new, (t - 86400, t - 86400))
+    assert hs.prune(tmp_path, 7, now=datetime(2026, 11, 17, 12, 0)) == ["a_sound.webm"]
+    assert new.exists() and voice.exists()   # 声は消さない

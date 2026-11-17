@@ -16,6 +16,10 @@ Usage:
     python3 heard_sound.py look <id>                              # 線と数字(1 秒ごとの大きさ・高さの重心・立ち上がり・粒)
     python3 heard_sound.py look <id> --fine                       # 0.1 秒ごとの細かい線と数字(1 秒の中の粒が見える)
     python3 heard_sound.py refine <id>                            # 細かい線と粒を、残っている音のファイルから計算し直す
+    python3 heard_sound.py prune [--days 7]                       # 録った音そのもの(chat_media の …_sound.*)を、日がたったら消す(数字と見立ては残す)
+
+録った音そのものは KEEP_DAYS 日で消す(2026-11-17 ありさん。ぷちが使うのは数字・線・見立てで、聞かせたときに計算し終わっている)。
+🔔 音のライブラリに登録した音は別に写してあるので消えない。GitHub のバックアップには入れない(家の backup/save.sh)
     python3 heard_sound.py answer <id> --character <ぷち>          # 答え合わせ: 仕組みの見立て(「かも」の名前)
     python3 heard_sound.py tag <ぷち> <id> "<自分の言葉>"           # 自分の言葉を貼る
     python3 heard_sound.py words <id>                             # 貼った言葉を見る(みんなの)
@@ -39,6 +43,7 @@ FINE_RANGE = 40.0       # 細かい線: いちばん大きい 0.1 秒を █、�
 # 粒: 10 ms ごとの大きさで、いちばん大きい音から GRAIN_REL dB 以内、直前 50 ms の小さいところから GRAIN_RISE dB 以上
 # 急に立ち上がったところを 1 粒(続けて GRAIN_GAP_MS は数えない)。11/17 の見本で: キーボード 3〜6/秒・時計 1/秒・雑音 0
 GRAIN_REL, GRAIN_RISE, GRAIN_GAP_MS = 15.0, 12.0, 60
+KEEP_DAYS = 7
 
 
 def data_dir() -> Path:
@@ -113,10 +118,25 @@ def refine(base: Path, rec: dict) -> dict:
     return rec
 
 
+def prune(base: Path, days: int = KEEP_DAYS, now: datetime | None = None) -> list[str]:
+    """chat_media の …_sound.*(🔊 で録った音そのもの)のうち days 日より古いものを消す。消した名前を返す"""
+    limit = (now or datetime.now()).timestamp() - days * 86400
+    gone = []
+    root = base / "chat_media"
+    for f in root.glob("*/*_sound.*") if root.is_dir() else []:
+        try:
+            if f.is_file() and f.stat().st_mtime < limit:
+                f.unlink()
+                gone.append(f.name)
+        except OSError:
+            continue
+    return gone
+
+
 def fine_text(rec: dict) -> str:
     fine = rec.get("fine") or []
     if not fine:
-        return "(細かい線が無い。refine <印> で作れる)"
+        return "(細かい線が無い。録った音が残っていれば refine <印> で作れる。音は 7 日で消える)"
     top = max(fine)
     def bar(d: float) -> str:
         x = (min(max(d, top - FINE_RANGE), top) - (top - FINE_RANGE)) / FINE_RANGE
@@ -180,11 +200,16 @@ def main() -> int:
     p = sub.add_parser("list"); p.add_argument("--days", type=int, default=7)
     p = sub.add_parser("look"); p.add_argument("id"); p.add_argument("--fine", action="store_true")
     p = sub.add_parser("refine"); p.add_argument("id")
+    p = sub.add_parser("prune"); p.add_argument("--days", type=int, default=KEEP_DAYS)
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("--character", required=True)
     p = sub.add_parser("tag"); p.add_argument("character"); p.add_argument("id"); p.add_argument("text")
     p = sub.add_parser("words"); p.add_argument("id")
     a = ap.parse_args()
     base = data_dir()
+    if a.cmd == "prune":
+        gone = prune(base, max(1, a.days))
+        print(f"消した: {len(gone)} 個" + (f"({', '.join(gone)})" if gone else ""))
+        return 0
     if a.cmd == "list":
         since = datetime.now() - timedelta(days=max(1, a.days))
         rows = []
