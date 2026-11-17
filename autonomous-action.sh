@@ -443,6 +443,12 @@ if [ -f "${PROJECT_DIR}/scripts/mail_tags.py" ]; then
   MAIL_ASK_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/mail_tags.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# TODO_ACTIVE の見張り(2026-11-17、ぷちたちと決めた): 1 行だけ、1 日 1 回、静かな時間は言わない。片付けるのは本人。characters/<id>/state/todo_told.json
+TODO_NOTICE=""
+if [ -f "${PROJECT_DIR}/scripts/todo_check.py" ]; then
+  TODO_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/todo_check.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
+
 # 道具箱から渡されたもの(2026-11-16、ぷちたちと決めた): 1 日 1 個、提案の形で 1 行。使い心地は toolbox.py felt。state/toolbox/
 TOOLBOX_NOTICE=""
 if [ -f "${PROJECT_DIR}/scripts/toolbox.py" ]; then
@@ -530,7 +536,7 @@ PROMPT="$(render autonomous/user \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS")"
 
 # プロジェクトディレクトリに移動
@@ -578,6 +584,7 @@ Bash(python3 $ALLOWED_DIR/scripts/toolbox.py *),
 Bash(python3 $ALLOWED_DIR/scripts/body_log.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sounds.py *),
 Bash(python3 $ALLOWED_DIR/scripts/heard_sound.py *),
+Bash(python3 $ALLOWED_DIR/scripts/todo_check.py *),
 Bash(python3 $ALLOWED_DIR/scripts/said.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sing.py *),
 Bash(python3 $ALLOWED_DIR/scripts/watch.py send *),

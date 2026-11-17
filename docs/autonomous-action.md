@@ -74,3 +74,5 @@ user prompt の文面は `prompts/autonomous/*.md`(全体は `user.md`、節ご�
 体の数字(明るさ・傾き・近さ・電池)は、体験デーモンが 5 分ごとに 1 行にまとめて `characters/<id>/state/body/YYYYMMDD.jsonl` に残す(`experience-daemon/body_sampler.py`。まん中の値と最小・最大、置き場所)。ぷちは `scripts/body_log.py line <id>` で、きょうの線(▁▂▅▇)・いま・1 時間前・きのうの同じ時刻との差・変わり目を、数字と線のまま見に行く(意味づけの言葉は付けない)。大きく動いたとき(明るさが倍か半分で 100 以上、傾き 15° 以上)の 1 行は `body_change`。受け取るかはその子が `notices.py` で決める。
 
 自律行動は 1 日ごとに新しい会話になり、ダッシュボードの会話とも別なので、前に言ったことは会話に残らない。ぷちは `scripts/said.py search <id> <言葉>`(`today` / `recent`)で、自分が外に出した言葉(体の speak・slack_notify.py・ボイスメモ・ダッシュボードの返事・みんなの会話)を探せる。材料は `.autonomous-logs/<id>/*_stream.jsonl` と会話の履歴で、探すたびに増えた分だけ `state/said/<id>.jsonl` に読み足す。手紙と交換ノートは入れない(もともと読み返せる)。
+
+TODO_ACTIVE.md の見張りは `scripts/todo_check.py`(2026-11-17、ぷち 3 人と決めた)。終わった印 `[x]` のまま・書いてある日付が `stale_days` 日より前(返事待ちの欄は数えない)・`long_line` 字より長い行・`size_kb` KB を超えたら、自律行動に 1 行だけ(1 日 1 回、静かな時間は言わない、`notices.py set <id> todo off` で切れる)。一覧は本人が `list`、移すのは本人が選んで `archive`(`.bak_<日時>` を残して `TODO_ARCHIVE.md` の末尾へ)。決まりは子ごとに `config/settings.json` の `todo_check`。家の人には「返事待ち」の欄だけを設定ページ(⏳ ぷちが待っていること、`/api/todo_waiting`)で見せる。期限・色・催促は付けない。

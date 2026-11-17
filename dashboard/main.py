@@ -6925,6 +6925,18 @@ class AwakeBody(BaseModel):
     hours: float | None = None   # いまから何時間、active time の外でも動いてよいか(None・0 でやめる)
 
 
+@app.get("/api/todo_waiting")
+def api_todo_waiting():
+    """ぷちが待っていること(各自の TODO_ACTIVE.md の「返事待ち」の欄だけ。ほかの欄は出さない。決まりは scripts/todo_check.py)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import todo_check
+    names = {c["id"]: c.get("name") or c["id"] for c in list_characters()}
+    return {"items": [dict(w, name=names.get(w["character"], w["character"])) for w in todo_check.waiting_all(DATA_DIR)
+                      if w["character"] in names]}
+
+
 @app.get("/api/{character_id}/awake")
 def api_get_awake(character_id: str):
     """「いまから n 時間は時間外でも自律行動してよい」の様子(設定ページ用。決まりは scripts/awake.py)"""

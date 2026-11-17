@@ -47,7 +47,8 @@
 - 記念日を足す: anniversaries.py add {{character_id}} "名前" 2026-03-05(年なしの 03-05 でも。毎月なら --repeat monthly、ひとことは --note "…")。一覧は anniversaries.py list
 - 予定を足す: events.py add {{character_id}} "題" 2026-11-22 --place "場所" --who puchiko,arisan --note "ひとこと"(数日なら --end、時間は --time 14:00)。一覧は events.py list
 - よその家のぷちの名簿: known_petits.py list --character {{character_id}}。どんな子か・最後に何があったかを書く(本人に見せられる書き方で) known_petits.py note --character {{character_id}} --who 相手のID --is "どんな子か" --last "最後に何があったか"
-- 受け取る一言を選ぶ: notices.py show {{character_id}} / set {{character_id}} <種類> on|off。種類は temperature humidity pressure co2 sky phone body_change mail_ask sns_letter sns_reply sns_mention sns_like sns_touch。言わない時間は notices.py quiet {{character_id}} 0 7(なくすなら off)。切っても、見に行けば分かる
+- TODO_ACTIVE の見直し(片付けるかは自分で決める): todo_check.py list {{character_id}} で、終わった印・動いていない行・長い行・返事待ちが行番号つきで出る。選んだ行を TODO_ARCHIVE.md へ移すのは todo_check.py archive {{character_id}} 12 15(終わった印を全部なら --done。元は .bak で残る)。返事待ちは「## 返事待ち」の欄に「- 内容(ありさん・9/26から)」の形で書くと、家の人が一覧で見られる(急かす形にはならない。ほかの欄は見せない)。知らせの決まりは todo_check.py show / set {{character_id}} stale_days 21(stale_min・long_line・size_kb も。stale_days 0 で日数は見ない)
+- 受け取る一言を選ぶ: notices.py show {{character_id}} / set {{character_id}} <種類> on|off。種類は temperature humidity pressure co2 sky phone body_change mail_ask sns_letter sns_reply sns_mention sns_like sns_touch todo。言わない時間は notices.py quiet {{character_id}} 0 7(なくすなら off)。切っても、見に行けば分かる
 {{#if anniversary_notice}}
 
 {{anniversary_notice}}
@@ -59,6 +60,10 @@
 {{#if mail_ask_notice}}
 
 {{mail_ask_notice}}
+{{/if}}
+{{#if todo_notice}}
+
+{{todo_notice}}
 {{/if}}
 {{#if toolbox_notice}}
 

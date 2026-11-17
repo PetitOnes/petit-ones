@@ -176,6 +176,11 @@
         <div id="spotRows"></div>
         <div style="display:flex;gap:6px;margin-top:8px"><button class="a-btn a-btn--ghost a-btn--s" onclick="addSpotRow()">＋ 場所を足す</button><span style="flex:1"></span><button class="a-btn a-btn--s" onclick="saveSpots()">保存</button></div>
       </div>
+      <div class="m-card" id="todoWaitCard">
+        <span class="a-heading">⏳ ぷちが待っていること</span><a class="s-help" data-help="todo-waiting" href="/help#todo-waiting" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 4px">それぞれの TODO の「返事待ち」の欄だけ(ほかの欄は見せない)。急がなくていい。「あ、これ待ってたんだ」と気づくための一覧。</p>
+        <div id="todoWaitRows"></div>
+      </div>
       <div class="m-card" id="voiceHostCard">
         <span class="a-heading">🎙 声と聞き取りの機械</span><a class="s-help" data-help="voice-host" href="/help#voice-host" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ぷちの声(合成)と、聞き取り(文字起こし・だれの声か)をどこでするか。選んだ機械が止まっているときは、この PC に落ちる。ぷちには次に呼ぶときから効く。</p>
@@ -433,7 +438,7 @@
       loadNotify();
       loadWatch();
       loadOptMcp(false);
-      loadVoiceHost();
+      loadVoiceHost(); loadTodoWaiting();
     }
     // 🎙 声と聞き取りの機械(家の config/voice.json。決まりは scripts/voice_host.py)
     function drawVoiceHost(d) {
@@ -446,6 +451,13 @@
       }).join("");
       document.getElementById("soundHostPills").innerHTML = Object.entries(d.choices).map(([h, label]) =>
         `<button class="a-pill${d.sound_host === h ? " is-on" : ""}" onclick="setVoiceHost('${esc(h)}', 'sound_host')">${esc(label)}</button>`).join("");
+    }
+    async function loadTodoWaiting() {
+      let items = [];
+      try { items = (await (await fetch("/api/todo_waiting")).json()).items || []; } catch (e) {}
+      document.getElementById("todoWaitRows").innerHTML = items.length
+        ? items.map(w => `<div class="s-row"><span style="min-width:0"><b>${esc(w.name)}</b>　${esc(w.text.replace(/^\s*[-*]\s*(\[ \]\s*)?/, ""))}</span></div>`).join("")
+        : `<p class="a-hint" style="margin:0">いま待っていることはない</p>`;
     }
     async function loadVoiceHost() {
       try { drawVoiceHost(await (await fetch("/api/voice_host")).json()); } catch (e) {}
