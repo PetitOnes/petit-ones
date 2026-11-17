@@ -38,3 +38,29 @@ def test_bad_id_and_empty(tmp_path):
     rec = hs.save(tmp_path, "arisan", "x", {}, now=datetime(2026, 11, 17, 11, 0))
     assert hs.shape_text(rec) == "(音のかたちが取れなかった)"
     assert "名前の無い音" in hs.answer_text(rec)
+
+
+def _clicks(times, secs=3, sr=16000):
+    import numpy as np
+    x = np.random.default_rng(0).normal(0, 0.0005, sr * secs)
+    for t in times:
+        i = int(t * sr)
+        x[i:i + 160] += 0.3 * np.exp(-np.arange(160) / 30)   # 10 ms で消える「かちゃ」
+    return x
+
+
+def test_grains_count_clicks_inside_one_second():
+    r = hs.analyze_samples(_clicks([0.1, 0.35, 0.6, 0.85, 2.5]))
+    assert r["grains"] == [4, 0, 1]
+    assert len(r["fine"]) == 30
+
+
+def test_quiet_has_no_grains_and_fine_text(tmp_path):
+    import numpy as np
+    r = hs.analyze_samples(np.random.default_rng(1).normal(0, 0.001, 16000 * 2))
+    assert r["grains"] == [0, 0]
+    rec = hs.save(tmp_path, "arisan", "x", RESULT, now=datetime(2026, 11, 17, 12, 0))
+    rec.update(hs.analyze_samples(_clicks([0.1, 0.35, 0.6, 0.85])))
+    text = hs.fine_text(rec)
+    assert "細かい線(0.1 秒ごと" in text and "粒(1 秒ごと): 4 0 0" in text
+    assert "粒(その 1 秒に" in hs.shape_text(rec)
