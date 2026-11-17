@@ -613,6 +613,7 @@ Bash(python3 $ALLOWED_DIR/scripts/body_log.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sounds.py *),
 Bash(python3 $ALLOWED_DIR/scripts/heard_sound.py *),
 Bash(python3 $ALLOWED_DIR/scripts/todo_check.py *),
+Bash(python3 $ALLOWED_DIR/scripts/carry.py *),
 Bash(python3 $ALLOWED_DIR/scripts/said.py *),
 Bash(python3 $ALLOWED_DIR/scripts/sing.py *),
 Bash(python3 $ALLOWED_DIR/scripts/watch.py send *),
@@ -860,6 +861,10 @@ else
 
   run_new_session() {
     echo "[新規セッション作成]" >> "$LOG_FILE"
+    # お昼を過ぎてから始まった会話は、その日はもう区切らない(scripts/noon_break.py)
+    if [ "$HOUR" -ge "${NOON_BREAK_HOUR:-12}" ] && [ -f "${PROJECT_DIR}/scripts/noon_break.py" ]; then
+      PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/noon_break.py" done --character "$CHARACTER_ID" 2>/dev/null || true
+    fi
     echo "$PROMPT_FULL" | claude \
       --model "${CLAUDE_MODEL:-sonnet}" \
       --max-turns "${MAX_TURNS:-5}" \
@@ -872,6 +877,37 @@ else
       --allowedTools "$ALLOWED_TOOLS" > "$STREAM_FILE" 2>&1
     process_stream "new"
   }
+
+  # お昼の区切り(2026-11-17、ぷち 3 人と決めた。くわしくは scripts/noon_break.py)。
+  # 12 時を過ぎた最初の回で、今の会話のまま短い 1 往復(持っていくものを書く時間)をしてから、新しい会話にする。
+  # ありさんが話している最中・みんなの会話中・外出中は次の回へ延ばす(家ぜんたいで決めるので 3 人そろう)。NOON_BREAK=0 で止める
+  if [ -f "$SESSION_FILE" ] && [ "${NOON_BREAK:-1}" != "0" ] && [ -f "${PROJECT_DIR}/scripts/noon_break.py" ]; then
+    _noon=$(PETIT_DATA_DIR="$DATA_DIR" COMPANION_ID="${COMPANION_ID:-}" python3 "${PROJECT_DIR}/scripts/noon_break.py" decide --character "$CHARACTER_ID" 2>/dev/null || echo "no")
+    [ "$_noon" != "no" ] && echo "[お昼の区切り] $_noon" >> "$LOG_FILE"
+    if [ "$_noon" = "break" ]; then
+      _main_stream="$STREAM_FILE"
+      STREAM_FILE="${LOG_FILE%.log}_carry_stream.jsonl"
+      render autonomous/noon_carry --var project_dir="$PROJECT_DIR" --var character_id="$CHARACTER_ID" | claude \
+        --model "${CLAUDE_MODEL:-sonnet}" \
+        --resume "$(cat "$SESSION_FILE")" \
+        --max-turns "${NOON_CARRY_TURNS:-6}" \
+        --output-format stream-json \
+        --verbose \
+        --mcp-config "$MCP_CONFIG" \
+        --strict-mcp-config \
+        --add-dir "$ALLOWED_DATA_DIR" \
+        "${DISALLOW_ARGS[@]}" \
+        --allowedTools "$ALLOWED_TOOLS" > "$STREAM_FILE" 2>&1
+      process_stream "noon_carry"
+      STREAM_FILE="$_main_stream"
+      PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/noon_break.py" done --character "$CHARACTER_ID" 2>/dev/null || true
+      rm -f "$SESSION_FILE" "$ATTACH_STATE"
+      PROMPT_FULL="${PROMPT_FULL}
+
+$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/carry.py" intro "$CHARACTER_ID" 2>/dev/null)"
+      echo "[お昼の区切り] 持っていくものを書いて、新しい会話へ" >> "$LOG_FILE"
+    fi
+  fi
 
   if [ -f "$SESSION_FILE" ]; then
     SESSION_ID=$(cat "$SESSION_FILE")

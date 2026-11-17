@@ -33,7 +33,7 @@ from pathlib import Path
 
 JST = timezone(timedelta(hours=9))
 VIAS = ("speak", "slack", "memo", "chat", "group")
-STREAM_RE = re.compile(r"^(\d{8})_(\d{6})(?:_chat)?_stream\.jsonl$")
+STREAM_RE = re.compile(r"^(\d{8})_(\d{6})(?:_chat|_carry)?_stream\.jsonl$")
 
 
 def data_dir() -> Path:
@@ -70,7 +70,7 @@ def stream_said(path: Path) -> list[dict]:
     if not m:
         return []
     ts = _iso(datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").replace(tzinfo=JST))
-    where = "dashboard" if "_chat_" in path.name else "autonomous"
+    where = "dashboard" if "_chat_" in path.name else "autonomous"   # _carry_ はお昼の区切りの回(自律行動)
     out: list[dict] = []
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
