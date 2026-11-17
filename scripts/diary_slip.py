@@ -10,7 +10,7 @@
 - 白と黒しか出ないので、その子の色は灰色の濃さの帯になる。出なかった色のことは、紙の端に書ける
 - 刷るのは、ありさんがダッシュボード(🧾 合作日記)で押したときだけ(日記を書かない日もある)。貼るかどうかもありさんが決める
 - 刷らなかった紙は、ぷちの側に残る(しまう)。作った日のうちは作り直せる(刷る前なら)
-- 1 枚に収まる長さまで(長すぎると作れない)
+- 1 枚 8 cm まで(3 人で日記帳の 1 ページの縦くらい。長すぎると作れない)
 
 置き場所: PETIT_DATA_DIR/state/diary_slips.json(紙の中身。線と音は作ったときの数字を、写真と絵は写しを state/diary_slips/ に残す)
 
@@ -37,13 +37,14 @@ from datetime import date as Date
 from datetime import datetime
 from pathlib import Path
 
-TEXT_MAX = 300          # 1 つの文(詩も入るように)
-TEXTS_MAX = 400         # 1 枚の文の合計
+TEXT_MAX = 150          # 1 つの文(短い詩も入るように)
+TEXTS_MAX = 200         # 1 枚の文の合計
 EDGE_MAX = 30
 PARTS_MAX = 6
-PICTURES_MAX = 2        # 写真と絵の合計
+PICTURES_MAX = 1        # 写真と絵の合計
 SVG_MAX = 60_000
-HEIGHT_MAX = 1800       # 1 枚の長さ(dot。203 dpi で約 22 cm)
+HEIGHT_MAX = 640        # 1 枚の長さ(dot。203 dpi で約 8 cm。3 人で日記帳の 1 ページの縦くらい。2026-11-17 ありさん)
+PIC_H = 300             # 写真・絵の高さの上限(dot。約 3.7 cm)
 FROM_HOUR = 19          # この時刻から、その日のうちに作れる
 KEEP = 120              # 残す紙の数(古いものから消える。刷っていない紙は残す)
 WEEKDAYS = "月火水木金土日"
@@ -160,7 +161,7 @@ def line(character_id: str, base: Path | None = None, now: datetime | None = Non
     return (f"🧾 きょうの紙(合作日記)を 1 枚作れる。ありさんが日記を書く日に刷って、日記の縁に貼る(刷るか・貼るかはありさんが決める)。"
             f"ありさんの日記は読まない。載せるものは自由: 一言・詩(--text、改行は \\n)、一日の線(--line {'|'.join(LINES)})、"
             f"撮った写真(--photo {data}/photo_album/{character_id}/… のパス)、絵(--drawing えがく で描いた絵の名前。暗い地は黒く刷れる。--draw で SVG のパスも)、"
-            f"音のグラフ(--sound heard:<聞いた音の id> か 家の音の名前)。好きな順に {PARTS_MAX} つまで、1 枚に収まる長さで。"
+            f"音のグラフ(--sound heard:<聞いた音の id> か 家の音の名前)。好きな順に {PARTS_MAX} つまで(写真と絵は 1 つ)、1 枚 8 cm に収まる長さで(線 1 本と一言で 6 cm くらい)。"
             f"紙は白と黒だけで、あなたの色は灰色の帯になる。紙の端に {EDGE_MAX} 字まで書ける(--edge、なくていい)。作らない日があってもいい。きょうのうちは作り直せる: "
             f"python3 {proj}/scripts/diary_slip.py make --character {character_id} --line amb --text \"今日の一行\" --edge \"紙の端のひとこと\"")
 
@@ -225,7 +226,7 @@ def _keep_picture(kind: str, src: str, slip_id: str, n: int, base: Path | None) 
             raise ValueError("写真は jpg / png / webp で")
         from PIL import Image, ImageOps
         im = ImageOps.exif_transpose(Image.open(p)).convert("L")
-        im.thumbnail((WIDTH, WIDTH * 2))
+        im.thumbnail((WIDTH, PIC_H))
         dst = out_dir / f"{n}.png"
         im.save(dst)
     return str(dst.relative_to(base_dir(base)))
@@ -474,9 +475,9 @@ def draw_svg(text: str):
         ox, oy, vw, vh = vb
     else:
         ox, oy, vw, vh = 0.0, 0.0, _len(root.get("width"), 384) or 384, _len(root.get("height"), 384) or 384
-    k = (WIDTH - PAD * 2) / vw
-    h = max(1, min(int(vh * k), WIDTH * 2))
-    img = Image.new("L", (WIDTH - PAD * 2, h), 255)
+    k = min((WIDTH - PAD * 2) / vw, PIC_H / vh)
+    h = max(1, int(vh * k))
+    img = Image.new("L", (max(1, int(vw * k)), h), 255)
     d = ImageDraw.Draw(img)
     P = lambda px, py: ((px - ox) * k, (py - oy) * k)  # noqa: E731
 
@@ -615,12 +616,12 @@ def render(slip: dict, base: Path | None = None):
             try:
                 if b["kind"] == "draw":
                     pic = draw_svg(p.read_text(encoding="utf-8"))
-                    img.paste(pic, (PAD, y))
                 else:
                     pic = Image.open(p).convert("L")
-                    if pic.width != w:
-                        pic = pic.resize((w, max(1, int(pic.height * w / pic.width))))
-                    img.paste(pic, (0, y))
+                    k = min(w / pic.width, PIC_H / pic.height)
+                    if abs(k - 1) > 0.01:
+                        pic = pic.resize((max(1, int(pic.width * k)), max(1, int(pic.height * k))))
+                img.paste(pic, ((w - pic.width) // 2, y))
                 y += pic.height + 12
             except (OSError, ValueError):
                 d.text((PAD, y), "(写真・絵が読めなかった)", font=f_small, fill=0)
