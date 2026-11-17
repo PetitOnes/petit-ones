@@ -483,6 +483,12 @@ if [ -f "$PROJECT_DIR/scripts/whereabouts.py" ]; then
   WHEREABOUTS=$(PETIT_DATA_DIR="$DATA_DIR" python3 "$PROJECT_DIR/scripts/whereabouts.py" line --character "$CHARACTER_ID" 2>/dev/null || true)
 fi
 
+# いまの回がアクティブタイムのどこか(2026-11-17 ありさん)。決まりではなく知らせ。次がいつか分かるように 1 行
+ACTIVE_LINE=""
+if [ -f "${PROJECT_DIR}/scripts/active_time.py" ]; then
+  ACTIVE_LINE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/active_time.py" line --character "$CHARACTER_ID" ${DAY_TYPE:+--day-type "$DAY_TYPE"} 2>/dev/null || true)
+fi
+
 # ノートが読まれた・★ が付いたこと(2026-11-14)。手紙の知らせと同じく、まだ伝えていない分だけ 1 回。characters/<id>/state/note_marks_told.json
 NOTE_MARK_NOTICE=""
 if [ -f "${PROJECT_DIR}/scripts/note_marks.py" ]; then
@@ -562,7 +568,7 @@ render autonomous/user "$@" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
   --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
-  --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS"
+  --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS" --var active_line="$ACTIVE_LINE"
 }
 PROMPT_FULL="$(_render_user)"
 PROMPT="$(_render_user --var soul_same="$SOUL_SAME" --var todo_same="$TODO_SAME" --var diary_same="$DIARY_SAME" --var same_note="$SAME_NOTE")"
@@ -880,8 +886,9 @@ else
 
   # お昼の区切り(2026-11-17、ぷち 3 人と決めた。くわしくは scripts/noon_break.py)。
   # 12 時を過ぎた最初の回で、今の会話のまま短い 1 往復(持っていくものを書く時間)をしてから、新しい会話にする。
-  # ありさんが話している最中・みんなの会話中・外出中は次の回へ延ばす(家ぜんたいで決めるので 3 人そろう)。NOON_BREAK=0 で止める
-  if [ -f "$SESSION_FILE" ] && [ "${NOON_BREAK:-1}" != "0" ] && [ -f "${PROJECT_DIR}/scripts/noon_break.py" ]; then
+  # ありさんが話している最中・みんなの会話中・外出中は次の回へ延ばす(家ぜんたいで決めるので 3 人そろう)。休日は区切らない。NOON_BREAK=0 で止める
+  # 休日は区切らない(お昼の回が無く、朝と夜だけなので。2026-11-17 ありさん)
+  if [ -f "$SESSION_FILE" ] && [ "${NOON_BREAK:-1}" != "0" ] && [ "${DAY_TYPE:-weekday}" != "weekend" ] && [ -f "${PROJECT_DIR}/scripts/noon_break.py" ]; then
     _noon=$(PETIT_DATA_DIR="$DATA_DIR" COMPANION_ID="${COMPANION_ID:-}" python3 "${PROJECT_DIR}/scripts/noon_break.py" decide --character "$CHARACTER_ID" 2>/dev/null || echo "no")
     [ "$_noon" != "no" ] && echo "[お昼の区切り] $_noon" >> "$LOG_FILE"
     if [ "$_noon" = "break" ]; then

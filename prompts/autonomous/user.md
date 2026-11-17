@@ -4,6 +4,9 @@
 {{#if whereabouts}}
 {{whereabouts}}
 {{/if}}
+{{#if active_line}}
+{{active_line}}
+{{/if}}
 {{#if event_notice}}
 近い予定:
 {{event_notice}}
