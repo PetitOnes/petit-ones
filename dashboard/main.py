@@ -2516,6 +2516,7 @@ class OptionalMcpBody(BaseModel):
 
 class VoiceHostBody(BaseModel):
     host: str | None = None   # "localhost"(この PC)/ "puchipuchi"(GPU)。空なら決めない(環境変数のまま)
+    sound_host: str | None = None   # 🔊 音を聞かせる をする機械(送られてきたときだけ変える)
 
 
 @app.get("/api/voice_host")
@@ -2533,7 +2534,10 @@ def api_voice_host_set(body: VoiceHostBody, request: Request):
     _voice_host()
     import voice_host
     try:
-        voice_host.set_host(DATA_DIR, body.host or None)
+        if "host" in body.model_fields_set:
+            voice_host.set_host(DATA_DIR, body.host or None)
+        if "sound_host" in body.model_fields_set:
+            voice_host.set_sound_host(DATA_DIR, body.sound_host or None)
     except ValueError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return voice_host.view(DATA_DIR)
@@ -7134,6 +7138,44 @@ def _chat_media_kind(filename: str) -> str:
     return "photo" if Path(filename).suffix.lower() in _CHAT_PHOTO_EXTS else "audio"
 
 
+def _sound_urls() -> list[str]:
+    """音の種類(/sound_events)を聞きに行く順: 家で決めた機械 → この PC(:8767)"""
+    _voice_host()
+    import voice_host
+    h = voice_host.sound_host(DATA_DIR)
+    return list(dict.fromkeys([_ASR_FALLBACK_URL if h == "localhost" else f"http://{h}:8765", _ASR_FALLBACK_URL]))
+
+
+def _sound_events_file(path: Path) -> dict | None:
+    """🔊 音を聞かせる: ffmpeg で 16kHz mono WAV にして /sound_events へ(文字起こしはしない)。だめなら None"""
+    import subprocess
+    import tempfile
+
+    import requests as _rq
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        wav_path = Path(f.name)
+    try:
+        subprocess.run(["ffmpeg", "-y", "-i", str(path), "-ac", "1", "-ar", "16000", "-sample_fmt", "s16", str(wav_path)],
+                       capture_output=True, check=True, timeout=60)
+        for url in _sound_urls():
+            try:
+                with open(wav_path, "rb") as wf:
+                    r = _rq.post(f"{url}/sound_events", files={"file": (path.stem + ".wav", wf, "audio/wav")}, data={"step": "1"}, timeout=60)
+                r.raise_for_status()
+                return r.json()
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
+    finally:
+        wav_path.unlink(missing_ok=True)
+
+
+def _is_sound_media(name: str) -> bool:
+    return Path(name).stem.endswith("_sound")
+
+
 def _transcribe_audio_file(path: Path) -> str | None:
     """ffmpeg で 16kHz mono WAV にして ASR(/transcribe)へ。ASR が落ちていれば None"""
     import subprocess
@@ -7162,7 +7204,7 @@ def _transcribe_audio_file(path: Path) -> str | None:
 
 @app.post("/api/chat-media/{username}/upload")
 async def api_chat_media_upload(username: str, request: Request, file: UploadFile = File(...), save_album: bool = Form(False),
-                                title: str = Form("")):
+                                title: str = Form(""), as_sound: bool = Form(False)):
     """話す用の写真/声を置く。写真は縮めて JPEG に。save_album=true なら自分のアルバムにも入れる(title があればアルバムの題に)"""
     me = _get_username(request) or "arisan"
     if username != me or username not in ALBUM_PERSONS:
@@ -7193,7 +7235,7 @@ async def api_chat_media_upload(username: str, request: Request, file: UploadFil
     else:
         if ext not in _CHAT_AUDIO_EXTS:
             ext = ".webm" if "webm" in ctype else ".mp4" if "mp4" in ctype else ".ogg" if "ogg" in ctype else ".wav"
-        fname = f"{stamp}_voice{ext}"
+        fname = f"{stamp}_{'sound' if as_sound else 'voice'}{ext}"   # sound = 🔊 音を聞かせる(文字起こしをしない)
     (_chat_media_dir(username) / fname).write_bytes(data)
     return {"ok": True, "filename": fname, "url": f"/api/chat-media/{username}/{fname}", "kind": _chat_media_kind(fname)}
 
@@ -7248,7 +7290,8 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
             media_path = cand
     kind = _chat_media_kind(media_path.name) if media_path else None
     photo_word = "📷 写真" if len(photos) <= 1 else f"📷 写真 {len(photos)} 枚"
-    shown = message or (photo_word if kind == "photo" else "🎤 声" if kind == "audio" else "")
+    is_sound = bool(media_path and kind == "audio" and _is_sound_media(media_path.name))
+    shown = message or (photo_word if kind == "photo" else "🔊 音" if is_sound else "🎤 声" if kind == "audio" else "")
     who = user_display_for(username)
     prompt = message
     if len(photos) > 1 or (photos and photos[0][1]):
@@ -7256,6 +7299,16 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
                          photos=[{"i": str(i), "path": str(pth), "title": t} for i, (pth, t) in enumerate(photos, 1)]).rstrip()
     elif media_path and kind == "photo":
         prompt = _prompt("media_photo", who=who, path=str(media_path), message=message).rstrip()
+    elif is_sound:
+        # 🔊 音を聞かせる(2026-11-17): 文字起こしはせず、音のかたち(数字と線)だけ渡す。何の音かの名前は家に残し、ぷちが答え合わせを頼んだときだけ
+        result = await asyncio.to_thread(_sound_events_file, media_path)
+        sd = str(PROJECT_DIR / "scripts")
+        if sd not in sys.path:
+            sys.path.insert(0, sd)
+        import heard_sound
+        rec = heard_sound.save(DATA_DIR, username, media_path.name, result or {}, suffix=media_path.stem.split("_")[2] if media_path.stem.count("_") >= 3 else "")
+        prompt = _prompt("media_sound", who=who, id=rec["id"], duration=f"{rec.get('duration') or 0:.0f}",
+                         shape=heard_sound.shape_text(rec), scripts_dir=str(PROJECT_DIR / "scripts"), message=message).rstrip()
     elif media_path and kind == "audio":
         transcript = await asyncio.to_thread(_transcribe_audio_file, media_path)
         prompt = _prompt("media_audio", who=who, path=str(media_path), transcript=transcript or "", message=message).rstrip()
@@ -9376,6 +9429,7 @@ HTML = """<!DOCTYPE html>
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
         <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
+        <button onclick="closePlusMenu(); chatMic(true)" title="文字起こしはしない。ぷちには音のかたち(数字と線)だけ届く">🔊 音を聞かせる</button>
       <button onclick="closePlusMenu(); startShotMode()">📸 会話を選んで画像にする</button>
       <hr class="plus-sep">
       <button class="reset-btn" onclick="resetSession()" id="resetBtn">リセット</button>
@@ -10509,7 +10563,7 @@ HTML = """<!DOCTYPE html>
         const pl = document.createElement("audio");
         pl.className = "chat-audio"; pl.controls = true; pl.src = m.url;
         const lab2 = document.createElement("span");
-        lab2.textContent = `🎤 声(${Math.round(m.file.size / 1024)} KB)・送る前に聞けます`;
+        lab2.textContent = `${m.sound ? "🔊 音(文字起こしはしない)" : "🎤 声"}(${Math.round(m.file.size / 1024)} KB)・送る前に聞けます`;
         au.append(lab2, pl);
       }
       document.getElementById("mediaPreview").style.display = "flex";
@@ -10535,8 +10589,9 @@ HTML = """<!DOCTYPE html>
       document.getElementById("mediaPreview").style.display = "none";
       _saveAlbum = false;
     }
-    async function _uploadOne(f, fallbackName, title) {
+    async function _uploadOne(f, fallbackName, title, asSound) {
       const fd = new FormData();
+      if (asSound) fd.append("as_sound", "true");
       fd.append("file", f, f.name || fallbackName);
       fd.append("save_album", _saveAlbum ? "true" : "false");
       if (title) fd.append("title", title);
@@ -10553,15 +10608,17 @@ HTML = """<!DOCTYPE html>
           out.push({file: up.filename, url: up.url, kind: up.kind, title: ph.title.trim()});
         }
       } else {
-        const up = await _uploadOne(_pendingMedia.file, "voice.webm", "");
+        const up = await _uploadOne(_pendingMedia.file, "voice.webm", "", !!_pendingMedia.sound);
         out.push({file: up.filename, url: up.url, kind: up.kind, title: ""});
       }
       return out;
     }
     // 声はそのまま送る(録音 → 音声ファイル)。押して録音、もう一度押して止める。60 秒まで
     let _chatRecorder = null, _chatChunks = [], _chatRecTimer = null;
-    async function chatMic() {
+    let _chatMicSound = false;   // 🔊 音を聞かせる(文字起こしをしない)
+    async function chatMic(asSound) {
       const btn = document.getElementById("chatPlusBtn");
+      if (!_chatRecorder) _chatMicSound = !!asSound;
       if (_chatRecorder) { _chatRecorder.stop(); return; }
       if (!navigator.mediaDevices || !window.MediaRecorder) { addMsg("このブラウザでは録音できません(https が要ります)", "system"); return; }
       let stream;
@@ -10580,7 +10637,8 @@ HTML = """<!DOCTYPE html>
         if (!_chatChunks.length) return;
         const ext = type.includes("mp4") ? ".mp4" : type.includes("ogg") ? ".ogg" : type.includes("wav") ? ".wav" : ".webm";
         const blob = new Blob(_chatChunks, {type});
-        _showMediaPreview("audio", new File([blob], "voice" + ext, {type}));
+        _showMediaPreview("audio", new File([blob], (_chatMicSound ? "sound" : "voice") + ext, {type}));
+        _pendingMedia.sound = _chatMicSound;
       };
       _chatRecorder.start(250);
       btn.classList.add("recording"); btn.textContent = "🔴";
@@ -10603,7 +10661,7 @@ HTML = """<!DOCTYPE html>
         catch { addMsg("写真/声を上げられませんでした", "system"); btn.disabled = false; input.value = text; refreshSend(); return; }
         if (kind === "photo") medias = ups.map(u => ({file: u.file, title: u.title}));
         else mediaName = ups[0].file;
-        addMsg(text || (kind === "photo" ? (ups.length > 1 ? `📷 写真 ${ups.length} 枚` : "📷 写真") : "🎤 声"), "user", null, null, ups);
+        addMsg(text || (kind === "photo" ? (ups.length > 1 ? `📷 写真 ${ups.length} 枚` : "📷 写真") : (_pendingMedia && _pendingMedia.sound ? "🔊 音" : "🎤 声")), "user", null, null, ups);
         clearMedia();
       } else {
         addMsg(text, "user");
