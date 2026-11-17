@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1758,6 +1758,19 @@ def save_chat_log(character_id: str, log: list[dict], username: str | None = Non
 # 画面にはこの吹き出しに「もう一度きく」が付く(2026-11-14 ありさん)
 NO_REPLY = "言葉にならなかったよ"
 
+# いま返事を考えている会話の数(2026-11-17)。ダッシュボードを再起動すると、考えている途中の claude も止まって
+# 言葉にならない。scripts/restart_dashboard.sh は /api/busy が 0 になるのを待ってから再起動する
+_CHATS_BUSY = {"n": 0}
+
+
+@contextmanager
+def _in_flight():
+    _CHATS_BUSY["n"] += 1
+    try:
+        yield
+    finally:
+        _CHATS_BUSY["n"] -= 1
+
 
 def _is_no_reply(reply: str) -> bool:
     """返事が返せなかった(聞き直せる)か。タイムアウト・空のほか、「エラー: …」も"""
@@ -2093,6 +2106,10 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
             pass
 
     async def _run_cmd(c: list[str], out_path: Path | None = None) -> tuple[str, str]:
+        with _in_flight():
+            return await _run_cmd_inner(c, out_path)
+
+    async def _run_cmd_inner(c: list[str], out_path: Path | None = None) -> tuple[str, str]:
         proc = await asyncio.create_subprocess_exec(
             *c, stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -2139,7 +2156,15 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
         if use_session and sf and new_sid:
             sf.parent.mkdir(parents=True, exist_ok=True)
             sf.write_text(new_sid)
-        return reply or output.strip() or err or NO_REPLY
+        if reply:
+            return reply
+        # 言葉が取り出せなかった(途中で止まった。多くはダッシュボードの再起動で claude が止められたとき)。
+        # 記録(stream-json)をそのまま返事にしない(2026-11-17。「ログみたいなのが出る」の原因)。
+        # JSON でない短い文(ログイン切れなど)だけは、そのまま見せる
+        plain = next((ln.strip() for ln in output.splitlines() if ln.strip() and not ln.lstrip().startswith("{")), "")
+        if plain:
+            return plain[:300]
+        return NO_REPLY
     except Exception as e:
         return f"エラー: {e}"
     except Exception as e:
@@ -4175,6 +4200,12 @@ def api_draw_remove(name: str, request: Request):
         return {"ok": _draw().remove(DATA_DIR, me, name)}
     except _draw().DrawError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.get("/api/busy")
+def api_busy():
+    """いま返事を考えている会話の数(再起動の前に待つため。scripts/restart_dashboard.sh)"""
+    return {"chats": _CHATS_BUSY["n"]}
 
 
 @app.get("/api/draw")
