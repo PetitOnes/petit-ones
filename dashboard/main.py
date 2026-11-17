@@ -9105,6 +9105,9 @@ HTML = """<!DOCTYPE html>
     .photo-pick .del { position: absolute; top: -4px; right: -4px; width: 22px; height: 22px; padding: 0; border: none; border-radius: 50%; background: rgba(60,50,45,0.75); color: #fff; font-size: 0.7rem; line-height: 1; cursor: pointer; }
     .photo-pick input { display: block; width: 76px; margin-top: 3px; padding: 3px 5px; font: inherit; font-size: 0.7rem; border: 1px solid var(--ui-cream-line); border-radius: 6px; background: #fff; }
     .msg audio.chat-audio { display: block; max-width: 240px; height: 36px; margin-top: 4px; }
+    #mediaPreviewAudio audio.chat-audio { display: block; max-width: 260px; height: 36px; margin-top: 4px; }
+    .chat-voice-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .chat-voice-actions .a-btn { text-decoration: none; }
     /* ＋ は薄い丸の中(2026-11-10 ありさん) */
     .chat-input #chatPlusBtn { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 1.35rem; font-weight: 700; line-height: 1; color: #8a7f78; background: #f3e9d8; border-radius: 50%; opacity: 1; }
     /* 送信はトップバーの色。文字(か写真・声)が入っているときだけ押せる */
@@ -10402,10 +10405,45 @@ HTML = """<!DOCTYPE html>
         const au = document.createElement("audio");
         au.className = "chat-audio"; au.controls = true; au.src = a.url; au.preload = "none";
         div.appendChild(au);
+        if (role === "user") div.appendChild(_voiceActions(a.url));
       }
       chat.appendChild(div);
       chatToBottom();
       return div;
+    }
+
+    // 送った声の下に「ダウンロード」と「ボイスメモに登録」(2026-11-17 ありさん)
+    function _voiceActions(url) {
+      const row = document.createElement("div"); row.className = "chat-voice-actions";
+      const dl = document.createElement("a");
+      dl.className = "a-btn a-btn--sub a-btn--s"; dl.href = url; dl.download = url.split("/").pop(); dl.textContent = "⬇ ダウンロード";
+      row.appendChild(dl);
+      if (url.startsWith("/api/chat-media/")) {   // 自分の声だけ、自分のボイスメモに入れられる(だれの声かは押したときに見る。_myId はあとから届くので)
+        const reg = document.createElement("button");
+        reg.className = "a-btn a-btn--sub a-btn--s"; reg.textContent = "🎤 ボイスメモに登録";
+        reg.onclick = () => registerVoiceMemo(url, reg);
+        row.appendChild(reg);
+      }
+      return row;
+    }
+    async function registerVoiceMemo(url, btn) {
+      if (url.split("/")[3] !== _myId) { addMsg("ボイスメモに入れられるのは、自分の声だけです", "system"); return; }
+      const title = prompt("ボイスメモの題", "会話から");
+      if (title === null) return;
+      btn.disabled = true; btn.textContent = "登録中…";
+      try {
+        const blob = await (await fetch(url)).blob();
+        const fd = new FormData();
+        fd.append("file", blob, url.split("/").pop());
+        fd.append("title", title.trim() || "会話から");
+        const res = await fetch(`/api/voice_memo/${_myId}/upload`, {method: "POST", body: fd});
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.error || ("http " + res.status));
+        btn.textContent = "✓ ボイスメモに入れた";
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "🎤 ボイスメモに登録";
+        addMsg("ボイスメモに入れられませんでした: " + e.message, "system");
+      }
     }
 
     function genMsgId() {
@@ -10448,7 +10486,14 @@ HTML = """<!DOCTYPE html>
           d.append(img, del, t); box.append(d);
         });
       } else {
-        au.textContent = `🎤 声(${Math.round(m.file.size / 1024)} KB)`;
+        // 送る前に聞きなおせるように(2026-11-17 ありさん)
+        if (!m.url) m.url = URL.createObjectURL(m.file);
+        au.textContent = "";
+        const pl = document.createElement("audio");
+        pl.className = "chat-audio"; pl.controls = true; pl.src = m.url;
+        const lab2 = document.createElement("span");
+        lab2.textContent = `🎤 声(${Math.round(m.file.size / 1024)} KB)・送る前に聞けます`;
+        au.append(lab2, pl);
       }
       document.getElementById("mediaPreview").style.display = "flex";
     }
@@ -10467,6 +10512,7 @@ HTML = """<!DOCTYPE html>
       _renderMediaPreview();
     }
     function clearMedia() {
+      if (_pendingMedia && _pendingMedia.kind === "audio" && _pendingMedia.url) URL.revokeObjectURL(_pendingMedia.url);
       _pendingMedia = null;
       refreshSend();
       document.getElementById("mediaPreview").style.display = "none";
