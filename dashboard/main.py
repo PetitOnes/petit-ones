@@ -847,8 +847,8 @@ async def auth_middleware(request: Request, call_next):
     if client_ip in _load_trusted_ips():
         return await call_next(request)
     # ぷち時計(家の表示機)は、config/watch.json の鍵で名乗る。この道だけ(2026-11-17)
-    if path == "/api/watch/sync":
-        if not _watch().key_ok(request.headers.get("x-watch-key"), DATA_DIR):
+    if path == "/api/watch/sync":   # 番号(X-Watch-Pair)で来たときは、引き換えはエンドポイントで
+        if not _watch().key_ok(request.headers.get("x-watch-key"), DATA_DIR) and not request.headers.get("x-watch-pair"):
             return JSONResponse({"error": "鍵が合いません"}, status_code=401)
         return await call_next(request)
     # スマホ(家の印を聞くアプリ・音を数字にして送るアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
@@ -3004,8 +3004,11 @@ async def api_watch_sync(request: Request):
     """時計の 1 回の連絡(5 分ごと・持ち上げたとき)。鍵は auth_middleware が確かめ済み。
     ログインの要らない家でも、ここでもう一度確かめる"""
     w = _watch()
+    new_key = None
     if not w.key_ok(request.headers.get("x-watch-key"), DATA_DIR):
-        return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+        new_key = w.redeem_pair(request.headers.get("x-watch-pair"), DATA_DIR)   # 6 桁の番号と引き換えに長い鍵
+        if not new_key:
+            return JSONResponse({"error": "鍵が合いません"}, status_code=401)
     try:
         report = await request.json()
     except ValueError:
@@ -3015,6 +3018,8 @@ async def api_watch_sync(request: Request):
     colors = {c["id"]: c.get("color") or "" for c in list_characters() if c.get("id")}
     for n in res["notices"]:
         n["name"], n["color"] = names.get(n["from"], n["from"]), colors.get(n["from"], "")
+    if new_key:
+        res["key"] = new_key
     return res
 
 
@@ -3024,11 +3029,11 @@ def _watch_view(request: Request) -> dict:
     return {"connected": bool(cfg.get("key")), "notify": bool(cfg.get("notify")), "held": w.held(DATA_DIR),
             "last_at": st.get("at", ""), "battery": st.get("battery"), "charging": bool(st.get("charging")),
             "quiet": cfg.get("quiet"), "per_day": cfg.get("per_day"), "max_chars": cfg.get("max_chars"),
-            "key": cfg.get("key", "") if not _is_limited(request) else "", "lan_url": _lan_url(request)}
+            "pair": (cfg.get("pair") or {}) if not _is_limited(request) else {}, "lan_ip": _lan_ip()}
 
 
-def _lan_url(request: Request) -> str:
-    """時計に入れる、家の中でのダッシュボードの住所(この PC の家の LAN の番号)"""
+def _lan_ip() -> str:
+    """時計に入れる、家の中でのダッシュボードの住所(この PC の家の LAN の番号。:8765 は時計が足す)"""
     import socket
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sk:
@@ -3036,7 +3041,7 @@ def _lan_url(request: Request) -> str:
             ip = sk.getsockname()[0]
     except OSError:
         return ""
-    return f"http://{ip}:{request.url.port or 8765}"
+    return ip
 
 
 class WatchBody(BaseModel):
@@ -3055,6 +3060,15 @@ def api_watch_set(body: WatchBody, request: Request):
     if _is_limited(request):
         return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
     _watch().save_config({"notify": body.notify}, DATA_DIR)
+    return _watch_view(request)
+
+
+@app.post("/api/watch/pair")
+def api_watch_pair(request: Request):
+    """時計をつなぐ 6 桁の番号を出す(10 分だけ)"""
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    _watch().make_pair_code(DATA_DIR)
     return _watch_view(request)
 
 

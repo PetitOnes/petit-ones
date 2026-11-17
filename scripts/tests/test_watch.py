@@ -86,3 +86,13 @@ def test_key(tmp_path):
     k = watch.make_key(tmp_path)
     assert watch.key_ok(k, tmp_path) and not watch.key_ok("x", tmp_path) and not watch.key_ok(None, tmp_path)
     assert (watch.config_path(tmp_path).stat().st_mode & 0o777) == 0o600
+
+
+def test_pair_code(tmp_path):
+    pc = watch.make_pair_code(tmp_path, NOON)
+    assert len(pc["code"]) == 6 and pc["code"].isdigit()
+    assert watch.redeem_pair("000000" if pc["code"] != "000000" else "111111", tmp_path, NOON) is None
+    assert watch.redeem_pair(pc["code"], tmp_path, NOON + timedelta(minutes=11)) is None   # 10 分過ぎ
+    key = watch.redeem_pair(pc["code"], tmp_path, NOON)
+    assert key and watch.key_ok(key, tmp_path)
+    assert watch.redeem_pair(pc["code"], tmp_path, NOON) is None   # 1 回きり

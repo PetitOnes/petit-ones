@@ -86,6 +86,33 @@ def make_key(base: Path | None = None, owner: str | None = None, owner_name: str
     return key
 
 
+PAIR_MINUTES = 10
+
+
+def make_pair_code(base: Path | None = None, now: datetime | None = None) -> dict:
+    """時計をつなぐための 6 桁の番号(10 分だけ)。時計が初めて連絡してきたとき、この番号と引き換えに長い鍵を渡す"""
+    now = now or datetime.now()
+    if not config(base).get("key"):
+        make_key(base)
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    until = now + timedelta(minutes=PAIR_MINUTES)
+    save_config({"pair": {"code": code, "until": _iso(until)}}, base)
+    return {"code": code, "until": _iso(until)}
+
+
+def redeem_pair(code: str | None, base: Path | None = None, now: datetime | None = None) -> str | None:
+    """番号が合えば、長い鍵を返す(番号は 1 回で消える)。合わなければ None"""
+    now = now or datetime.now()
+    pair = config(base).get("pair") or {}
+    until = _parse(pair.get("until"))
+    if not code or not pair.get("code") or not until or now > until:
+        return None
+    if not secrets.compare_digest(str(pair["code"]), str(code).strip()):
+        return None
+    save_config({"pair": None}, base)
+    return config(base).get("key")
+
+
 def key_ok(key: str | None, base: Path | None = None) -> bool:
     real = config(base).get("key")
     return bool(key and real and secrets.compare_digest(str(real), str(key)))
