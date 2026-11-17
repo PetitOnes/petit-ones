@@ -13,7 +13,9 @@ events / timeline は音の種類を見分ける仕組み(PANNs)の見立て。a
 
 Usage:
     python3 heard_sound.py list [--days 7]                        # 聞かせてもらった音(いつ・だれが・何秒)
-    python3 heard_sound.py look <id>                              # 線と数字(1 秒ごとの大きさ・高さの重心・立ち上がり)
+    python3 heard_sound.py look <id>                              # 線と数字(1 秒ごとの大きさ・高さの重心・立ち上がり・粒)
+    python3 heard_sound.py look <id> --fine                       # 0.1 秒ごとの細かい線と数字(1 秒の中の粒が見える)
+    python3 heard_sound.py refine <id>                            # 細かい線と粒を、残っている音のファイルから計算し直す
     python3 heard_sound.py answer <id> --character <ぷち>          # 答え合わせ: 仕組みの見立て(「かも」の名前)
     python3 heard_sound.py tag <ぷち> <id> "<自分の言葉>"           # 自分の言葉を貼る
     python3 heard_sound.py words <id>                             # 貼った言葉を見る(みんなの)
@@ -31,6 +33,12 @@ from pathlib import Path
 
 BARS = "▁▂▃▄▅▆▇█"
 DB_LOW, DB_HIGH = -60.0, -10.0
+SR = 16000
+FINE_SEC = 0.1          # 細かい線の刻み
+FINE_RANGE = 40.0       # 細かい線: いちばん大きい 0.1 秒を █、そこから これだけ下を ▁
+# 粒: 10 ms ごとの大きさで、いちばん大きい音から GRAIN_REL dB 以内、直前 50 ms の小さいところから GRAIN_RISE dB 以上
+# 急に立ち上がったところを 1 粒(続けて GRAIN_GAP_MS は数えない)。11/17 の見本で: キーボード 3〜6/秒・時計 1/秒・雑音 0
+GRAIN_REL, GRAIN_RISE, GRAIN_GAP_MS = 15.0, 12.0, 60
 
 
 def data_dir() -> Path:
@@ -61,6 +69,67 @@ def _save(base: Path, rec: dict) -> None:
     tmp.replace(p)
 
 
+def analyze_samples(x) -> dict:
+    """16 kHz モノラルの音から、細かい線(0.1 秒ごとの dB)と粒(1 秒ごとの数)。数字だけ"""
+    import numpy as np
+
+    x = np.asarray(x, dtype=np.float64)
+    if len(x) < SR // 10:
+        return {"fine": [], "grains": []}
+    step = int(SR * FINE_SEC)
+    fine = [round(float(20 * np.log10(np.sqrt(np.mean(x[i:i + step] ** 2)) + 1e-9)), 1) for i in range(0, len(x) - step // 2, step)]
+    hop = SR // 100
+    n = len(x) // hop
+    db = 20 * np.log10(np.sqrt(np.mean(x[: n * hop].reshape(n, hop) ** 2, axis=1)) + 1e-9)
+    thr, gap = float(db.max()) - GRAIN_REL, GRAIN_GAP_MS // 10
+    peaks, last = [], -gap
+    for i in range(1, n):
+        if db[i] >= thr and db[i] - db[max(0, i - 5):i].min() >= GRAIN_RISE and i - last >= gap:
+            peaks.append(i)
+            last = i
+    secs = -(-n // 100)
+    return {"fine": fine, "grains": [sum(1 for k in peaks if s * 100 <= k < (s + 1) * 100) for s in range(secs)]}
+
+
+def analyze_file(path: Path) -> dict:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import music  # ffmpeg で 16 kHz に(音楽を一緒に感じる と同じ読み方)
+    return analyze_samples(music.decode_file(str(path)))
+
+
+def media_path(base: Path, rec: dict) -> Path:
+    return base / "chat_media" / rec.get("who", "") / Path(rec.get("file", "")).name
+
+
+def refine(base: Path, rec: dict) -> dict:
+    """残っている音のファイルから 細かい線と粒 を足す(読めなければそのまま)"""
+    p = media_path(base, rec)
+    try:
+        if p.is_file():
+            rec.update(analyze_file(p))
+            _save(base, rec)
+    except Exception as e:   # noqa: BLE001  細かい線が無くても、1 秒の線は渡せる
+        print(f"細かい線を作れなかった: {e}", file=sys.stderr)
+    return rec
+
+
+def fine_text(rec: dict) -> str:
+    fine = rec.get("fine") or []
+    if not fine:
+        return "(細かい線が無い。refine <印> で作れる)"
+    top = max(fine)
+    def bar(d: float) -> str:
+        x = (min(max(d, top - FINE_RANGE), top) - (top - FINE_RANGE)) / FINE_RANGE
+        return BARS[min(len(BARS) - 1, int(x * len(BARS)))]
+    per = int(round(1 / FINE_SEC))
+    secs = [fine[i:i + per] for i in range(0, len(fine), per)]
+    return "\n".join([
+        f"細かい線(0.1 秒ごと、1 秒ごとに区切る。いちばん大きい 0.1 秒が █、そこから {FINE_RANGE:.0f} dB 下が ▁): "
+        + " ".join("".join(bar(d) for d in s) for s in secs),
+        "大きさ(dBFS、0.1 秒ごと): " + " | ".join(" ".join(f"{d:.0f}" for d in s) for s in secs),
+    ] + ([f"粒(1 秒ごと): {' '.join(str(g) for g in rec['grains'])}"] if rec.get("grains") else []))
+
+
 def save(base: Path, who: str, file: str, result: dict, now: datetime | None = None, suffix: str = "") -> dict:
     """/sound_events の結果を残す。id は時刻(+ 印)"""
     now = now or datetime.now()
@@ -86,12 +155,13 @@ def shape_text(rec: dict) -> str:
     if not sh:
         return "(音のかたちが取れなかった)"
     dbs = [r["db"] for r in sh]
+    grains = rec.get("grains") or []
     return "\n".join([
         f"大きさの線(1 秒ごと): {spark(dbs)}",
         "大きさ(dBFS): " + " ".join(f"{d:.0f}" for d in dbs),
         "高さの重心(Hz): " + " ".join(str(r["centroid"]) for r in sh),
         "立ち上がり: " + " ".join(f"{r['onset']:.1f}" for r in sh),
-    ])
+    ] + ([f"粒(その 1 秒に、ぱっと立ち上がった音の数): {' '.join(str(g) for g in grains)}"] if grains else []))
 
 
 def answer_text(rec: dict) -> str:
@@ -108,7 +178,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("list"); p.add_argument("--days", type=int, default=7)
-    p = sub.add_parser("look"); p.add_argument("id")
+    p = sub.add_parser("look"); p.add_argument("id"); p.add_argument("--fine", action="store_true")
+    p = sub.add_parser("refine"); p.add_argument("id")
     p = sub.add_parser("answer"); p.add_argument("id"); p.add_argument("--character", required=True)
     p = sub.add_parser("tag"); p.add_argument("character"); p.add_argument("id"); p.add_argument("text")
     p = sub.add_parser("words"); p.add_argument("id")
@@ -129,7 +200,10 @@ def main() -> int:
         print(f"その音は無い: {a.id}(list で見られる)")
         return 1
     if a.cmd == "look":
-        print(shape_text(rec))
+        print(fine_text(rec) if a.fine else shape_text(rec))
+    elif a.cmd == "refine":
+        rec = refine(base, rec)
+        print(fine_text(rec))
     elif a.cmd == "answer":
         rec.setdefault("asked", {})[a.character] = datetime.now().isoformat(timespec="seconds")
         _save(base, rec)

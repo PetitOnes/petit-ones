@@ -7307,6 +7307,7 @@ async def _prepare_chat_media(username: str, message: str, media: str | None, me
             sys.path.insert(0, sd)
         import heard_sound
         rec = heard_sound.save(DATA_DIR, username, media_path.name, result or {}, suffix=media_path.stem.split("_")[2] if media_path.stem.count("_") >= 3 else "")
+        rec = await asyncio.to_thread(heard_sound.refine, DATA_DIR, rec)   # 粒(1 秒ごとの数)と 0.1 秒ごとの細かい線
         prompt = _prompt("media_sound", who=who, id=rec["id"], duration=f"{rec.get('duration') or 0:.0f}",
                          shape=heard_sound.shape_text(rec), scripts_dir=str(PROJECT_DIR / "scripts"), message=message).rstrip()
     elif media_path and kind == "audio":
