@@ -21,6 +21,7 @@
       <button class="a-pill" data-tab="lib">🔔 家の音</button>
       <button class="a-pill" data-tab="made">🎵 作った音</button>
       <button class="a-pill" data-tab="try">🎹 作ってみる</button>
+      <button class="a-pill" data-tab="ens">🎼 合奏</button>
     </div>
 
     <section data-page="lib">
@@ -118,6 +119,47 @@
           <label><span class="a-label">どんな思いで作ったか(なくてもよい)</span><textarea class="a-input" id="tryWhy" maxlength="300" rows="2"></textarea></label>
           <label><span class="a-label">どんなときに鳴らしたいか(なくてもよい)</span><input class="a-input" id="tryWhen" maxlength="300"></label>
           <div class="o-sound-form-row"><span class="o-sound-msg" id="keepMsg"></span><button class="a-btn" onclick="keepTry()">残す</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 合奏: 作った音・家の音・自分のボイスメモを、はじまりをずらして重ねる。聞いて、1 つにまとめて残す(2026-11-17) -->
+    <section data-page="ens" style="display:none">
+      <style>
+        .e-row { padding: 10px 0; border-top: 1px solid var(--ui-line-soft); }
+        .e-row:first-child { border-top: none; }
+        .e-head { display: flex; align-items: center; gap: 6px; font-size: var(--ui-fs-s); }
+        .e-head b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .e-dot { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--ui-line-soft)); }
+        .e-lane { position: relative; height: 22px; margin: 6px 0; background: var(--ui-surface-sub, #f3eef7); border-radius: 6px; overflow: hidden; }
+        .e-bar { position: absolute; top: 3px; bottom: 3px; border-radius: 4px; background: var(--c, var(--ui-accent)); opacity: 0.85; min-width: 4px; }
+        .e-ctl { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 8px; align-items: center; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+        .e-ctl input[type=range] { width: 100%; }
+        .e-ruler { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--ui-text-mute); }
+        .e-add { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        .e-add select { flex: 1 1 12em; min-width: 0; }
+      </style>
+      <div class="m-card">
+        <span class="a-heading">合奏</span>
+        <p class="a-label">作った音・家の音・自分のボイスメモ(はなうたなど)を並べて、それぞれ「いつから」をずらすと、重なって鳴ります。▶ で聞き直して、気に入ったら名前を付けて残すと「作った音」に並びます(体へ送る・ぷちに渡すもそこから)。音が入った子には、次に一言で届きます。</p>
+        <div id="ensRows"></div>
+        <div class="e-ruler" id="ensRuler"></div>
+        <div class="e-add">
+          <select class="a-input a-input--s" id="ensPick"></select>
+          <button class="a-btn a-btn--sub a-btn--s" onclick="ensAdd()">＋ 並べる</button>
+        </div>
+        <div class="o-sound-form-row">
+          <span class="o-sound-msg" id="ensMsg"></span>
+          <button class="a-btn a-btn--ghost a-btn--s" onclick="ensStop()">■ とめる</button>
+          <button class="a-btn" id="ensBtn" onclick="ensListen()">▶ 合奏を聞く</button>
+        </div>
+      </div>
+      <div class="m-card" id="ensKeep" style="display:none">
+        <span class="a-heading">残す</span>
+        <div class="o-sound-form">
+          <label><span class="a-label">名前(英小文字・数字・_ と -)</span><input class="a-input" id="ensName" maxlength="40" placeholder="たとえば yoru-no-gassou" autocapitalize="off" spellcheck="false"></label>
+          <label><span class="a-label">どんな思いで重ねたか(なくてもよい)</span><textarea class="a-input" id="ensWhy" maxlength="300" rows="2"></textarea></label>
+          <div class="o-sound-form-row"><span class="o-sound-msg" id="ensKeepMsg"></span><a class="a-btn a-btn--ghost a-btn--s" id="ensDl" download="gassou.wav">⬇ 落とす</a><button class="a-btn" onclick="ensKeep()">残す</button></div>
         </div>
       </div>
     </section>
@@ -224,6 +266,9 @@
     function face(id) { const b = bodies.find(x => x.id === id); return b || null; }
     function who(m) { return face(m.by) || { name: m.by_name || m.by, color: m.by_color }; }
     function voiceText(r) { return ((r || {}).voices || []).map(v => `${v.inst || "sine"} ${v.hz ?? ""}${v.to != null ? "→" + v.to : ""}${v.detune ? " ±" + v.detune : ""}`).join(" / "); }
+    function ensText(m) {   // 合奏: 「🎼 0 秒 ぷちる「ichiteki」→ 1.5 秒 ぷちてゃ「hikari-agaru」」
+      return "🎼 " + [...m.ensemble].sort((a, b) => a.start - b.start).map(t => `${t.start} 秒 ${t.by === "lib" ? "家の音" : (face(t.by) || {}).name || (t.by === m.by ? m.by_name : t.by)}${t.kind === "memo" ? "の🎤" : ""}「${t.kind === "memo" ? t.name.replace(/^\d{8}_\d{6}_[^_]+_/, "").replace(/\.[^.]+$/, "") : t.name}」`).join(" → ");
+    }
     function madeRow(m) {
       const b = who(m), key = m.by + "/" + m.name, open = openMade === key;
       const given = (m.given || []).map(face).filter(Boolean);
@@ -235,7 +280,7 @@
         <div class="o-sound-main">${dot(b)} <b>${esc(m.name)}</b> <span class="o-sound-file">${esc(b.name)}・${secs(m.seconds)}・${esc((m.at || "").replace("T", " "))}</span>
           ${m.why ? `<div class="o-sound-desc">${esc(m.why)}</div>` : ""}
           ${m.when ? `<div class="o-sound-desc"><span class="o-sound-kind">鳴らしたいとき</span> ${esc(m.when)}</div>` : ""}
-          <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(voiceText(m.recipe))}</div>
+          <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(m.ensemble ? ensText(m) : voiceText(m.recipe))}</div>
           ${given.length ? `<div class="o-sound-sub">渡した: ${given.map(dot).join("")}</div>` : ""}</div>
         <button class="a-btn a-btn--sub a-btn--s" data-madelisten>▶ 聞く</button>
         <a class="a-btn a-btn--ghost a-btn--s" href="${url}" download="${esc(m.name)}.wav">⬇ 落とす</a>
@@ -245,7 +290,7 @@
           <textarea class="a-input" data-commenttext maxlength="300" rows="2" placeholder="感想を書く(作った子に一言で届きます)"></textarea>
           <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--s" data-comment>書く</button></div>
           <div class="o-made-more">
-            <button class="a-btn a-btn--ghost a-btn--s" data-totry>🎹 この作り方で作ってみる</button>
+            ${m.recipe ? `<button class="a-btn a-btn--ghost a-btn--s" data-totry>🎹 この作り方で作ってみる</button>` : ""}
             ${keeper && !inLib ? `<button class="a-btn a-btn--ghost a-btn--s" data-keep>家の音に入れる</button>` : ""}
             ${m.mine ? `<button class="a-btn a-btn--ghost a-btn--s" data-minedel>消す</button>` : ""}
           </div>
@@ -419,7 +464,8 @@
 
     // ---- ページ(家の音 / 作った音 / 作ってみる)。開いているページは # で覚える ----
     function showTab(t) {
-      if (!["lib", "made", "try"].includes(t)) t = "lib";
+      if (!["lib", "made", "try", "ens"].includes(t)) t = "lib";
+      if (t === "ens" && window.loadEns) loadEns();
       document.querySelectorAll("[data-page]").forEach(x => x.style.display = x.dataset.page === t ? "" : "none");
       document.querySelectorAll("#tabs [data-tab]").forEach(x => x.classList.toggle("is-on", x.dataset.tab === t));
       if (location.hash !== "#" + t) history.replaceState(null, "", "#" + t);
@@ -641,6 +687,82 @@
     });
 
     load().then(loadBackup);
+  </script>
+  <script>
+    // ---- 合奏 ----
+    let ensSrc = null, ensTracks = [];   // ensTracks: [{kind, by, name, label, color, seconds, start, vol}]
+    const ensKey = t => `${t.kind}|${t.by}|${t.name}`;
+    async function loadEns() {
+      if (ensSrc) return;
+      try {
+        ensSrc = await call("GET", "/api/sing/ensemble/sources");
+        const opt = x => `<option value="${esc(ensKey(x))}">${esc(x.label)}${x.seconds ? `(${x.seconds} 秒)` : ""}</option>`;
+        const group = (label, xs) => xs.length ? `<optgroup label="${esc(label)}">${xs.map(opt).join("")}</optgroup>` : "";
+        $("ensPick").innerHTML = `<option value="">並べる音をえらぶ</option>` + group("作った音", ensSrc.made) + group("わたしのボイスメモ", ensSrc.memos) + group("家の音", ensSrc.lib);
+        drawEns();
+      } catch (e) { $("ensMsg").textContent = e.message; }
+    }
+    function ensAll() { return ensSrc ? [...ensSrc.made, ...ensSrc.memos, ...ensSrc.lib] : []; }
+    function ensAdd() {
+      const x = ensAll().find(x => ensKey(x) === $("ensPick").value);
+      if (!x) return;
+      if (ensTracks.length >= ensSrc.max_tracks) { $("ensMsg").textContent = `並べられるのは ${ensSrc.max_tracks} 本まで`; return; }
+      const last = ensTracks[ensTracks.length - 1];
+      ensTracks.push({ ...x, start: last ? Math.round((last.start + Math.max(0.5, (last.seconds || 2) / 2)) * 10) / 10 : 0, vol: 1 });   // 前の音の半ばから重ねる
+      $("ensPick").value = ""; drawEns();
+    }
+    const ensEnd = () => Math.max(4, ...ensTracks.map(t => t.start + (t.seconds || 1))) + 1;
+    function drawEns() {
+      const span = Math.min(ensSrc ? ensSrc.max_seconds : 30, Math.ceil(ensEnd()));
+      $("ensRows").innerHTML = ensTracks.map((t, i) => `<div class="e-row" data-i="${i}" style="${t.color ? `--c:${esc(t.color)}` : ""}">
+        <div class="e-head"><span class="e-dot"></span><b>${esc(t.label)}</b><span>${t.seconds || "?"} 秒</span><button class="a-btn a-btn--ghost a-btn--s" data-del title="外す">✕</button></div>
+        <div class="e-lane"><span class="e-bar" style="left:${t.start / span * 100}%;width:${Math.max(0.5, (t.seconds || 1) / span * 100)}%"></span></div>
+        <div class="e-ctl"><span>いつから</span><input type="range" data-f="start" min="0" max="${ensSrc.max_seconds - 1}" step="0.1" value="${t.start}"><b>${t.start} 秒</b>
+        <span>大きさ</span><input type="range" data-f="vol" min="0" max="1" step="0.05" value="${t.vol}"><b>${Math.round(t.vol * 100)}%</b></div></div>`).join("")
+        || `<p class="a-label">まだ何も並んでいません。下で音をえらんで「＋ 並べる」。</p>`;
+      $("ensRuler").innerHTML = ensTracks.length ? [0, 0.25, 0.5, 0.75, 1].map(f => `<span>${Math.round(span * f * 10) / 10} 秒</span>`).join("") : "";
+    }
+    $("ensRows").addEventListener("input", e => {
+      const r = e.target.closest("[data-i]"), f = e.target.dataset.f;
+      if (!r || !f) return;
+      ensTracks[+r.dataset.i][f] = parseFloat(e.target.value);
+      const t = ensTracks[+r.dataset.i], span = Math.min(ensSrc.max_seconds, Math.ceil(ensEnd()));
+      e.target.nextElementSibling.textContent = f === "start" ? `${t.start} 秒` : `${Math.round(t.vol * 100)}%`;
+      const bar = r.querySelector(".e-bar");
+      bar.style.left = `${t.start / span * 100}%`; bar.style.width = `${Math.max(0.5, (t.seconds || 1) / span * 100)}%`;
+    });
+    $("ensRows").addEventListener("change", () => drawEns());
+    $("ensRows").addEventListener("click", e => {
+      const r = e.target.closest("[data-i]");
+      if (r && e.target.closest("[data-del]")) { ensTracks.splice(+r.dataset.i, 1); drawEns(); }
+    });
+    const ensBody = () => ({ tracks: ensTracks.map(t => ({ kind: t.kind, by: t.by, name: t.name, start: t.start, vol: t.vol })) });
+    function ensStop() { if (audio) audio.pause(); }
+    async function ensListen() {
+      const msg = $("ensMsg");
+      msg.textContent = ensTracks.length ? "重ねています…" : "まず音を並べてください";
+      if (!ensTracks.length) return;
+      $("ensBtn").disabled = true;
+      try {
+        const res = await call("POST", "/api/sing/ensemble/preview", ensBody());
+        const url = "data:audio/wav;base64," + res.wav;
+        $("ensDl").href = url; $("ensKeep").style.display = "";
+        if (audio) audio.pause();
+        audio = new Audio(url); audio.play().catch(() => {});
+        msg.textContent = `${res.seconds} 秒`;
+      } catch (e) { msg.textContent = e.message; }
+      $("ensBtn").disabled = false;
+    }
+    async function ensKeep() {
+      const msg = $("ensKeepMsg");
+      msg.textContent = "";
+      try {
+        await call("POST", "/api/sing/ensemble", { ...ensBody(), name: $("ensName").value.trim(), why: $("ensWhy").value.trim() });
+        $("ensName").value = ""; $("ensWhy").value = "";
+        ensSrc = null; madeWho = ""; await load(); showTab("made");
+      } catch (e) { msg.textContent = e.message; }
+    }
+    if (location.hash === "#ens") loadEns();
   </script>
 </body>
 </html>
