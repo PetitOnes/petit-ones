@@ -1,0 +1,16 @@
+# 🧊 toio の番人(scripts/toio_server.py)。キューブとつながっているのはこれだけ(2026-11-18)
+# 入れ方: cp scripts/petit-toio.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now petit-toio
+[Unit]
+Description=Petit toio keeper
+After=bluetooth.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/work/embodied-claude
+ExecStart=/usr/bin/python3 scripts/toio_server.py
+Restart=on-failure
+RestartSec=10
+Environment=PETIT_DATA_DIR=%h/petit_claude
+
+[Install]
+WantedBy=default.target
