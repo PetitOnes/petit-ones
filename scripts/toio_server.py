@@ -18,6 +18,7 @@ HTTP:
     POST /light  {who, color}                       ランプの色(#rrggbb、"" で消す)
     POST /nudge  {who, by, left, right, ms}         コントローラ: 短く走る。手を止めて 3 秒で、ひとまとまりを 1 行に残す
     POST /stop   {who}
+    POST /power  {on}                               家で使う / 使わない(使わないなら、つながりをほどく)
     POST /assign {who, name}                        このキューブ(toio-xxx)をこの子の分に
 """
 
@@ -90,6 +91,10 @@ class Cube:
         if data[0] == 0x83 and len(data) >= 3 and self.move_done and not self.move_done.done() and data[1] == self.ctrl:
             self.move_done.get_loop().call_soon_threadsafe(self.move_done.set_result, data[2])
 
+    def on_battery(self, _s, data: bytearray) -> None:
+        if data:
+            self.battery = data[0]
+
     def on_sensor(self, _s, data: bytearray) -> None:
         if data[0] == 0x01 and len(data) >= 5:
             if data[2]:
@@ -147,6 +152,8 @@ class Keeper:
         p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
 
     def cube_of(self, who: str) -> Cube:
+        if not toio_lib.enabled(self.base):
+            raise toio_lib.ToioError("toio は、いま家で使わないことになっています(⚙️ 設定で決める)")
         addr = self.config().get("cubes", {}).get(who)
         cube = self.cubes.get(addr or "")
         if cube is None:
@@ -158,6 +165,8 @@ class Keeper:
     # ---- つなぐ ----
     async def scan(self) -> dict:
         from bleak import BleakClient, BleakScanner
+        if not toio_lib.enabled(self.base):
+            raise toio_lib.ToioError("toio は、いま家で使わないことになっています(⚙️ 設定で決める)")
         mine = {c.address for c in self.cubes.values() if c.connected}
         stale = [d for d in _held_by_bluez() if d.address not in mine]
         for d in stale:   # 前の番人が残したつながりをほどく。ほどくと、また呼びかけを始めるので見つかる
@@ -179,6 +188,7 @@ class Keeper:
                 await cube.client.start_notify(CH_MOTOR, cube.on_motor)
                 await cube.client.start_notify(CH_SENSOR, cube.on_sensor)
                 cube.battery = (await cube.client.read_gatt_char(CH_BATTERY))[0]
+                await cube.client.start_notify(CH_BATTERY, cube.on_battery)   # 電池は 5 秒ごとに届く
                 await cube.client.write_gatt_char(CH_MOTOR, bytes([0x01, 0x01, 0x01, 0x00, 0x02, 0x01, 0x00]), response=True)   # 空の命令(知らせの通り道を開けておく)
             except Exception as e:   # 1 台つながらなくても、ほかは続ける
                 print(f"toio: {d.name or 'toio'} につながりませんでした: {e}", file=sys.stderr)
@@ -196,7 +206,16 @@ class Keeper:
 
     def status(self) -> dict:
         owners = {v: k for k, v in self.config().get("cubes", {}).items()}
-        return {"cubes": [{**c.state(), "who": owners.get(a, "")} for a, c in self.cubes.items()], "mat": toio_lib.mat_of(self.config())}
+        return {"cubes": [{**c.state(), "who": owners.get(a, "")} for a, c in self.cubes.items()], "mat": toio_lib.mat_of(self.config()),
+                "on": toio_lib.enabled(self.base)}
+
+    async def power(self, on: bool) -> dict:
+        """使う / 使わない。使わないなら、つながりをほどく(キューブはしばらくして眠る)。使うなら探してつなぐ"""
+        toio_lib.set_enabled(self.base, on)
+        if on:
+            return await self.scan()
+        await self.close()
+        return self.status()
 
     # ---- 動かす ----
     async def light(self, cube: Cube, color: str) -> None:
@@ -356,6 +375,8 @@ def make_handler(keeper: Keeper):
 
         def _do(self, path: str, b: dict) -> dict:
             who, by = str(b.get("who", "")), str(b.get("by") or b.get("who", ""))
+            if path == "/power":
+                return keeper.call(keeper.power(bool(b.get("on"))), 90)
             if path == "/scan":
                 return keeper.call(keeper.scan(), 60)
             if path == "/move":
@@ -385,7 +406,8 @@ def main() -> int:
     keeper = Keeper(data_dir())
     threading.Thread(target=keeper.loop.run_forever, daemon=True).start()
     try:
-        keeper.call(keeper.scan(), 60)   # 起動したら 1 回探す
+        if toio_lib.enabled(keeper.base):
+            keeper.call(keeper.scan(), 60)   # 起動したら 1 回探す(使うことになっているときだけ)
     except Exception as e:
         print(f"toio: はじめの探索でうまくいきませんでした: {e}", file=sys.stderr)
     import signal

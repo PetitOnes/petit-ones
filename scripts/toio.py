@@ -83,6 +83,20 @@ def load_config(base: Path) -> dict:
         return {}
 
 
+def enabled(base: Path) -> bool:
+    """家で toio を使うか(⚙️ 設定 → 家 → 🧊 toio)。決めていなければ使う"""
+    return load_config(base).get("on", True) is not False
+
+
+def set_enabled(base: Path, on: bool) -> dict:
+    cfg = load_config(base)
+    cfg["on"] = bool(on)
+    p = base / "config" / "toio.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(cfg, ensure_ascii=False, indent=1), encoding="utf-8")
+    return cfg
+
+
 def mat_of(cfg: dict) -> dict:
     return {**DEFAULT_MAT, **(cfg.get("mat") or {})}
 
@@ -247,6 +261,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status")
     sub.add_parser("map")
     sub.add_parser("scan")
+    sub.add_parser("enabled")
     p = sub.add_parser("move")
     p.add_argument("who")
     p.add_argument("x", type=int)
@@ -271,7 +286,12 @@ def main(argv: list[str] | None = None) -> int:
     a = ap.parse_args(argv)
     base = data_dir()
     mat = mat_of(load_config(base))
+    if a.cmd == "enabled":   # 自律行動がプロンプトに toio の行を入れるか決める(使うなら 1)
+        print("1" if enabled(base) else "")
+        return 0
     try:
+        if a.cmd not in ("status", "last") and not enabled(base):
+            raise ToioError("toio は、いま家で使わないことになっています(⚙️ 設定で決める)")
         if a.cmd == "status":
             print(status_text(ask("/cubes")))
         elif a.cmd == "scan":

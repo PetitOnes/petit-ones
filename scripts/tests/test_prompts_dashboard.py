@@ -70,14 +70,14 @@ def test_system_prompt_matches_old_fstring():
     )
     new = P("system", char_name=char_name, character_id=character_id, soul=soul, now=now_str, user_display_name=user_display_name,
             char_data_dir=char_data_dir, mailbox_dir=mailbox_dir, scripts_dir=scripts_dir,
-            mail_targets="puchiko, puchiteya, puchiru, arisan", relay_example_id="puchiko", restriction_text="")
+            mail_targets="puchiko, puchiteya, puchiru, arisan", relay_example_id="puchiko", restriction_text="", toio_on="1")
     assert new == old
     # 制限つき
     restriction = "- カメラ（take_snapshot）は今は使わないこと。\n- マイク（mic_start）は今は使わないこと。"
     old2 = old + f"\n## 現在の制限\n{restriction}"
     new2 = P("system", char_name=char_name, character_id=character_id, soul=soul, now=now_str, user_display_name=user_display_name,
              char_data_dir=char_data_dir, mailbox_dir=mailbox_dir, scripts_dir=scripts_dir,
-             mail_targets="puchiko, puchiteya, puchiru, arisan", relay_example_id="puchiko", restriction_text=restriction)
+             mail_targets="puchiko, puchiteya, puchiru, arisan", relay_example_id="puchiko", restriction_text=restriction, toio_on="1")
     assert new2.rstrip("\n") == old2
 
 

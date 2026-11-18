@@ -28,6 +28,8 @@
     .t-last { font-size: var(--ui-fs-s); padding: 6px 0; border-top: 1px solid var(--ui-line-soft); }
     .t-last:first-child { border-top: none; }
     .t-assign select { min-width: 0; }
+    .t-power { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .t-power b { font-weight: 700; color: var(--ui-text); display: inline-flex; align-items: center; gap: 6px; }
   </style>
 </head>
 <body>
@@ -39,6 +41,7 @@
       <div class="t-who" id="who"></div>
       <svg class="t-mat" id="mat" viewBox="0 0 304 216" preserveAspectRatio="xMidYMid meet"></svg>
       <div class="t-state" id="state">読み込んでいます…</div>
+      <div class="t-power" id="power"></div>
       <p class="a-label">えらんだ子のキューブが太い丸です。マットを押すと、そこへ行きます。うすい線は、それぞれが最後に走った道です。</p>
     </div>
 
@@ -107,6 +110,12 @@
         : c.pos ? `${face(pick).name}: (${c.pos.x}, ${c.pos.y}) 向き ${c.pos.a}°・${c.posture}・電池 ${c.battery ?? "?"}%${c.busy ? "・動いている最中" : ""}`
         : `${face(pick).name}: マットの外${c.last_pos ? `(最後に読めたのは ${c.last_pos.x}, ${c.last_pos.y})` : ""}・電池 ${c.battery ?? "?"}%`;
     }
+    function drawPower() {   // 3 台のつながり・電源・電池
+      $("power").innerHTML = st.on === false ? '<span></span><span>toio は、いま使わないことになっています(⚙️ 設定 → 家 → 🧊 toio)</span>'
+        : Object.keys(st.faces).map(w => { const c = cubeOf(w), f = face(w);
+          const now = !c ? "キューブが決まっていない" : !c.connected ? "つながっていない(電源が切れているか、眠っている)" : `つながっている・電源 入・電池 ${c.battery ?? "?"}%`;
+          return `<b><span class="a-dot" style="background:${esc(f.color)}"></span>${esc(f.name)}</b><span>${esc(now)}</span>`; }).join("");
+    }
     function drawAssign() {
       const names = st.cubes.map(c => c.name);
       $("assign").innerHTML = Object.keys(st.faces).map(w => { const c = cubeOf(w);
@@ -115,7 +124,7 @@
     }
     async function load() {
       try { st = await call("GET", "/api/toio"); } catch (e) { st.error = e.message; }
-      drawWho(); drawMat();
+      drawWho(); drawMat(); drawPower();
       if (!$("assign").contains(document.activeElement)) drawAssign();
     }
 

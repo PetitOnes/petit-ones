@@ -1869,6 +1869,7 @@ def _chat_system_prompt(character_id: str, username: str | None, restriction_tex
         mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
         relay_example_id=(other_ids[0] if other_ids else character_id),
         restriction_text=restriction_text,
+        toio_on="1" if _toio().enabled(DATA_DIR) else "",
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
         sky_change="" if preview else _sky_change_text(character_id),
@@ -4434,7 +4435,7 @@ async def api_toio(request: Request):
     t = _toio()
     st = await _toio_ask("/cubes", None, 5)
     if isinstance(st, JSONResponse):
-        st = {"cubes": [], "mat": t.mat_of(t.load_config(DATA_DIR)), "error": "toio の番人が動いていません"}
+        st = {"cubes": [], "mat": t.mat_of(t.load_config(DATA_DIR)), "on": t.enabled(DATA_DIR), "error": "toio の番人が動いていません"}
     faces = {c["id"]: {"name": c.get("name") or c["id"], "color": c.get("color") or ""} for c in list_characters()}
     last = {w: (t.runs(DATA_DIR, w, n=1) or [None])[0] for w in faces}
     return {**st, "faces": faces, "last": last, "me": _get_username(request) or OWNER_USER}
@@ -4450,6 +4451,7 @@ class ToioBody(BaseModel):
     speed: int = 50
     color: str = ""
     name: str = ""
+    on: bool = True
 
 
 @app.post("/api/toio/{act}")
@@ -4467,6 +4469,14 @@ async def api_toio_act(act: str, body: ToioBody, request: Request):
         return await _toio_ask("/light", {**b, "color": body.color}, 10)
     if act == "scan":
         return await _toio_ask("/scan", {}, 90)
+    if act == "power":   # 家で使う / 使わない(⚙️ 設定)
+        if not _is_owner(request):
+            return JSONResponse({"error": "決められるのは家の持ち主だけです"}, status_code=403)
+        res = await _toio_ask("/power", {"on": body.on}, 90)
+        if isinstance(res, JSONResponse):   # 番人が止まっていても、決めたことは残す
+            _toio().set_enabled(DATA_DIR, body.on)
+            return {"on": body.on, "cubes": [], "error": "toio の番人が動いていません(決めたことは残しました)"}
+        return res
     if act == "assign":
         return await _toio_ask("/assign", {"who": body.who, "name": body.name}, 10)
     return JSONResponse({"error": "その頼み方は分かりません"}, status_code=404)
