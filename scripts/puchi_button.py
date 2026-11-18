@@ -253,7 +253,8 @@ def _place_text(p: dict, before: list[dict]) -> str:
 
 def _env_text(env: dict) -> str:
     parts = [f"{env['temp']:g}℃" if "temp" in env else "", f"{env['humid']:g}%" if "humid" in env else "",
-             f"{env['pressure']:g}hPa" if "pressure" in env else ""]
+             f"{env['pressure']:g}hPa" if "pressure" in env else "",
+             f"ガス {env['gas'] / 1000:.1f}kΩ" if env.get("gas") else ""]   # ガスの抵抗(高いほど空気がきれい、が目安)
     parts = [x for x in parts if x]
     return "まわりの空気 " + " ".join(parts) if parts else ""
 

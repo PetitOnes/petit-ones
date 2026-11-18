@@ -24,13 +24,13 @@ def test_pair_then_key(tmp_path):
 def test_receive_dedupe_and_line(tmp_path):
     pb.save_config({"owner_name": "ありさん"}, tmp_path)
     rep = {"boot": "b1", "fix": True, "presses": [
-        {"seq": 1, "ago_s": 3600, "kind": "leave", "env": {"temp": 18.24, "humid": 61, "pressure": 1008.3}, "place": PLACE, "sats": 6},
+        {"seq": 1, "ago_s": 3600, "kind": "leave", "env": {"temp": 18.24, "humid": 61, "pressure": 1008.3, "gas": 12340}, "place": PLACE, "sats": 6},
         {"seq": 2, "ago_s": 5, "kind": "tell", "env": {"temp": 999}, "place": {"town": "a1b2c3", "near": "zzzz", "here": "876543"}}]}
     assert pb.receive(rep, tmp_path, NOON) == {"ok": [1, 2], "new": 2, "tells": ["b1:2"]}
     assert pb.receive(rep, tmp_path, NOON)["new"] == 0           # 送り直しは 2 度入れない
     s = pb.line("puchiru", tmp_path)
     assert "2 回" in s and "11:00 ありさんがぷちボタンを押した(おいておく)" in s and "あとから届いた" in s
-    assert "18.2℃ 61% 1008.3hPa" in s and "まち a1b2c3(はじめて)" in s
+    assert "18.2℃ 61% 1008.3hPa ガス 12.3kΩ" in s and "まち a1b2c3(はじめて)" in s
     assert "知らせる" in s and "まち a1b2c3(前にも)" in s and "その場 876543(はじめて)" in s
     assert "999" not in s and "zzzz" not in s                    # おかしい値は捨てる
     assert pb.line("puchiru", tmp_path, mark=True) and pb.line("puchiru", tmp_path) == ""
