@@ -860,6 +860,11 @@ async def auth_middleware(request: Request, call_next):
         if not _watch().key_ok(request.headers.get("x-watch-key"), DATA_DIR) and not request.headers.get("x-watch-pair"):
             return JSONResponse({"error": "鍵が合いません"}, status_code=401)
         return await call_next(request)
+    # ぷちボタン(持ち歩くボタン)は、config/button.json の鍵で名乗る。この道だけ(2026-11-18)
+    if path == "/api/button/press":   # 番号(X-Button-Pair)で来たときは、引き換えはエンドポイントで
+        if not _button().key_ok(request.headers.get("x-button-key"), DATA_DIR) and not request.headers.get("x-button-pair"):
+            return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+        return await call_next(request)
     # スマホ(家の印を聞くアプリ・音を数字にして送るアプリ)は、config/beacons.json の鍵で名乗る。この道だけ(2026-11-14)
     if path.startswith("/api/beacons/") or path == "/api/music/frames":
         user = _phone_place().person_for_key(request.headers.get("x-petit-key"), DATA_DIR)
@@ -1881,7 +1886,7 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
     elif source == "mic":
         _record_contact(character_id, "talked", setting_to=_mail_targets.get(character_id, ""), via="mic")
     # センサー/カメラ/マイクはスリムなMCP設定を使う
-    _m5_sources = {"sensor", "camera", "mic"}
+    _m5_sources = {"sensor", "camera", "mic", "button"}
     char_sensor_mcp = char_dir(character_id) / "config" / "sensor-mcp.json"
     char_chat_mcp = char_dir(character_id) / "config" / "chat-mcp.json"
     char_mcp = char_dir(character_id) / "config" / "autonomous-mcp.json"
@@ -3139,6 +3144,93 @@ def api_watch_key(request: Request):
     me = _get_username(request) or OWNER_USER
     _watch().make_key(DATA_DIR, owner=me, owner_name=_user_label(me, fallback=me))
     return _watch_view(request)
+
+
+# ---- 🔘 ぷちボタン(持ち歩くボタン。scripts/puchi_button.py)。ボタンからの連絡と、設定 → 家 のカード ----
+def _button():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import puchi_button
+    return puchi_button
+
+
+@app.post("/api/button/press")
+async def api_button_press(request: Request):
+    """ボタンの連絡(押した分をまとめて。外でためた分も)。座標は来ない(場所の印だけ)"""
+    b = _button()
+    new_key = None
+    if not b.key_ok(request.headers.get("x-button-key"), DATA_DIR):
+        new_key = b.redeem_pair(request.headers.get("x-button-pair"), DATA_DIR)
+        if not new_key:
+            return JSONResponse({"error": "鍵が合いません"}, status_code=401)
+    try:
+        report = await request.json()
+    except ValueError:
+        report = {}
+    res = b.receive(report if isinstance(report, dict) else {}, DATA_DIR)
+    if res.get("tells"):   # 長く押した(知らせる): 体のボタンの「聞いて聞いて」と同じく、その場で起こす
+        asyncio.create_task(_button_tell(res["tells"]))
+    out = {"ok": res["ok"], "new": res["new"]}
+    if new_key:
+        out["key"] = new_key
+    return out
+
+
+async def _button_tell(pids: list[str]):
+    """ぷちボタンの「知らせる」: 3 人を順に起こして、返事は手紙で。起こした子には、次の自律行動の 1 行を出さない"""
+    b = _button()
+    cfg = b.config(DATA_DIR)
+    owner = cfg.get("owner") or OWNER_USER
+    owner_name = cfg.get("owner_name") or _user_label(owner)
+    for pid in pids:
+        detail = b.press_text(pid, DATA_DIR)
+        for c in list_characters():
+            cid = c.get("id")
+            if not cid:
+                continue
+            b.mark_told(cid, [pid], DATA_DIR)
+            message = _prompt("event_button", owner_name=owner_name, detail=detail, scripts_dir=str(PROJECT_DIR / "scripts"),
+                              character_id=cid, target=owner)
+            try:
+                result = await call_claude(cid, message, allow_sound_override=True, source="button", use_session=False)
+                print(f"[button] {cid}: tell done ({result[:40] if result else 'no result'})")
+            except Exception as e:
+                print(f"[button] {cid}: tell error: {e}")
+
+
+def _button_view(request: Request) -> dict:
+    b = _button()
+    cfg = b.config(DATA_DIR)
+    return {"connected": bool(cfg.get("key")), "last_at": b.status(DATA_DIR).get("at", ""), "presses": len(b.presses(DATA_DIR)),
+            "owner_name": cfg.get("owner_name") if cfg.get("owner") else "",
+            "pair": (cfg.get("pair") or {}) if not _is_limited(request) else {}, "lan_ip": _lan_ip()}
+
+
+@app.get("/api/button")
+def api_button(request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    return _button_view(request)
+
+
+@app.post("/api/button/pair")
+def api_button_pair(request: Request):
+    """ボタンをつなぐ 6 桁の番号を出す(10 分だけ)。押した人が持ち主"""
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    me = _get_username(request) or OWNER_USER
+    _button().make_pair_code(DATA_DIR, owner=me, owner_name=_user_label(me, fallback=me))
+    return _button_view(request)
+
+
+@app.post("/api/button/key")
+def api_button_key(request: Request):
+    if _is_limited(request):
+        return JSONResponse({"error": "家の世話人だけ"}, status_code=403)
+    me = _get_username(request) or OWNER_USER
+    _button().make_key(DATA_DIR, owner=me, owner_name=_user_label(me, fallback=me))
+    return _button_view(request)
 
 
 # ---- 🎧 音楽を一緒に感じる(scripts/music.py)。回を始める・終える(人)、数字を足す(スマホ・PC)、いまの様子 ----
