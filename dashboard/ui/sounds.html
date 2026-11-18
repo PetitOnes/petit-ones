@@ -87,7 +87,7 @@
         .mk-tools .a-input { flex: 1 1 10em; min-width: 0; }
         .mk-tools label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); white-space: nowrap; }
         .mk-count { margin-left: auto; font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); font-variant-numeric: tabular-nums; }
-        .mk-row, .mk-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) 5.5em 7em 3.6em 34px; gap: 2px 8px; align-items: center; }
+        .mk-row, .mk-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) 5.5rem 7rem 3.6rem 34px; gap: 2px 8px; align-items: center; }
         .mk-head { font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); padding: 4px 0; border-bottom: 1px solid var(--ui-line-soft); }
         .mk-head { grid-template-areas: "play title by at sec gear"; }
         .mk-head > span:nth-child(2) { grid-area: title; } .mk-head > span:nth-child(3) { grid-area: by; } .mk-head > span:nth-child(4) { grid-area: at; } .mk-head > span:nth-child(5) { grid-area: sec; }
@@ -111,7 +111,7 @@
         .mk-panel { grid-column: 2 / -1; }
         /* スマホ: 1 段目に題、2 段目に作者・日時・秒数(列はそろったまま) */
         @media (max-width: 560px) {
-          .mk-row, .mk-head { grid-template-columns: 40px 5em minmax(0, 1fr) 3.4em 34px; }
+          .mk-row, .mk-head { grid-template-columns: 40px 5rem minmax(0, 1fr) 3.4rem 34px; }
           .mk-row { grid-template-areas: "play title title title gear" "play by at sec gear" "play heard heard heard gear"; }
           .mk-head { display: none; }
         }
