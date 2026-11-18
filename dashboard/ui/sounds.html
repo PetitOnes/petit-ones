@@ -81,10 +81,52 @@
 
     <!-- 作った音(うたう): ぷちと家の人が作った音。思い・鳴らしたいとき・感想、聞く・落とす・家の音に入れる -->
     <section data-page="made" style="display:none">
+      <style>
+        /* 作った音の一覧(2026-11-18 ありさん): ▶(丸)・題・作者・日時・秒数・⚙ を縦にそろえる。⚙ の中に落とす・感想など */
+        .mk-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 4px; }
+        .mk-tools .a-input { flex: 1 1 10em; min-width: 0; }
+        .mk-tools label { display: inline-flex; align-items: center; gap: 4px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); white-space: nowrap; }
+        .mk-count { margin-left: auto; font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); font-variant-numeric: tabular-nums; }
+        .mk-row, .mk-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) 5.5rem 7rem 3.6rem 34px; gap: 2px 8px; align-items: center; }
+        .mk-head { font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); padding: 4px 0; border-bottom: 1px solid var(--ui-line-soft); }
+        .mk-head { grid-template-areas: "play title by at sec gear"; }
+        .mk-head > span:nth-child(2) { grid-area: title; } .mk-head > span:nth-child(3) { grid-area: by; } .mk-head > span:nth-child(4) { grid-area: at; } .mk-head > span:nth-child(5) { grid-area: sec; }
+        .mk-row { position: relative; padding: 8px 0; border-bottom: 1px solid var(--ui-line-soft); }
+        .mk-row.is-unheard { box-shadow: -6px 0 0 -3px #ffb347; }
+        .mk-play { grid-area: play; width: 40px; height: 40px; border: none; border-radius: 50%; background: var(--ui-accent); color: var(--ui-accent-ink); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0; }
+        .mk-title { grid-area: title; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+        .mk-new { color: #e69a2e; }
+        .mk-by { grid-area: by; display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--ui-fs-s); overflow: hidden; white-space: nowrap; }
+        .mk-at, .mk-sec { font-size: var(--ui-fs-s); color: var(--ui-text-sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+        .mk-at { grid-area: at; } .mk-sec { grid-area: sec; text-align: right; }
+        .mk-gear { grid-area: gear; width: 34px; height: 34px; border: none; border-radius: 50%; background: none; color: var(--ui-text-mute); font-size: 1.1rem; cursor: pointer; padding: 0; }
+        .mk-gear:hover { background: var(--ui-accent-soft); }
+        .mk-heard { grid-area: heard; display: flex; flex-wrap: wrap; gap: 2px 8px; font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); min-width: 0; }
+        .mk-row { grid-template-areas: "play title by at sec gear" "play heard heard heard heard gear"; }
+        .mk-detail { grid-column: 2 / -1; font-size: var(--ui-fs-s); }
+        .mk-menu { position: absolute; right: 4px; top: calc(100% - 6px); z-index: 20; min-width: 210px; padding: 6px; border-radius: 12px; background: var(--ui-surface); border: 1px solid var(--ui-line-soft); box-shadow: 0 6px 24px rgba(0,0,0,0.18); display: flex; flex-direction: column; gap: 2px; }
+        .mk-menu a, .mk-menu button { display: block; width: 100%; padding: 10px 12px; border: none; border-radius: 8px; background: none; color: var(--ui-text); font: inherit; font-size: var(--ui-fs-s); text-align: left; text-decoration: none; cursor: pointer; white-space: nowrap; box-sizing: border-box; }
+        .mk-menu a:hover, .mk-menu button:hover { background: var(--ui-accent-soft); }
+        .mk-menu .is-del { color: var(--ui-danger); }
+        .mk-panel { grid-column: 2 / -1; }
+        /* スマホ: 1 段目に題、2 段目に作者・日時・秒数(列はそろったまま) */
+        @media (max-width: 560px) {
+          .mk-row, .mk-head { grid-template-columns: 40px 5rem minmax(0, 1fr) 3.4rem 34px; }
+          .mk-row { grid-template-areas: "play title title title gear" "play by at sec gear" "play heard heard heard gear"; }
+          .mk-head { display: none; }
+        }
+      </style>
       <div class="m-card">
         <span class="a-heading">作った音</span>
-        <p class="a-label">ぷちが楽器と高さを選んで作った音と、家の人が「作ってみる」で作った音です。ぷちは、どんな思いで・どんなときに鳴らしたくて作ったかを添えられます。感想を書くと、作った子に一言で届きます。</p>
+        <p class="a-label">ぷちが作った音と、家の人が作った音です。▶ で聞けます(このページで鳴ります)。⚙ から、落とす・感想を書く・ぷちに渡すなど。感想は、作った子に一言で届きます。</p>
         <div class="o-sound-tabs" id="madeWho"></div>
+        <div class="mk-tools">
+          <input class="a-input a-input--s" id="madeQ" type="search" placeholder="題・名前・思いでさがす">
+          <label><input type="checkbox" id="madeUnheard">まだ聞いていない</label>
+          <label><input type="checkbox" id="madeDetail">詳細も表示</label>
+          <span class="mk-count" id="madeCount"></span>
+        </div>
+        <div class="mk-head"><span></span><span>題</span><span>作者</span><span>日時</span><span style="text-align:right">秒数</span><span></span></div>
         <div id="made"></div>
         <div class="p-empty" id="madeEmpty" style="display:none">まだ作った音はありません</div>
       </div>
@@ -262,40 +304,83 @@
     }
 
     // 作った音の 1 行。だれが・どの楽器と高さで・どんな思いで。感想、聞く、落とす、渡す
-    let madeWho = "", openMade = null;
+    let madeWho = "", meId = "";
     function face(id) { const b = bodies.find(x => x.id === id); return b || null; }
     function who(m) { return face(m.by) || { name: m.by_name || m.by, color: m.by_color }; }
     function voiceText(r) { return ((r || {}).voices || []).map(v => `${v.inst || "sine"} ${v.hz ?? ""}${v.to != null ? "→" + v.to : ""}${v.detune ? " ±" + v.detune : ""}`).join(" / "); }
     function ensText(m) {   // 合奏: 「🎼 0 秒 ぷちる「ichiteki」→ 1.5 秒 ぷちてゃ「hikari-agaru」」
       return "🎼 " + [...m.ensemble].sort((a, b) => a.start - b.start).map(t => `${t.start} 秒 ${t.by === "lib" ? "家の音" : (face(t.by) || {}).name || (t.by === m.by ? m.by_name : t.by)}${t.kind === "memo" ? "の🎤" : ""}「${t.kind === "memo" ? t.name.replace(/^\d{8}_\d{6}_[^_]+_/, "").replace(/\.[^.]+$/, "") : t.name}」`).join(" → ");
     }
-    function madeRow(m) {
-      const b = who(m), key = m.by + "/" + m.name, open = openMade === key;
+    // 1 行 = ▶(丸)・題・作者・日時・秒数・⚙。聞いた人は題の下に。「詳細も表示」で思い・作り方・感想も
+    let menuFor = null, panel = null;   // ⚙ が開いている行 / 開いている欄(comment・give・title)
+    const madeKey = m => m.by + "/" + m.name;
+    const shortAt = at => { const t = String(at || ""); const m = t.match(/^\d{4}-(\d\d)-(\d\d)T(\d\d:\d\d)/); return m ? `${+m[1]}/${+m[2]} ${m[3]}` : t.replace("T", " "); };
+    const HOW = { body: "体で", browser: "" };
+    function heardText(m) {
+      const hs = m.heard || [];
+      if (!hs.length) return m.mine ? '<span>まだだれも聞いていない</span>' : "";
+      return "<span>聞いた:</span>" + hs.map(h => `<span title="${esc(shortAt(h.at))}${h.n > 1 ? `・${h.n} 回` : ""}"><span class="a-dot" style="background:${esc(h.color || (face(h.who) || {}).color || "#cab8d9")}"></span> ${esc((face(h.who) || {}).name || h.name || h.who)}${HOW[h.how] ? `(${HOW[h.how]})` : ""}</span>`).join("");
+    }
+    function madeDetail(m) {
       const given = (m.given || []).map(face).filter(Boolean);
-      const inLib = library.some(x => x.name === m.name + ".wav");
-      const url = `/api/sing/file/${encodeURIComponent(m.by)}/${encodeURIComponent(m.name)}`;
-      const comments = (m.comments || []).map(c => `<div class="o-sound-word"><span class="a-dot" style="background:${esc(c.color || (face(c.who) || {}).color || "#cab8d9")}"></span> <b>${esc((face(c.who) || {}).name || c.name || c.who)}</b> ${esc(c.text)} <span class="o-sound-file">${esc((c.at || "").replace("T", " "))}</span></div>`).join("");
-      const targets = bodies.map(x => `<label class="o-sound-pick"><input type="checkbox" data-givepick="${esc(x.id)}">${dot(x)}${esc(x.name)}</label>`).join("");
-      return `<div class="o-sound o-made" data-made="${esc(m.name)}" data-by="${esc(m.by)}">
-        <div class="o-sound-main">${dot(b)} <b>${esc(m.name)}</b> <span class="o-sound-file">${esc(b.name)}・${secs(m.seconds)}・${esc((m.at || "").replace("T", " "))}</span>
-          ${m.why ? `<div class="o-sound-desc">${esc(m.why)}</div>` : ""}
-          ${m.when ? `<div class="o-sound-desc"><span class="o-sound-kind">鳴らしたいとき</span> ${esc(m.when)}</div>` : ""}
-          <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(m.ensemble ? ensText(m) : voiceText(m.recipe))}</div>
-          ${given.length ? `<div class="o-sound-sub">渡した: ${given.map(dot).join("")}</div>` : ""}</div>
-        <button class="a-btn a-btn--sub a-btn--s" data-madelisten>▶ 聞く</button>
-        <a class="a-btn a-btn--ghost a-btn--s" href="${url}" download="${esc(m.name)}.wav">⬇ 落とす</a>
-        <button class="a-btn a-btn--ghost a-btn--s" data-madeopen>${open ? "とじる" : `💬 感想${(m.comments || []).length ? "(" + m.comments.length + ")" : ""}`}</button>
-        ${open ? `<div class="o-sound-send o-sound-edit">
-          ${comments || '<span class="a-label">まだ感想はありません</span>'}
+      const comments = (m.comments || []).map(c => `<div class="o-sound-word"><span class="a-dot" style="background:${esc(c.color || (face(c.who) || {}).color || "#cab8d9")}"></span> <b>${esc((face(c.who) || {}).name || c.name || c.who)}</b> ${esc(c.text)} <span class="o-sound-file">${esc(shortAt(c.at))}</span></div>`).join("");
+      const how = m.ensemble ? ensText(m) : m.voice ? "🎤 声で作った" + (m.voice.note ? `(${m.voice.note})` : "") : voiceText(m.recipe);
+      return `<div class="mk-detail">
+        ${m.title ? `<div class="o-sound-file">${esc(m.name)}</div>` : ""}
+        ${m.why ? `<div class="o-sound-desc">${esc(m.why)}</div>` : ""}
+        ${m.when ? `<div class="o-sound-desc"><span class="o-sound-kind">鳴らしたいとき</span> ${esc(m.when)}</div>` : ""}
+        <div class="o-sound-shape"><span class="o-sound-line">${esc(m.line || "")}</span>${esc(how)}</div>
+        ${given.length ? `<div class="o-sound-sub">渡した: ${given.map(dot).join("")}</div>` : ""}
+        ${comments}
+      </div>`;
+    }
+    function madePanel(m) {
+      if (!panel || panel.key !== madeKey(m)) return "";
+      if (panel.kind === "comment") {
+        const comments = (m.comments || []).map(c => `<div class="o-sound-word"><span class="a-dot" style="background:${esc(c.color || (face(c.who) || {}).color || "#cab8d9")}"></span> <b>${esc((face(c.who) || {}).name || c.name || c.who)}</b> ${esc(c.text)} <span class="o-sound-file">${esc(shortAt(c.at))}</span></div>`).join("");
+        return `<div class="mk-panel o-sound-send o-sound-edit">${comments || '<span class="a-label">まだ感想はありません</span>'}
           <textarea class="a-input" data-commenttext maxlength="300" rows="2" placeholder="感想を書く(作った子に一言で届きます)"></textarea>
-          <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--s" data-comment>書く</button></div>
-          <div class="o-made-more">
-            ${m.recipe ? `<button class="a-btn a-btn--ghost a-btn--s" data-totry>🎹 この作り方で作ってみる</button>` : ""}
-            ${keeper && !inLib ? `<button class="a-btn a-btn--ghost a-btn--s" data-keep>家の音に入れる</button>` : ""}
-            ${m.mine ? `<button class="a-btn a-btn--ghost a-btn--s" data-minedel>消す</button>` : ""}
-          </div>
-          ${m.mine ? `<div class="o-made-more"><span class="a-label">ぷちに渡す:</span>${targets}<input class="a-input o-give-note" data-givenote maxlength="200" placeholder="一言(なくてもよい)"><button class="a-btn a-btn--s" data-give>渡す</button></div>` : ""}
-        </div>` : ""}
+          <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--ghost a-btn--s" data-panelclose>とじる</button><button class="a-btn a-btn--s" data-comment>書く</button></div></div>`;
+      }
+      if (panel.kind === "give") {
+        const targets = bodies.map(x => `<label class="o-sound-pick"><input type="checkbox" data-givepick="${esc(x.id)}">${dot(x)}${esc(x.name)}</label>`).join("");
+        return `<div class="mk-panel o-sound-send o-sound-edit"><span class="a-label">ぷちに渡す:</span>${targets}
+          <input class="a-input o-give-note" data-givenote maxlength="200" placeholder="一言(なくてもよい)">
+          <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--ghost a-btn--s" data-panelclose>とじる</button><button class="a-btn a-btn--s" data-give>渡す</button></div></div>`;
+      }
+      if (panel.kind === "title") {
+        return `<div class="mk-panel o-sound-send o-sound-edit"><label><span class="a-label">題(一覧に出る名前。日本語でよい)</span><input class="a-input" data-titletext maxlength="40" value="${esc(m.title || "")}" placeholder="${esc(m.name)}"></label>
+          <div class="o-sound-form-row"><span class="o-sound-msg" data-mademsg></span><button class="a-btn a-btn--ghost a-btn--s" data-panelclose>とじる</button><button class="a-btn a-btn--s" data-savetitle>残す</button></div></div>`;
+      }
+      return "";
+    }
+    function madeMenu(m) {
+      if (menuFor !== madeKey(m)) return "";
+      const url = `/api/sing/file/${encodeURIComponent(m.by)}/${encodeURIComponent(m.name)}`;
+      const inLib = library.some(x => x.name === m.name + ".wav"), n = (m.comments || []).length;
+      return `<div class="mk-menu">
+        <a href="${url}" download="${esc(m.name)}.wav" data-menuclose>⬇️ ダウンロード</a>
+        <button data-open="comment">💬 感想を言う${n ? `(${n})` : ""}</button>
+        ${m.mine ? `<button data-open="title">✏️ 題を変える</button>` : ""}
+        ${m.mine ? `<button data-open="give">🎁 ぷちに渡す</button>` : ""}
+        ${m.recipe ? `<button data-totry>🎹 この作り方で作ってみる</button>` : ""}
+        ${keeper && !inLib ? `<button data-keep>🔔 家の音に入れる</button>` : ""}
+        ${m.mine ? `<button class="is-del" data-minedel>🗑️ 消す</button>` : ""}
+      </div>`;
+    }
+    function madeRow(m) {
+      const b = who(m), playing = playingKey === madeKey(m);
+      return `<div class="mk-row${m.unheard ? " is-unheard" : ""}" data-made="${esc(m.name)}" data-by="${esc(m.by)}">
+        <button class="mk-play" data-madelisten title="${playing ? "とめる" : "聞く"}">${playing ? "⏸" : "▶"}</button>
+        <span class="mk-title" title="${esc(m.title || m.name)}">${esc(m.title || m.name)}</span>
+        <span class="mk-by">${dot(b)}<span>${esc(b.name)}</span></span>
+        <span class="mk-at">${esc(shortAt(m.at))}</span>
+        <span class="mk-sec">${secs(m.seconds)}</span>
+        <button class="mk-gear" data-gear title="ダウンロード・感想など" aria-haspopup="true">⚙</button>
+        <div class="mk-heard">${m.unheard ? '<span class="mk-new">● まだ聞いていない</span>' : ""}${heardText(m)}</div>
+        ${madeDetail.on ? madeDetail(m) : ""}
+        ${madePanel(m)}
+        ${madeMenu(m)}
       </div>`;
     }
     function renderMade() {
@@ -303,9 +388,13 @@
       made.forEach(m => { if (!people.some(x => x.id === m.by)) people.push({ id: m.by, ...who(m) }); });
       $("madeWho").innerHTML = people.length > 1 ? `<button class="a-pill${madeWho ? "" : " is-on"}" data-who="">みんな</button>` +
         people.map(x => `<button class="a-pill${madeWho === x.id ? " is-on" : ""}" data-who="${esc(x.id)}">${dot(x)}${esc(x.name)}</button>`).join("") : "";
-      const rows = made.filter(m => !madeWho || m.by === madeWho);
+      const q = $("madeQ").value.trim().toLowerCase(), unheardOnly = $("madeUnheard").checked;
+      const rows = made.filter(m => (!madeWho || m.by === madeWho) && (!unheardOnly || m.unheard)
+        && (!q || [m.title, m.name, m.why, m.when].some(t => String(t || "").toLowerCase().includes(q))));
       $("made").innerHTML = rows.map(madeRow).join("");
       $("madeEmpty").style.display = rows.length ? "none" : "";
+      $("madeEmpty").textContent = made.length ? "あてはまる音はありません" : "まだ作った音はありません";
+      $("madeCount").textContent = rows.length === made.length ? `${made.length} 個` : `${rows.length} / ${made.length} 個`;
     }
 
     function render() {
@@ -328,6 +417,7 @@
         bodies = res.bodies || [];
         requests = res.requests || [];
         made = res.made || [];
+        meId = res.me || "";
         if (res.sing) { sing = res.sing; $("trySec").max = sing.max_seconds; if (!voices.length) addVoice(); }
         keeper = !!res.keeper;   // 体へ送る・消す・お願いに答えるのは、家の持ち主だけ
         maxTitle = res.max_title || 40; maxDesc = res.max_description || 200;
@@ -426,38 +516,75 @@
     });
 
     $("madeWho").addEventListener("click", e => { const b = e.target.closest("[data-who]"); if (b) { madeWho = b.dataset.who; renderMade(); } });
+    $("madeQ").addEventListener("input", renderMade);
+    $("madeUnheard").addEventListener("change", renderMade);
+    try { madeDetail.on = localStorage.getItem("sounds.madeDetail") === "1"; } catch (e) {}
+    $("madeDetail").checked = !!madeDetail.on;
+    $("madeDetail").addEventListener("change", () => { madeDetail.on = $("madeDetail").checked; try { localStorage.setItem("sounds.madeDetail", madeDetail.on ? "1" : "0"); } catch (e) {} renderMade(); });
+    document.addEventListener("click", e => { if (menuFor && !e.target.closest(".mk-menu, [data-gear]")) { menuFor = null; renderMade(); } });
+
+    // 作った音を、このページで鳴らす(1 つだけ)。鳴らしたら「聞いた」と残す(自分の音は数えない)
+    let playingKey = null;
+    function playMade(m) {
+      const key = madeKey(m);
+      if (audio) audio.pause();
+      if (playingKey === key) { playingKey = null; renderMade(); return; }
+      audio = new Audio(`/api/sing/file/${encodeURIComponent(m.by)}/${encodeURIComponent(m.name)}`);
+      const mine = audio;
+      playingKey = key; renderMade();
+      mine.addEventListener("ended", () => { if (audio === mine) { playingKey = null; renderMade(); } });
+      mine.addEventListener("pause", () => { if (playingKey === key) { playingKey = null; renderMade(); } });
+      mine.play().then(() => {
+        if (!m.unheard) return;
+        m.unheard = false;
+        m.heard = [...(m.heard || []), { who: meId, name: "わたし", at: "", how: "browser" }];
+        renderMade();
+        call("POST", "/api/sing/listen", { by: m.by, name: m.name }).then(load).catch(() => {});
+      }).catch(() => { playingKey = null; renderMade(); });
+    }
     $("made").addEventListener("click", async e => {
       const row = e.target.closest("[data-made]");
       if (!row) return;
       const by = row.dataset.by, name = row.dataset.made, msg = row.querySelector("[data-mademsg]");
       const m = made.find(x => x.by === by && x.name === name);
       const say = t => { if (msg) msg.textContent = t; else alert(t); };
+      const open = e.target.closest("[data-open]");
       if (e.target.closest("[data-madelisten]")) {
-        if (audio) audio.pause();
-        audio = new Audio(`/api/sing/file/${encodeURIComponent(by)}/${encodeURIComponent(name)}`);
-        audio.play().catch(() => {});
-      } else if (e.target.closest("[data-madeopen]")) {
-        openMade = openMade === by + "/" + name ? null : by + "/" + name; renderMade();
+        if (m) playMade(m);
+      } else if (e.target.closest("[data-gear]")) {
+        menuFor = menuFor === madeKey(m) ? null : madeKey(m); renderMade();
+      } else if (e.target.closest("[data-menuclose]")) {
+        menuFor = null; setTimeout(renderMade, 0);
+      } else if (open) {
+        menuFor = null; panel = { key: madeKey(m), kind: open.dataset.open }; renderMade();
+        const f = $("made").querySelector("[data-commenttext], [data-titletext], [data-givenote]"); if (f && open.dataset.open !== "give") f.focus();
+      } else if (e.target.closest("[data-panelclose]")) {
+        panel = null; renderMade();
+      } else if (e.target.closest("[data-savetitle]")) {
+        try { await call("POST", "/api/sing/title", { by, name, title: row.querySelector("[data-titletext]").value.trim() }); panel = null; await load(); } catch (e2) { say(e2.message); }
       } else if (e.target.closest("[data-comment]")) {
         const text = row.querySelector("[data-commenttext]").value.trim();
         if (!text) { say("ひとこと書いてください"); return; }
         try { await call("POST", "/api/sing/comment", { by, name, text }); await load(); } catch (e2) { say(e2.message); }
       } else if (e.target.closest("[data-totry]")) {
+        menuFor = null;
         if (m && m.recipe) { loadRecipe(m.recipe); showTab("try"); }
       } else if (e.target.closest("[data-keep]")) {
-        const title = prompt("家の音に入れます。題を付けてください(あとで直せます)", name);
+        menuFor = null; renderMade();
+        const title = prompt("家の音に入れます。題を付けてください(あとで直せます)", (m && m.title) || name);
         if (title === null) return;
-        try { await call("POST", "/api/sing/keep", { by, name, title }); await load(); say("家の音に入れました"); } catch (e2) { say(e2.message); }
+        try { await call("POST", "/api/sing/keep", { by, name, title }); await load(); alert("家の音に入れました"); } catch (e2) { alert(e2.message); }
       } else if (e.target.closest("[data-minedel]")) {
-        if (!confirm(`「${name}」を消します`)) return;
-        try { await call("DELETE", "/api/sing/mine/" + encodeURIComponent(name)); openMade = null; await load(); } catch (e2) { say(e2.message); }
+        menuFor = null; renderMade();
+        if (!confirm(`「${(m && m.title) || name}」を消します`)) return;
+        try { await call("DELETE", "/api/sing/mine/" + encodeURIComponent(name)); panel = null; await load(); } catch (e2) { alert(e2.message); }
       } else if (e.target.closest("[data-give]")) {
         const to = [...row.querySelectorAll("[data-givepick]:checked")].map(x => x.dataset.givepick);
         if (!to.length) { say("渡す子を選んでください"); return; }
         try {
           const res = await call("POST", "/api/sing/give", { name, to, note: row.querySelector("[data-givenote]").value.trim() });
           const bad = Object.entries(res.results || {}).filter(([, v]) => v !== "ok");
-          await load(); if (bad.length) alert(bad.map(([id, v]) => `${id}: ${v}`).join(" / "));
+          panel = null; await load(); if (bad.length) alert(bad.map(([id, v]) => `${id}: ${v}`).join(" / "));
         } catch (e2) { say(e2.message); }
       }
     });

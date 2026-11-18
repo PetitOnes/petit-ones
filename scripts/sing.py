@@ -223,6 +223,8 @@ def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime |
             "seconds": round(len(x) / SR, 2), "recipe": recipe, "lack": lack(x),
             "why": _note(why) or old.get("why", ""), "when": _note(when) or old.get("when", ""),
             "comments": old.get("comments", []) if isinstance(old.get("comments"), list) else []}
+    if old.get("title"):   # 作り直しても題は残す(聞いた印は、新しい音なので消える)
+        info["title"] = old["title"]
     _save_info(base, info)
     return info
 
@@ -230,7 +232,7 @@ def make(base: Path, character_id: str, name: str, recipe: dict, now: datetime |
 def say(base: Path, character_id: str, name: str, why: str = "", when: str = "") -> dict:
     """作った音に、どんな思いで・どんなときに鳴らしたくて作ったかを添える(渡したものだけ書き直す)"""
     info = info_of(base, character_id, name)
-    if info is None or ("recipe" not in info and "ensemble" not in info):
+    if not _is_made(info):
         raise SingError(f"{name} は、まだ作っていません(sing.py list で見られます)")
     if not _note(why) and not _note(when):
         raise SingError("思いか、どんなときに鳴らしたいかを、ひとこと書いてください")
@@ -242,10 +244,38 @@ def say(base: Path, character_id: str, name: str, why: str = "", when: str = "")
     return info
 
 
+def _is_made(info: dict | None) -> bool:
+    """作り方の残っている音か(楽器で作った・合奏・声で作った)"""
+    return bool(info) and any(k in info for k in ("recipe", "ensemble", "voice"))
+
+
+def listen(base: Path, by: str, name: str, who: str, how: str = "browser", now: datetime | None = None) -> dict:
+    """聞いた、と残す(1 人 1 行。最後に聞いた時と回数)。how: browser = 画面で / body = 体で鳴らした"""
+    info = info_of(base, by, name)
+    if not _is_made(info):
+        raise SingError("その音はありません")
+    rows = [h for h in info.get("heard", []) if isinstance(h, dict)]
+    old = next((h for h in rows if h.get("who") == who), None)
+    rec = {"who": who, "at": (now or datetime.now()).isoformat(timespec="minutes"), "n": (old or {}).get("n", 0) + 1, "how": how}
+    info["heard"] = [h for h in rows if h is not old] + [rec]
+    _save_info(base, info)
+    return rec
+
+
+def set_title(base: Path, by: str, name: str, title: str) -> dict:
+    """題(一覧に出る名前。日本語でよい)を付ける・直す。空なら外す(名前が出る)"""
+    info = info_of(base, by, name)
+    if not _is_made(info):
+        raise SingError("その音はありません")
+    info["title"] = _note(title)[:40]
+    _save_info(base, info)
+    return info
+
+
 def comment(base: Path, by: str, name: str, who: str, text: str, now: datetime | None = None) -> dict:
     """作った音に、感想を書く(家の人も、ほかの子も)。作った子には 1 行で届く"""
     info = info_of(base, by, name)
-    if info is None or ("recipe" not in info and "ensemble" not in info):
+    if not _is_made(info):
         raise SingError("その音はありません")
     if not _note(text):
         raise SingError("ひとこと書いてください")
@@ -368,6 +398,8 @@ def look_text(base: Path, by: str, name: str) -> str:
     if isinstance(info.get("recipe"), dict):
         rows.append("作り方: " + json.dumps(info["recipe"], ensure_ascii=False))
         rows.append(lack_text(info["recipe"], info.get("lack") or lack(render(info["recipe"]))))
+    if isinstance(info.get("voice"), dict):   # 声で作った(VOICEVOX の歌う声)
+        rows.append("声で作った: " + json.dumps(info["voice"], ensure_ascii=False))
     if isinstance(info.get("ensemble"), list):   # 合奏(scripts/ensemble.py)
         import ensemble
         rows.append("合奏: " + ensemble.describe(info))

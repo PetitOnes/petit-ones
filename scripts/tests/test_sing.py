@@ -108,3 +108,19 @@ def test_person_can_make_and_give(tmp_path):
     sing.give(base, "arisan", "aisatsu", "puchiru", "つくってみたよ")
     assert "arisan" in sing.notice(base, "puchiru")[0]
     assert {m["by"] for m in sing.made(base)} == {"arisan"}
+
+
+def test_listen_and_title(tmp_path):
+    base = house(tmp_path)
+    sing.make(base, "puchiko", "ue", {"seconds": 1, "voices": [{"inst": "sine", "hz": 500}]})
+    sing.listen(base, "puchiko", "ue", "arisan")
+    sing.listen(base, "puchiko", "ue", "arisan")
+    sing.listen(base, "puchiko", "ue", "puchiru", how="body")
+    heard = sing.info_of(base, "puchiko", "ue")["heard"]
+    assert [(h["who"], h["n"], h["how"]) for h in heard] == [("arisan", 2, "browser"), ("puchiru", 1, "body")]   # 1 人 1 行
+    sing.set_title(base, "puchiko", "ue", "うえへ")
+    sing.make(base, "puchiko", "ue", {"seconds": 1, "voices": [{"inst": "sine", "hz": 600}]})   # 作り直し: 題は残る、聞いた印は消える
+    info = sing.info_of(base, "puchiko", "ue")
+    assert info["title"] == "うえへ" and "heard" not in info
+    with pytest.raises(sing.SingError):
+        sing.listen(base, "puchiko", "nai", "arisan")

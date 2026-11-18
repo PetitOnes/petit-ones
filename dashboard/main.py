@@ -602,7 +602,7 @@ CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("voice_delete", "DELETE", r"/api/voice_memo/.+"),
     ("notes_delete", "DELETE", r"/api/my/notes/.+"),
     ("anniv", "POST|PUT|DELETE", r"/api/anniversaries(/.*)?|/api/events(/.*)?"),
-    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sing/make|/api/sing/ensemble|/api/sing/give|/api/sing/mine/[^/]+|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
+    ("sounds", "POST|DELETE", r"/api/sounds/upload|/api/sounds/send|/api/sounds/meta|/api/sing/keep|/api/sing/make|/api/sing/title|/api/sing/ensemble|/api/sing/give|/api/sing/mine/[^/]+|/api/sounds/import|/api/sounds/requests/[^/]+|/api/sounds/removed|/api/sounds/[^/]+\.wav"),
     ("advanced", "POST", r"/api/[^/]+/config/m5_hosts"),
 ]
 # 設定の保存で、どの項目がどの段か
@@ -3844,7 +3844,10 @@ async def api_sounds(request: Request = None):
             if by not in mine and by not in _USER_DISPLAY:
                 continue
             f = _sing().path_of(DATA_DIR, by, m["name"])
+            heard = [{**h, "name": faces.get(h.get("who", ""), (h.get("who", ""), ""))[0], "color": faces.get(h.get("who", ""), ("", ""))[1]}
+                     for h in m.get("heard", []) if isinstance(h, dict) and h.get("who") != by]   # 作った本人の分は数えない
             made.append({**m, "line": sound_shape.shape(f)["line"] if f else "", "person": by not in mine, "mine": by == me,
+                         "heard": heard, "unheard": by != me and not any(h.get("who") == me for h in heard),
                          "by_name": faces.get(by, (by, ""))[0], "by_color": faces.get(by, (by, ""))[1],
                          "comments": [{**c, "name": faces.get(c.get("who", ""), (c.get("who", ""), ""))[0], "color": faces.get(c.get("who", ""), ("", ""))[1]}
                                       for c in m.get("comments", []) if isinstance(c, dict)],
@@ -3928,7 +3931,45 @@ async def api_sing_play(body: SingPlayRequest, request: Request):
         await asyncio.to_thread(lambda: req.get(f"http://{host}/se_play", params={"name": "sing.wav"}, timeout=20))
     except Exception:
         return JSONResponse({"error": "体に届けられませんでした"}, status_code=502)
+    try:
+        _sing().listen(DATA_DIR, body.by or cid, body.name, cid, how="body")   # 体で鳴らした = その子が聞いた
+    except Exception:
+        pass
     return {"ok": True, "message": f"鳴らしました: {body.name}"}
+
+
+class SingWhichBody(BaseModel):
+    by: str
+    name: str
+    title: str = ""
+
+
+@app.post("/api/sing/listen")
+def api_sing_listen(body: SingWhichBody, request: Request):
+    """画面で聞いた、と残す(だれが聞いたかを一覧に出す)"""
+    sg = _sing()
+    if not _sing_visible(request, body.by):
+        return JSONResponse({"error": "その音はありません"}, status_code=404)
+    me = _get_username(request) or OWNER_USER
+    if me == body.by:
+        return {"ok": True}   # 自分の音は数えない
+    try:
+        return {"ok": True, "heard": sg.listen(DATA_DIR, body.by, body.name, me)}
+    except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+
+
+@app.post("/api/sing/title")
+def api_sing_title(body: SingWhichBody, request: Request):
+    """自分が作った音に、題を付ける・直す"""
+    sg = _sing()
+    if body.by != (_get_username(request) or OWNER_USER):
+        return JSONResponse({"error": "題を変えられるのは、作った人だけです"}, status_code=403)
+    try:
+        info = sg.set_title(DATA_DIR, body.by, body.name, body.title)
+    except sg.SingError as e:
+        return JSONResponse({"error": str(e)}, status_code=404)
+    return {"ok": True, "title": info.get("title", "")}
 
 
 def _sing_visible(request: Request, by: str) -> bool:
