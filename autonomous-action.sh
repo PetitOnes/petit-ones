@@ -482,6 +482,13 @@ if [ -f "${PROJECT_DIR}/scripts/watch.py" ]; then
   WATCH_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/watch.py" notice --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
+# ぷちボタン(2026-11-18、ありさん): 家の人が持ち歩くボタン。押した分(おいておく / 知らせる)を、まだ伝えていない分だけ。
+# 押した時刻・まわりの空気・場所の印(座標ではない)。決まりは scripts/puchi_button.py
+BUTTON_LINE=""
+if [ -f "${PROJECT_DIR}/scripts/puchi_button.py" ]; then
+  BUTTON_LINE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/puchi_button.py" line --character "$CHARACTER_ID" --mark 2>/dev/null || true)
+fi
+
 # 合作日記の紙(2026-11-17、ありさんと 3 人で決めた): 夜 19 時から、その日まだ作っていない子にだけ 1 行。
 # 作るかはその子が選ぶ。刷るのはありさんがダッシュボード(🧾 合作日記)で押したときだけ。決まりは scripts/diary_slip.py
 DIARY_SLIP_LINE=""
@@ -580,7 +587,7 @@ render autonomous/user "$@" \
   --var current_date="$CURRENT_DATE" --var character_dir="$CHARACTER_DIR" --var character_id="$CHARACTER_ID" \
   --var reflection_index_line="$REFLECTION_INDEX_LINE" --var todo_path="$TODO_PATH" --var diary_summary_line="$DIARY_SUMMARY_LINE" \
   --var routine_mode="$ROUTINE_MODE" --var heavy_section="$HEAVY_SECTION" --var time_rule="$TIME_RULE" --var project_dir="$PROJECT_DIR" \
-  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var draw_notice="$DRAW_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var diary_slip_line="$DIARY_SLIP_LINE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
+  --var anniversary_notice="$ANNIVERSARY_NOTICE" --var mail_receipt_notice="$MAIL_RECEIPT_NOTICE" --var mail_ask_notice="$MAIL_ASK_NOTICE" --var todo_notice="$TODO_NOTICE" --var toolbox_notice="$TOOLBOX_NOTICE" --var sound_notice="$SOUND_NOTICE" --var sing_notice="$SING_NOTICE" --var draw_notice="$DRAW_NOTICE" --var watch_line="$WATCH_LINE" --var watch_notice="$WATCH_NOTICE" --var diary_slip_line="$DIARY_SLIP_LINE" --var button_line="$BUTTON_LINE" --var note_mark_notice="$NOTE_MARK_NOTICE" --var event_notice="$EVENT_NOTICE" --var sky_change="$SKY_CHANGE" --var room_change="$ROOM_CHANGE" --var phone_change="$PHONE_CHANGE" --var body_change="$BODY_CHANGE" --var spot_change="$SPOT_CHANGE" --var sns_notice="$SNS_NOTICE" --var experience_notice="$EXPERIENCE_NOTICE" --var mailbox_notice="$MAILBOX_NOTICE" \
   --var permission_rules="$PERMISSION_RULES" --var whereabouts="$WHEREABOUTS" --var active_line="$ACTIVE_LINE"
 }
 PROMPT_FULL="$(_render_user)"

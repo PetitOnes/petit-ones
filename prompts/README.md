@@ -28,6 +28,7 @@
 | `dashboard/public_chat` | `/api/public/chat` | 来場者の本文 |
 | `dashboard/interact_start` `interact_reply` `interact_group_reply` `relay_turn` | `/api/interact*` `/api/relay/start` | ぷち同士 |
 | `dashboard/event_camera` `event_sensor` `event_mic` | 体のイベント(m5_watcher) | 「みてみて!」「感じてみて!」「聞いて聞いて!」 |
+| `dashboard/event_button` | ぷちボタンを長く押した(/api/button/press) | 「ねえねえ!」(時刻・まわりの空気・場所の印) |
 | `dashboard/display_phrase` + `display_char_info.json` | `_generate_display_phrase()` | 展示用の一言(固定の紹介文は JSON) |
 | `dashboard/diary` | `generate_diary_summary()` | 日記 |
 

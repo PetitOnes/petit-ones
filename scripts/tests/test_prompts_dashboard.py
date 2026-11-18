@@ -259,3 +259,9 @@ def test_display_and_diary_prompts():
 def test_display_char_info_json_loads():
     d = json.loads(rp.find_resource("dashboard/display_char_info.json", REPO / "no-such-house", REPO).read_text(encoding="utf-8"))
     assert {"name", "desc", "examples"} <= set(next(v for k, v in d.items() if not k.startswith("_")).keys())
+
+
+def test_event_button_prompt():
+    s = P("event_button", owner_name="ありさん", detail="11/18 12:00。場所の印: まち a1b2c3d4(はじめて)", scripts_dir="/x",
+          character_id="puchiko", target="arisan")
+    assert s.startswith("ありさんが「ねえねえ！」") and "まち a1b2c3d4" in s and "write_mailbox.py puchiko arisan" in s

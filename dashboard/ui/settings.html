@@ -147,6 +147,18 @@
         <p class="a-hint" id="mnDestHint" style="margin:4px 0 8px"></p>
         <div style="display:flex;gap:6px;align-items:center"><span class="a-hint" id="mnMsg" style="flex:1;margin:0"></span><button class="a-btn a-btn--sub a-btn--s" onclick="testNotify()">ためしに送る</button><button class="a-btn a-btn--s" onclick="saveNotify()">決める</button></div>
       </div>
+      <div class="m-card" id="buttonCard" style="display:none">
+        <span class="a-heading">🔘 ぷちボタン</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
+        <p class="a-hint" style="margin:0 0 4px">持ち歩くボタン。短く押すと「おいておく」(ぷちが次に起きたときに 1 行届く)、長く押すと「知らせる」(体のボタンの「聞いて聞いて」と同じく、3 人がすぐ起きて手紙で返事する)。届くのは、押した時刻・まわりの空気・場所の印。座標は家に来ない(ボタンの中で印にする)。外で押した分は、家の Wi-Fi に戻ったときに届く。</p>
+        <div class="s-row"><span>📡 つながり</span><span class="s-sub" id="bcState">—</span></div>
+        <details class="s-cans">
+          <summary>ボタンをつなぐ(ボタンを押したまま電源を入れて出るページに入れるもの)</summary>
+          <div class="s-row"><span>🏠 住所</span><span class="s-sub" id="bcUrl" style="user-select:all;font-size:1.05rem">—</span></div>
+          <div class="s-row"><span>🔢 つなぐ番号</span><span style="display:flex;align-items:center;gap:8px"><b id="bcCode" style="font-size:1.4rem;letter-spacing:0.12em"></b><button class="a-btn a-btn--sub a-btn--s" onclick="newButtonPair()">番号を出す</button></span></div>
+          <p class="a-hint" id="bcCodeHint" style="margin:4px 0 0">番号は 10 分だけ使える。押した人が持ち主になる。</p>
+          <div style="display:flex;justify-content:flex-end;margin-top:10px"><button class="a-btn a-btn--ghost a-btn--s" onclick="newButtonKey()">鍵を作り直す</button></div>
+        </details>
+      </div>
       <div class="m-card" id="watchCard" style="display:none">
         <span class="a-heading">⌚ ぷち時計</span><a class="s-help" data-help="settings-house" href="/help#settings-house" title="使い方">？</a>
         <p class="a-hint" style="margin:0 0 4px">ぷちが、時計に「いま」のひとことを送れる。送れるのは、時計を持っているときだけ(夜 0〜7 時は送らない)。1 人 1 日 3 回・40 字まで。時計の上でも切り替えられる(同じ 1 つの値)。</p>
@@ -437,6 +449,7 @@
       loadSpots();
       loadNotify();
       loadWatch();
+      loadButton();
       loadOptMcp(false);
       loadVoiceHost(); loadTodoWaiting();
     }
@@ -494,6 +507,35 @@
         if (!res.ok) { toast(d.error || "決められませんでした"); return; }
         drawOptMcp(d); toast("決めました");
       } catch (e) { toast("決められませんでした"); }
+    }
+    // 🔘 ぷちボタン(config/button.json。scripts/puchi_button.py)。家の世話人にだけ出す
+    let buttonV = null;
+    function renderButton() {
+      const v = buttonV; if (!v) return;
+      document.getElementById("buttonCard").style.display = "";
+      let st = "まだつないでいない";
+      if (v.connected && v.last_at) {
+        const t = new Date(v.last_at), mins = Math.round((Date.now() - t) / 60000);
+        st = `${mins < 1 ? "いま" : mins < 60 ? mins + " 分前" : t.toLocaleString("ja-JP", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"})}に連絡 ・ 届いた押し ${v.presses} 回`
+          + (v.owner_name ? ` ・ 持ち主 ${v.owner_name}` : "");
+      } else if (v.connected) st = "鍵はある。ボタンからの連絡はまだ";
+      document.getElementById("bcState").textContent = st;
+      document.getElementById("bcUrl").textContent = v.lan_ip || "—";
+      const pr = v.pair || {}, live = pr.code && new Date(pr.until) > new Date();
+      document.getElementById("bcCode").textContent = live ? pr.code : "";
+      document.getElementById("bcCodeHint").textContent = live
+        ? `${new Date(pr.until).toLocaleTimeString("ja-JP", {hour: "2-digit", minute: "2-digit"})} まで使える。押した人が持ち主になる。`
+        : "番号は 10 分だけ使える。押した人が持ち主になる。";
+    }
+    async function loadButton() {
+      try { const r = await fetch("/api/button"); if (r.ok) { buttonV = await r.json(); renderButton(); } } catch (e) {}
+    }
+    async function newButtonPair() {
+      try { const r = await fetch("/api/button/pair", {method: "POST"}); if (r.ok) { buttonV = await r.json(); renderButton(); } else toast("出せませんでした"); } catch (e) { toast("出せませんでした"); }
+    }
+    async function newButtonKey() {
+      if (buttonV && buttonV.connected && !confirm("鍵を作り直しますか? いまのボタンは、番号を出してつなぎ直すまでつながらなくなります")) return;
+      try { const r = await fetch("/api/button/key", {method: "POST"}); if (r.ok) { buttonV = await r.json(); renderButton(); toast("鍵を作り直しました"); } else toast("作れませんでした"); } catch (e) { toast("作れませんでした"); }
     }
     // ⌚ ぷち時計(config/watch.json。scripts/watch.py)。家の世話人にだけ出す
     let watchV = null;
