@@ -89,12 +89,13 @@
         .mk-count { margin-left: auto; font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); font-variant-numeric: tabular-nums; }
         .mk-row, .mk-head { display: grid; grid-template-columns: 40px minmax(0, 1fr) 5.5em 7em 3.6em 34px; gap: 2px 8px; align-items: center; }
         .mk-head { font-size: var(--ui-fs-xs, 0.75rem); color: var(--ui-text-mute); padding: 4px 0; border-bottom: 1px solid var(--ui-line-soft); }
-        .mk-head .mk-title { grid-column: 2; }
+        .mk-head { grid-template-areas: "play title by at sec gear"; }
+        .mk-head > span:nth-child(2) { grid-area: title; } .mk-head > span:nth-child(3) { grid-area: by; } .mk-head > span:nth-child(4) { grid-area: at; } .mk-head > span:nth-child(5) { grid-area: sec; }
         .mk-row { position: relative; padding: 8px 0; border-bottom: 1px solid var(--ui-line-soft); }
-        .mk-row.is-unheard { box-shadow: inset 3px 0 0 #ffb347; padding-left: 6px; }
+        .mk-row.is-unheard { box-shadow: -6px 0 0 -3px #ffb347; }
         .mk-play { grid-area: play; width: 40px; height: 40px; border: none; border-radius: 50%; background: var(--ui-accent); color: var(--ui-accent-ink); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0; }
         .mk-title { grid-area: title; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
-        .mk-new { color: #ffb347; font-size: 0.7rem; }
+        .mk-new { color: #e69a2e; }
         .mk-by { grid-area: by; display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--ui-fs-s); overflow: hidden; white-space: nowrap; }
         .mk-at, .mk-sec { font-size: var(--ui-fs-s); color: var(--ui-text-sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
         .mk-at { grid-area: at; } .mk-sec { grid-area: sec; text-align: right; }
@@ -125,7 +126,7 @@
           <label><input type="checkbox" id="madeDetail">詳細も表示</label>
           <span class="mk-count" id="madeCount"></span>
         </div>
-        <div class="mk-head"><span></span><span class="mk-title">題</span><span>作者</span><span>日時</span><span style="text-align:right">秒数</span><span></span></div>
+        <div class="mk-head"><span></span><span>題</span><span>作者</span><span>日時</span><span style="text-align:right">秒数</span><span></span></div>
         <div id="made"></div>
         <div class="p-empty" id="madeEmpty" style="display:none">まだ作った音はありません</div>
       </div>
@@ -317,7 +318,7 @@
     const HOW = { body: "体で", browser: "" };
     function heardText(m) {
       const hs = m.heard || [];
-      if (!hs.length) return '<span>まだだれも聞いていない</span>';
+      if (!hs.length) return m.mine ? '<span>まだだれも聞いていない</span>' : "";
       return "<span>聞いた:</span>" + hs.map(h => `<span title="${esc(shortAt(h.at))}${h.n > 1 ? `・${h.n} 回` : ""}"><span class="a-dot" style="background:${esc(h.color || (face(h.who) || {}).color || "#cab8d9")}"></span> ${esc((face(h.who) || {}).name || h.name || h.who)}${HOW[h.how] ? `(${HOW[h.how]})` : ""}</span>`).join("");
     }
     function madeDetail(m) {
@@ -371,12 +372,12 @@
       const b = who(m), playing = playingKey === madeKey(m);
       return `<div class="mk-row${m.unheard ? " is-unheard" : ""}" data-made="${esc(m.name)}" data-by="${esc(m.by)}">
         <button class="mk-play" data-madelisten title="${playing ? "とめる" : "聞く"}">${playing ? "⏸" : "▶"}</button>
-        <span class="mk-title" title="${esc(m.title || m.name)}">${m.unheard ? '<span class="mk-new" title="まだ聞いていない">● </span>' : ""}${esc(m.title || m.name)}</span>
+        <span class="mk-title" title="${esc(m.title || m.name)}">${esc(m.title || m.name)}</span>
         <span class="mk-by">${dot(b)}<span>${esc(b.name)}</span></span>
         <span class="mk-at">${esc(shortAt(m.at))}</span>
         <span class="mk-sec">${secs(m.seconds)}</span>
         <button class="mk-gear" data-gear title="ダウンロード・感想など" aria-haspopup="true">⚙</button>
-        <div class="mk-heard">${heardText(m)}</div>
+        <div class="mk-heard">${m.unheard ? '<span class="mk-new">● まだ聞いていない</span>' : ""}${heardText(m)}</div>
         ${madeDetail.on ? madeDetail(m) : ""}
         ${madePanel(m)}
         ${madeMenu(m)}
