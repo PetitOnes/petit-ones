@@ -7,7 +7,8 @@ After=bluetooth.target
 [Service]
 Type=simple
 WorkingDirectory=%h/work/embodied-claude
-ExecStart=/usr/bin/python3 scripts/toio_server.py
+# Bluetooth の部品 bleak は uv が用意する(PC の python3 には入っていないことがある)
+ExecStart=%h/.local/bin/uv run --no-project --with bleak python scripts/toio_server.py
 Restart=on-failure
 RestartSec=10
 Environment=PETIT_DATA_DIR=%h/petit_claude

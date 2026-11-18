@@ -174,7 +174,7 @@ stat -c '%F %N' $PETIT_DATA_DIR/.claude/.credentials.json          # リンク�
 
 キューブとつながっているのは番人 `scripts/toio_server.py` だけ(toio は同時に 1 台にしかつながらない)。ぷちは `scripts/toio.py`、家の人はダッシュボードの 🧊 から番人に頼む。
 
-- 入れ方: `cp scripts/petit-toio.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now petit-toio`(Bluetooth の部品 `bleak` が要る: `pip install --user bleak`)
+- 入れ方: `cp scripts/petit-toio.service ~/.config/systemd/user/ && systemctl --user daemon-reload && systemctl --user enable --now petit-toio`(Bluetooth の部品 `bleak` は `uv run --with bleak` で用意する。ぷちの道具 `toio.py` は標準の部品だけ)
 - だれのキューブか: `PETIT_DATA_DIR/config/toio.json` の `cubes`(子の id → キューブの名前 `toio-xxx`)。番号(アドレス)は電源を入れ直すと変わるので、名前で見分ける。決まっていないキューブは、見つけた順に空いている子へ。ダッシュボードで選び直せる
 - マットの範囲: 同じファイルの `mat`(既定は簡易プレイマット x 98〜402・y 142〜358)
 - 走ったあと: `PETIT_DATA_DIR/state/toio/runs.jsonl`(1 回 1 行。だれの・だれが動かした・通った点・出来事)
