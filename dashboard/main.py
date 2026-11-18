@@ -3199,6 +3199,25 @@ async def _button_tell(pids: list[str]):
                 print(f"[button] {cid}: tell error: {e}")
 
 
+class ButtonBleBody(BaseModel):
+    data: str
+    rssi: int | None = None
+
+
+@app.post("/api/beacons/button")
+async def api_beacons_button(body: ButtonBleBody):
+    """スマホ(ぷちのポケット)が拾ったぷちボタンの BLE。スマホの鍵(X-Petit-Key)は auth_middleware が確かめ済み。
+    中身の署名(ボタンの鍵)はここで確かめる。外で長く押した「知らせる」も、これでその場で届く"""
+    b = _button()
+    report = b.from_ble(body.data, DATA_DIR)
+    if report is None:
+        return JSONResponse({"error": "ぷちボタンの印ではない"}, status_code=400)
+    res = b.receive(report, DATA_DIR, via="ble")
+    if res.get("tells"):
+        asyncio.create_task(_button_tell(res["tells"]))
+    return {"ok": res["ok"], "new": res["new"]}
+
+
 def _button_view(request: Request) -> dict:
     b = _button()
     cfg = b.config(DATA_DIR)

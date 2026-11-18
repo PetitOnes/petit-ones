@@ -5,8 +5,10 @@
   ダッシュボードがその場で 3 人を起こす。返事は手紙。外でためて、あとから届いた分は「おいておく」と同じく次の 1 行へ)
 - 1 回押すごとに: 押した時刻・まわりの空気(ENV PRO: 気温・湿度・気圧・ガス)・場所の印
 - 場所の印: 座標は家に来ない。ボタンの中で 3 つの細かさ(まち 約 5 km・近所 約 500 m・その場 約 150 m)に丸めて、
-  ボタンの中にだけある鍵で HMAC にした 8 文字。同じ場所なら同じ印。ぷちには「前にも押した印か」だけ伝える
+  ボタンの中にだけある鍵で HMAC にした 6 文字。同じ場所なら同じ印。ぷちには「前にも押した印か」だけ伝える
 - 家に届かないとき(外・Wi-Fi なし)は、ボタンの中にためて、つながったときにまとめて送る。押した時刻は「何秒前」で来る
+- 外では、ボタンが BLE で 30 秒「押した」を出し、スマホ(ぷちのポケット)が拾って /api/beacons/button へ(速い道)。
+  中身は 27 バイト(from_ble)。家の鍵の HMAC 4 バイトで、にせ物を捨てる。あとで Wi-Fi からも同じ押しが来るが、番号で 1 回にまとめる
 - 鍵: config/button.json(時計と同じく、6 桁の番号と引き換えに長い鍵を渡す)。鍵と番号は出力に出さない
 
 置き場所(PETIT_DATA_DIR の中。git には入れない):
@@ -155,7 +157,7 @@ def _clean(p: dict, now: datetime) -> dict | None:
                              "pressure": _num(env.get("pressure"), 300, 1100), "gas": _num(env.get("gas"), 0, 1e8, 0)}.items()
            if v is not None}
     place = p.get("place") if isinstance(p.get("place"), dict) else {}
-    place = {k: str(place[k]).lower() for k, _ in LEVELS if re.fullmatch(r"[0-9a-fA-F]{8}", str(place.get(k, "")))}
+    place = {k: str(place[k]).lower() for k, _ in LEVELS if re.fullmatch(r"[0-9a-fA-F]{6}", str(place.get(k, "")))}
     sats = _num(p.get("sats"), 0, 99, 0)
     # 時刻: GPS か NTP の時計があれば epoch(秒)。なければ「何秒前」(同じ立ち上がりの間だけ)。どちらもなければ届いた時刻
     at, known = now - timedelta(seconds=min(ago, 30 * 86400)), not p.get("unknown")
@@ -170,7 +172,7 @@ def _clean(p: dict, now: datetime) -> dict | None:
             "known": known}
 
 
-def receive(report: dict, base: Path | None = None, now: datetime | None = None) -> dict:
+def receive(report: dict, base: Path | None = None, now: datetime | None = None, via: str = "wifi") -> dict:
     """ボタンの 1 回の連絡(押した分をまとめて)。seq が同じものは 2 度入れない。受け取った seq を返す(ボタンはそこまで消す)"""
     now = now or datetime.now()
     boot = str(report.get("boot", ""))[:16]   # ボタンが立ち上がるたびに変わる印(seq はそのたびに 1 から)
@@ -184,13 +186,44 @@ def receive(report: dict, base: Path | None = None, now: datetime | None = None)
         if (boot, p["seq"]) in have:
             continue
         p["boot"] = boot
+        p["via"] = via
         new.append(p)
     if new:
         _save(_presses_path(base), (presses(base) + new)[-KEEP:])
     tells = [_pid(p) for p in new if p["kind"] == "tell" and not p["late"]]   # その場で起こす分(外でためた分は、次に起きたときの 1 行へ)
-    st = {"at": _iso(now), "fix": bool(report.get("fix")), "queued": len(report.get("presses") or [])}
+    st = status(base) | ({"at": _iso(now), "fix": bool(report.get("fix")), "queued": len(report.get("presses") or [])}
+                         if via == "wifi" else {"ble_at": _iso(now)})
     _save(base_dir(base) / "state" / "button" / "status.json", st)
     return {"ok": got, "new": len(new), "tells": tells}
+
+
+def from_ble(hex_data: str, base: Path | None = None) -> dict | None:
+    """スマホが拾ったボタンの BLE(製造者 0xFFFF の 27 バイト)を、receive の形に。署名が合わなければ None。
+    0: 0xB0 | 知らせる 1 | 空気 2 | 場所 4 / 1-2: ボタンの印 / 3-4: 番号 / 5-6: 何秒前 / 7-8: 気温×100 / 9: 湿度 /
+    10-11: 気圧×10 / 12-13: ガス÷10 / 14-22: 場所の印 3 つ(3 バイトずつ) / 23-26: HMAC-SHA256(家の鍵, 0-22) の先頭 4"""
+    import hashlib
+    import hmac
+    try:
+        b = bytes.fromhex(str(hex_data))
+    except ValueError:
+        return None
+    key = config(base).get("key")
+    if len(b) != 27 or b[0] >> 4 != 0xB or not key:
+        return None
+    if not hmac.compare_digest(hmac.new(str(key).encode(), b[:23], hashlib.sha256).digest()[:4], b[23:]):
+        return None
+    u16 = lambda i: (b[i] << 8) | b[i + 1]  # noqa: E731
+    temp = u16(7) - 65536 if u16(7) >= 32768 else u16(7)
+    press = {"seq": u16(3), "kind": "tell" if b[0] & 1 else "leave"}
+    if u16(5) == 65535:
+        press["unknown"] = True
+    else:
+        press["ago_s"] = u16(5)
+    if b[0] & 2:
+        press["env"] = {"temp": temp / 100, "humid": b[9], "pressure": u16(10) / 10, "gas": u16(12) * 10}
+    if b[0] & 4:
+        press["place"] = {k: b[14 + i * 3:17 + i * 3].hex() for i, (k, _) in enumerate(LEVELS)}
+    return {"boot": f"{u16(1):04x}", "presses": [press]}
 
 
 def status(base: Path | None = None) -> dict:
