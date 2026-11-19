@@ -33,7 +33,7 @@
     .c-state.bad { background: var(--ui-danger-soft); color: var(--ui-danger); }
     /* だれが・何に: 表 */
     .c-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; font-variant-numeric: tabular-nums; }
-    .c-table th, .c-table td { padding: 7px 6px; border-bottom: 1px solid var(--ui-line-soft); text-align: right; vertical-align: top; }
+    .c-table th, .c-table td { padding: 7px 4px; border-bottom: 1px solid var(--ui-line-soft); text-align: right; vertical-align: top; }
     .c-table th { font-size: 0.75rem; font-weight: 700; color: var(--ui-text-sub); }
     .c-table th:first-child, .c-table td:first-child { text-align: left; white-space: nowrap; }
     .c-table tfoot td { font-weight: 700; border-bottom: 0; }
@@ -72,7 +72,7 @@
     const OTHER_LABELS = { diary: "日記", button: "ボタン", display_phrase: "体のひとこと", sensor: "体のセンサー", camera: "体のカメラ", mic: "体のマイク" };
     const kindOf = s => KIND[s] ? s : "other";
     const money = v => "$" + Number(v || 0).toFixed(2);
-    const money3 = v => v < 0.1 ? "$" + Number(v || 0).toFixed(3) : money(v);
+    const money3 = v => v < 1 ? "$" + Number(v || 0).toFixed(3) : money(v);   // 1 回あたり・1 回ずつは小さいので 3 桁
     const WD = "日月火水木金土";
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const parse = s => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -164,19 +164,26 @@
 
     function tableCard(cur) {
       const ids = S.chars.map(c => c.id).filter(id => cur.by[id]).concat(Object.keys(cur.by).filter(id => !S.chars.find(c => c.id === id)));
-      const cell = x => x && x.n ? `<span class="m">${money(x.cost)}</span><span class="n">${x.n} 回・1 回 ${money3(x.cost / x.n)}</span>` : `<span class="n">—</span>`;
+      const K = ["chat", "autonomous", "other"];
+      const cell = x => x && x.n ? `<span class="m">${money(x.cost)}</span><span class="n">${x.n} 回</span>` : `<span class="n">—</span>`;
+      const per = x => x && x.n ? money3(x.cost / x.n) : "—";
       const otherTitle = x => x ? Object.entries(x.src).map(([k, v]) => `${OTHER_LABELS[k] || k} ${v} 回`).join("、") : "";
-      const tot = { chat: { n: 0, cost: 0 }, autonomous: { n: 0, cost: 0 }, other: { n: 0, cost: 0 } };
+      const who = id => `${id ? `<span class="c-dot" style="background:${esc(colorOf(id))}"></span>` : ""}${esc(nameOf(id))}`;
+      const tot = Object.fromEntries(K.map(k => [k, { n: 0, cost: 0 }]));
       const rows = ids.map(id => {
         const c = cur.by[id]; let t = 0, n = 0;
-        for (const k of ["chat", "autonomous", "other"]) if (c[k]) { tot[k].n += c[k].n; tot[k].cost += c[k].cost; t += c[k].cost; n += c[k].n; }
-        return `<tr><td>${id ? `<span class="c-dot" style="background:${esc(colorOf(id))}"></span>` : ""}${esc(nameOf(id))}</td>
-          <td>${cell(c.chat)}</td><td>${cell(c.autonomous)}</td><td title="${esc(otherTitle(c.other))}">${cell(c.other)}</td><td><span class="m"><b>${money(t)}</b></span><span class="n">${n} 回</span></td></tr>`;
+        for (const k of K) if (c[k]) { tot[k].n += c[k].n; tot[k].cost += c[k].cost; t += c[k].cost; n += c[k].n; }
+        return `<tr><td>${who(id)}</td><td>${cell(c.chat)}</td><td>${cell(c.autonomous)}</td><td title="${esc(otherTitle(c.other))}">${cell(c.other)}</td><td><span class="m"><b>${money(t)}</b></span><span class="n">${n} 回</span></td></tr>`;
       }).join("");
+      const perRows = ids.filter(id => cur.by[id].chat || cur.by[id].autonomous).map(id => `<tr><td>${who(id)}</td><td>${per(cur.by[id].chat)}</td><td>${per(cur.by[id].autonomous)}</td></tr>`).join("");
+      if (!rows) return '<div class="m-card"><span class="a-heading">だれが・何に</span><div class="p-empty">この期間は使っていません</div></div>';
       return `<div class="m-card"><span class="a-heading">だれが・何に</span>
-        ${rows ? `<div class="c-scroll"><table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>ひとりの時間</th><th>ほか</th><th>計</th></tr></thead>
-        <tbody>${rows}</tbody><tfoot><tr><td>みんな</td><td>${cell(tot.chat)}</td><td>${cell(tot.autonomous)}</td><td>${cell(tot.other)}</td><td><span class="m">${money(cur.total)}</span><span class="n">${cur.n} 回</span></td></tr></tfoot></table></div>
-        <div class="c-hint">会話 = ダッシュボードやターミナルで話した 1 往復。ひとりの時間 = 自律行動の 1 回。ほか = 日記・ボタンなど(押すと内訳)</div>` : '<div class="p-empty">この期間は使っていません</div>'}</div>`;
+        <div class="c-scroll"><table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>ひとり</th><th>ほか</th><th>計</th></tr></thead>
+        <tbody>${rows}</tbody><tfoot><tr><td>みんな</td>${K.map(k => `<td>${cell(tot[k])}</td>`).join("")}<td><span class="m">${money(cur.total)}</span><span class="n">${cur.n} 回</span></td></tr></tfoot></table></div>
+        <div class="c-hint">会話 = ダッシュボードやターミナルで話した 1 往復。ひとり = ひとりの時間(自律行動)の 1 回。ほか = 日記・ボタンなど</div></div>
+      <div class="m-card"><span class="a-heading">1 回あたり</span>
+        <table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>ひとりの時間</th></tr></thead><tbody>${perRows}</tbody>
+        <tfoot><tr><td>みんな</td><td>${per(tot.chat)}</td><td>${per(tot.autonomous)}</td></tr></tfoot></table></div>`;
     }
 
     // 棒グラフ。週・月は 1 日 1 本(押すとその日へ)、日は 1 時間 1 本
