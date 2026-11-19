@@ -45,8 +45,8 @@
     /* 棒グラフ: 1 色。目安の線は点線 */
     .c-chart { position: relative; }
     .c-chart svg { display: block; width: 100%; height: 180px; overflow: visible; }
-    /* 会話 = 青、自律行動 = オレンジ、ほか = 緑(dataviz の検査を通した 3 色。2026-11-19) */
-    :root { --k-chat: #2a78d6; --k-autonomous: #eb6834; --k-other: #1baf7a; }
+    /* 会話 = 水色、自律行動 = 桃色(やさしい 2 色。dataviz の検査を通した)、ほか = うすい灰色(2026-11-19) */
+    :root { --k-chat: #6fa3e0; --k-autonomous: #f0997b; --k-other: #cbbfb2; }
     .c-chart .seg { pointer-events: none; }
     .c-chart .seg.chat { fill: var(--k-chat); } .c-chart .seg.autonomous { fill: var(--k-autonomous); } .c-chart .seg.other { fill: var(--k-other); }
     .c-chart .hit { fill: transparent; cursor: pointer; }
@@ -88,8 +88,8 @@
     const mdw = s => `${md(s)}(${WD[parse(s).getDay()]})`;
     const daysBetween = (a, b) => Math.round((parse(b) - parse(a)) / 86400000);
 
-    let S = { view: "day", date: "", base: null, rows: [], chars: [], runs: {} };
-    try { S.view = localStorage.getItem("costs.view") || "day"; } catch (e) {}
+    let S = { view: "day", who: "", date: "", base: null, rows: [], chars: [], runs: {} };
+    try { S.view = localStorage.getItem("costs.view") || "day"; S.who = localStorage.getItem("costs.who") || ""; } catch (e) {}
 
     const nameOf = id => id ? ((S.chars.find(c => c.id === id) || {}).name || id) : "家(日記など)";
     const colorOf = id => (S.chars.find(c => c.id === id) || {}).color || "#cfc6bb";
@@ -122,7 +122,7 @@
       return out;
     }
     const emptyBar = key => ({ key, total: 0, chat: 0, autonomous: 0, other: 0, n: { chat: 0, autonomous: 0, other: 0 } });
-    const dayTotals = (from, to) => { const m = {}; for (const r of S.rows) if (r.date >= from && r.date <= to) { const x = (m[r.date] ||= emptyBar(r.date)); const k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += r.n; } return m; };
+    const dayTotals = (from, to, who = null) => { const m = {}; for (const r of S.rows) if (r.date >= from && r.date <= to && (who === null || r.character === who)) { const x = (m[r.date] ||= emptyBar(r.date)); const k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += r.n; } return m; };
     // ふだんの 1 日(きのうまでの 7 日の平均): 自律行動・ほかの代と回数、会話 1 往復の代
     function usual() {
       const to = addDays(S.base.today_str, -1), from = addDays(to, -6), m = dayTotals(from, to);
@@ -210,14 +210,15 @@
       let bars = [], goal = 0, title;
       if (S.view === "day") {
         const h = Array.from({ length: 24 }, (_, i) => emptyBar(i));
-        for (const r of (S.runs[from] || [])) { const x = h[Number(r.time.slice(0, 2))], k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += 1; }
+        for (const r of (S.runs[from] || []).filter(r => !S.who || r.character === S.who)) { const x = h[Number(r.time.slice(0, 2))], k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += 1; }
         bars = h; title = "1 時間ごと";
       } else {
-        const m = dayTotals(from, to);
+        const m = dayTotals(from, to, S.who || null);
         for (let d = from; d <= to; d = addDays(d, 1)) bars.push(m[d] || emptyBar(d));
         goal = S.base.budget / daysBetween(S.base.cycle_start, S.base.cycle_end);
         title = "1 日ごと(押すとその日)";
       }
+      if (S.who) title += `・${nameOf(S.who)}`;
       const sumK = bars.reduce((a, x) => { for (const k of STACK) { a[k] += x[k]; a.n[k] += x.n[k]; } return a; }, emptyBar(""));
       const W = 600, H = 180, top = 10, bottom = 22, n = bars.length;
       const max = Math.max(goal * 1.15, 0.01, ...bars.map(b => b.total));
@@ -243,7 +244,10 @@
       S._bars = bars;
       const key = [["chat", "会話"], ["autonomous", "自律行動"], ["other", "ほか"]].filter(([k]) => k !== "other" || sumK.n.other)
         .map(([k, l]) => `<span><i style="background:var(--k-${k})"></i>${l} <b>${money(sumK[k])}</b> <span class="n">${sumK.n[k].toLocaleString()} 回</span></span>`).join("");
+      const whoPills = [["", "みんな"]].concat(S.chars.map(c => [c.id, c.name])).map(([id, name]) =>
+        `<button class="a-pill${S.who === id ? " is-on" : ""}" aria-pressed="${S.who === id}" data-who="${esc(id)}">${id ? `<span class="c-dot" style="background:${esc(colorOf(id))}"></span>` : ""}${esc(name)}</button>`).join("");
       return `<div class="m-card"><span class="a-heading">${title}</span>
+        <div class="c-bar-row">${whoPills}</div>
         <div class="c-key">${key}</div>
         <div class="c-chart" id="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}の代">
           <line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${segs.join("")}${goalLine}${hits.join("")}</svg><div class="c-tip" id="tip" hidden></div></div>
@@ -251,10 +255,10 @@
     }
 
     function runsCard(date) {
-      const runs = S.runs[date];
+      const runs = S.runs[date] && S.runs[date].filter(r => !S.who || r.character === S.who);
       if (!runs) return `<div class="m-card"><span class="a-heading">1 回ずつ</span><div class="p-empty">読み込み中…</div></div>`;
       const shown = S.allRuns ? runs : runs.slice(0, 30);
-      return `<div class="m-card"><span class="a-heading">1 回ずつ(新しい順)</span>
+      return `<div class="m-card"><span class="a-heading">1 回ずつ(新しい順${S.who ? "・" + esc(nameOf(S.who)) : ""})</span>
         ${shown.map(r => `<div class="c-run"><span class="t">${esc(r.time)}</span><span>${r.character ? `<span class="c-dot" style="background:${esc(colorOf(r.character))}"></span>` : ""}${esc(nameOf(r.character))} <span class="k">${esc(KIND[r.source] || OTHER_LABELS[r.source] || r.source)}</span></span><span>${money3(r.cost)}</span></div>`).join("") || '<div class="p-empty">この日は使っていません</div>'}
         ${runs.length > shown.length ? `<button class="a-btn a-btn--sub a-btn--s" id="moreRuns" style="margin-top:8px">ぜんぶ見る(${runs.length} 回)</button>` : ""}</div>`;
     }
@@ -288,6 +292,8 @@
     }
 
     document.addEventListener("click", e => {
+      const w = e.target.closest("[data-who]");
+      if (w) { S.who = w.dataset.who; try { localStorage.setItem("costs.who", S.who); } catch (er) {} render(); return; }
       const v = e.target.closest("[data-view]");
       if (v) { S.view = v.dataset.view; try { localStorage.setItem("costs.view", S.view); } catch (er) {} render(); return; }
       const st = e.target.closest("[data-step]");
