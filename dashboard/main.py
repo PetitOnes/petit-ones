@@ -14542,7 +14542,7 @@ VOICE_MEMO_HTML = """<!DOCTYPE html>
 
 # ===================== stream-logs =====================
 
-_COST_FIX_CACHE = {"mtime": None, "map": {}}
+_COST_FIX_CACHE = {"mtime": None, "map": {}, "rows": []}
 
 
 def _cost_fix_map() -> dict:
@@ -14554,7 +14554,8 @@ def _cost_fix_map() -> dict:
             import sys as _sys
             _sys.path.insert(0, str(PROJECT_DIR / "scripts"))
             from cost_correct import load_corrected
-            _COST_FIX_CACHE["map"] = {(r["timestamp"], r["character"], r["source"]): r["cost"] for r in load_corrected(log)}
+            _COST_FIX_CACHE["rows"] = load_corrected(log)
+            _COST_FIX_CACHE["map"] = {(r["timestamp"], r["character"], r["source"]): r["cost"] for r in _COST_FIX_CACHE["rows"]}
             _COST_FIX_CACHE["mtime"] = mtime
     except Exception:
         pass
@@ -15531,6 +15532,39 @@ _BUDGET_RESET_DAY = int(os.getenv("BUDGET_RESET_DAY", "26"))
 def costs_page():
     # ほかのページと同じ部品(dashboard/ui/)で。トップページの中にも開ける(2026-11-14)
     return HTMLResponse((UI_DIR / "costs.html").read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+def _cost_rows() -> list[dict]:
+    """1 回ぶんに直した記録(cost_correct.load_corrected)。ファイルが変わったら読み直す"""
+    _cost_fix_map()
+    return _COST_FIX_CACHE.get("rows") or []
+
+
+@app.get("/api/costs/days")
+def api_costs_days(start: str = "", end: str = ""):
+    """💰 おかね: 日 × だれ × 何に の 回数と代(1 回ぶんに直した値)。既定は 70 日前〜今日"""
+    today = datetime.now().date()
+    start = start or (today - timedelta(days=70)).isoformat()
+    end = end or today.isoformat()
+    agg: dict[tuple[str, str, str], list] = {}
+    for r in _cost_rows():
+        if not (start <= r["date"] <= end):
+            continue
+        k = (r["date"], r["character"] or "", r["source"] or "")
+        a = agg.setdefault(k, [0, 0.0])
+        a[0] += 1
+        a[1] += r["cost"]
+    return {"start": start, "end": end, "rows": [{"date": d, "character": c, "source": s_, "n": v[0], "cost": round(v[1], 4)}
+                                                 for (d, c, s_), v in sorted(agg.items())]}
+
+
+@app.get("/api/costs/runs")
+def api_costs_runs(date: str = ""):
+    """💰 おかね: その日の 1 回ずつ(時刻・だれ・何に・代・手数)。新しい順"""
+    date = date or datetime.now().date().isoformat()
+    out = [{"time": r["dt"].strftime("%H:%M"), "character": r["character"] or "", "source": r["source"] or "",
+            "cost": round(r["cost"], 4), "session_type": r.get("session_type")} for r in _cost_rows() if r["date"] == date]
+    return {"date": date, "runs": out[::-1]}
 
 
 @app.get("/api/costs")
