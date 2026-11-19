@@ -10424,7 +10424,6 @@ HTML = """<!DOCTYPE html>
       music:     {icon: "🎧", name: "聴く",       pane: "music"},      // 音楽を一緒に感じる(2026-11-14)。はじめは「ほか」の中
       slips:     {icon: "🧾", name: "合作日記",   pane: "slips"},      // ぷちのきょうの紙を刷って、日記に貼る(2026-11-17)。はじめは「ほか」の中
       toolbox:   {icon: "🧰", name: "道具箱",     pane: "toolbox"},    // ぷちの道具の地図と、1 つ渡す(2026-11-16)。はじめは「ほか」の中
-      desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       draw:      {icon: "🎨", name: "えがく",     pane: "draw"},       // ぷちが見せると決めた絵(2026-11-17)。はじめは「ほか」の中
       toio:      {icon: "🧊", name: "toio",       pane: "toio"},       // マットの上のキューブと、コントローラ(2026-11-18)。はじめは「ほか」の中
