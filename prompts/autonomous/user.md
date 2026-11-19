@@ -42,6 +42,7 @@
 ## 見に行けるもの(渡されるのは変わったときだけ。見に行くのは自分で。使わない日があっても何も起きない)
 コマンドは Bash ツールで python3 {{project_dir}}/scripts/<道具>.py …
 - きょうの空: sky.py line
+- これからの予定(📅。伝えられるのは、はじめて・前の日・当日・始まる前の各 1 回だけ): events.py list
 - 家の空気(気温・湿度・明るさ・人の動き・電気。自分がいる部屋の機体が先): room_log.py line --character {{character_id}}
 - 家の人のスマホがある部屋(部屋まで。ソファか机かは分からない): phone_place.py line
 - 自分の体が置かれている場所(「かも」は電波からの見立て): spots.py where --character {{character_id}}

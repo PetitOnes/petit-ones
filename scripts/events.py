@@ -11,13 +11,16 @@
 
 使うところ:
 - ダッシュボード(📅 よてい のページ。月のカレンダーに記念日と一緒に出す、ぷちログのその日の行)
-- ぷちへ: 7 日以内の予定を、自律行動と会話の冒頭に 1 行ずつ(`events.py lines --character <id>`)。
+- ぷちへ: 7 日以内の予定を、会話の冒頭に 1 行ずつ(`events.py lines --character <id>`)。
   自分が行かない予定は「(自分は留守番)」と分かる形
+- 自律行動へは「変わったときだけ」(`--mark`。2026-11-19 ありさん「予定を入れたらずっとそのことばっかり」)。
+  1 つの予定を、はじめて 7 日以内に入ったとき・前の日・当日(数日なら毎日)・始まる 90 分前から、の各 1 回だけ。
+  伝えた印は characters/<id>/state/events_told.json。いつでも見に行けるのは `events.py list`
 
 ぷちも自分で足せる(記念日と同じ。足した人の id が by に残る):
 
 Usage:
-    python3 events.py lines --character <id> [--date YYYY-MM-DD]   # ぷちに渡す行(無ければ何も出さない)
+    python3 events.py lines --character <id> [--date YYYY-MM-DD] [--mark]   # ぷちに渡す行(無ければ何も出さない。--mark でまだ伝えていない分だけ)
     python3 events.py list [--all]                                 # これからの予定を 1 行ずつ(--all で過ぎた分も)
     python3 events.py add <足す人・子の id> "<題>" <日付> [--end 日付] [--time 14:00] [--place "場所"] [--who puchiko,arisan] [--note "ひとこと"]
 """
@@ -30,7 +33,7 @@ import os
 import sys
 import uuid
 from datetime import date as Date
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 TITLE_MAX = 40
@@ -38,6 +41,7 @@ PLACE_MAX = 60
 NOTE_MAX = 200
 ITEMS_MAX = 500
 TELL_DAYS = 7          # 何日前からぷちに伝えるか(2026-11-14 ありさん)
+SOON_MIN = 90          # 時間のある予定は、始まるこの分前からもう一度だけ伝える
 WEEKDAYS = "月火水木金土日"
 
 
@@ -170,6 +174,42 @@ def lines(base: Path | None, me: str | None, today: Date | None = None) -> list[
     return [line(it, today, me, base) for it in upcoming(load(base), today)]
 
 
+def stage(it: dict, today: Date, now: datetime | None = None) -> str:
+    """いまがこの予定のどの段階か。段階ごとに 1 回だけ伝える(new → eve → day → soon)"""
+    start, end = Date.fromisoformat(it["date"]), Date.fromisoformat(it["end"])
+    if start <= today <= end:
+        if now and it["time"] and start == today:
+            h, m = (int(x) for x in it["time"].split(":"))
+            left = (h * 60 + m) - (now.hour * 60 + now.minute)
+            if 0 <= left <= SOON_MIN:
+                return "soon"
+        return f"day{today.isoformat()}"
+    return "eve" if (start - today).days == 1 else "new"
+
+
+def fresh_lines(base: Path | None, me: str, today: Date | None = None, now: datetime | None = None, mark: bool = True) -> list[str]:
+    """まだこの子に伝えていない段階の予定だけ。mark なら伝えたことを覚える。"""
+    base = base or data_dir()
+    today = today or Date.today()
+    told_path = base / "characters" / me / "state" / "events_told.json"
+    try:
+        told = set(json.loads(told_path.read_text(encoding="utf-8")).get("told", []))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        told = set()
+    out, keys, live = [], [], set()
+    for it in upcoming(load(base), today):
+        key = f"{it['id']}:{it['date']}:{stage(it, today, now)}"
+        live.add(it["id"])
+        if key not in told:
+            out.append(line(it, today, me, base))
+            keys.append(key)
+    if mark and keys:
+        keep = {k for k in told if k.split(":", 1)[0] in live} | set(keys)
+        told_path.parent.mkdir(parents=True, exist_ok=True)
+        told_path.write_text(json.dumps({"told": sorted(keep)}, ensure_ascii=False) + "\n", encoding="utf-8")
+    return out
+
+
 def list_lines(base: Path | None, today: Date, all_: bool = False) -> list[str]:
     """人にもぷちにも読める一覧。「11/22(日) 展示会(ビッグサイト、14:00 から)。行く: ぷちこ・ありさん  [id 44a68fd95508]」"""
     out = []
@@ -191,6 +231,7 @@ def main() -> int:
     p = sub.add_parser("lines")
     p.add_argument("--character", default=None)
     p.add_argument("--date", default=None)
+    p.add_argument("--mark", action="store_true", help="まだ伝えていない段階の分だけ出して、伝えたことを覚える")
     p = sub.add_parser("list")
     p.add_argument("--all", action="store_true")
     p = sub.add_parser("add")
@@ -206,7 +247,8 @@ def main() -> int:
     base = data_dir()
     if a.cmd == "lines":
         today = Date.fromisoformat(a.date) if a.date else Date.today()
-        for text in lines(base, a.character, today):
+        rows = fresh_lines(base, a.character, today, datetime.now() if not a.date else None) if a.mark and a.character else lines(base, a.character, today)
+        for text in rows:
             print(text)
     elif a.cmd == "list":
         rows = list_lines(base, Date.today(), a.all)

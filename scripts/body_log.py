@@ -204,7 +204,7 @@ def notice(base: Path, character_id: str, mark: bool = False, now: datetime | No
         told_path.write_text(json.dumps({"until": now.isoformat(timespec="minutes")}) + "\n", encoding="utf-8")
     if not big:
         return []
-    me = Path(__file__).resolve()
+    me = Path(os.path.abspath(__file__))  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     return [f"（体の数字が大きく動いた: {' / '.join(_fmt_change(c) for c in big[-NOTICE_MAX:])}。線は python3 {me} line {character_id}）"]
 
 

@@ -1871,7 +1871,7 @@ def _chat_system_prompt(character_id: str, username: str | None, restriction_tex
         restriction_text=restriction_text,
         toio_on="1" if _toio().enabled(DATA_DIR) else "",
         whereabouts=_whereabouts_text(character_id),
-        events=_events_text(character_id),
+        events=_events_text(character_id, mark=not preview),
         sky_change="" if preview else _sky_change_text(character_id),
         room_change="" if preview else _room_change_text(character_id),
         phone_change="" if preview else _phone_change_text(character_id),
@@ -2729,9 +2729,11 @@ def _sky_change_text(character_id: str | None = None) -> str:
         return ""
 
 
-def _events_text(character_id: str | None) -> str:
-    """7 日以内の予定(ぷちに渡す行)。読めなければ空"""
+def _events_text(character_id: str | None, mark: bool = False) -> str:
+    """7 日以内の予定(ぷちに渡す行)。mark なら、まだこの子に伝えていない段階の分だけ(自律行動と同じ印。2026-11-19)。読めなければ空"""
     try:
+        if mark and character_id:
+            return "\n".join(_events().fresh_lines(DATA_DIR, character_id, now=datetime.now()))
         return "\n".join(_events().lines(DATA_DIR, character_id))
     except Exception:
         return ""

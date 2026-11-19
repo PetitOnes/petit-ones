@@ -522,9 +522,10 @@ if [ -f "${PROJECT_DIR}/scripts/note_marks.py" ]; then
 fi
 
 # 近い予定(7 日以内。展示会・旅行など。📅 よてい で足す。2026-11-14)。無ければ何も足さない
+# 毎回は渡さない: はじめて・前の日・当日・始まる前の各 1 回(--mark。2026-11-19)。いつでも見に行けるのは events.py list
 EVENT_NOTICE=""
 if [ -f "${PROJECT_DIR}/scripts/events.py" ]; then
-  EVENT_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/events.py" lines --character "$CHARACTER_ID" 2>/dev/null || true)
+  EVENT_NOTICE=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/events.py" lines --character "$CHARACTER_ID" --mark 2>/dev/null || true)
 fi
 
 # きょうの空: 満月・新月・節気の境目の日だけ 1 行(ぷちたちの希望: 毎回でなく変わったときだけ。scripts/sky.py changes)
@@ -579,7 +580,7 @@ if [ -f "$_sess_file" ] && [ -f "$ATTACH_STATE" ] && [ "$(cat "$_sess_date" 2>/d
    && [ "$(sed -n 's/^session=//p' "$ATTACH_STATE")" = "$(cat "$_sess_file")" ]; then
   _same_names=""
   [ "$(sed -n 's/^SOUL=//p' "$ATTACH_STATE")" = "$_H_SOUL" ] && [ "$_H_SOUL" != none ] && SOUL_SAME=1 && _same_names="SOUL.md"
-  [ "$(sed -n 's/^TODO=//p' "$ATTACH_STATE")" = "$_H_TODO" ] && [ "$_H_TODO" != none ] && TODO_SAME=1 && _same_names="${_same_names:+$_same_names・}$(basename "$TODO_PATH")"
+  # TODO は付け直す(2026-11-19)。外すと続きの回が「することがない」と 1 手で終わりがちだった(13% → 29%)
   [ "$(sed -n 's/^DIARY=//p' "$ATTACH_STATE")" = "$_H_DIARY" ] && [ "$_H_DIARY" != none ] && DIARY_SAME=1 && _same_names="${_same_names:+$_same_names・}diary_summary.md"
   if [ -n "$_same_names" ]; then
     SAME_NOTE="（${_same_names} は前の回から変わっていないので付け直していない。中身はこの会話のはじめの回にある。読み直すなら Read で ${CHARACTER_DIR}/ の中）"

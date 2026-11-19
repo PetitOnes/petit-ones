@@ -599,7 +599,7 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     lab = labels().get(r["tool"], "")
     tool = f"{r['tool']}「{lab}」" if lab else r["tool"]
     note = f"。一言「{r['note']}」" if r.get("note") else ""
-    me = Path(__file__).resolve()
+    me = Path(os.path.abspath(__file__))  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     line = (f"（{_person_name(base, r.get('by', ''))}が道具箱から 1 つ渡してくれた: {tool}{note}。使っても使わなくてもいい。"
             f"使ってみたら使い心地を、手が向かなかったらそれも、一言: python3 {me} felt {character_id} \"…\"(手が向かなかったときは --skip を足す)）")
     if mark:

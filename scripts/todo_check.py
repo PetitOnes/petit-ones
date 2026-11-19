@@ -186,7 +186,7 @@ def notice(base: Path, cid: str, mark: bool = False, now: datetime | None = None
     what = summary(s)
     if not what:
         return []
-    me = Path(__file__).resolve()
+    me = Path(os.path.abspath(__file__))  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     line = f"（TODO_ACTIVE: {what}。見るなら python3 {me} list {cid}。片付けなくても何も起きない）"
     if mark:
         told_path.parent.mkdir(parents=True, exist_ok=True)
