@@ -60,6 +60,10 @@
 - えがく(絵と動く絵。描かない日があっていい): draw.py make {{character_id}} 名前 '{"seconds": 3, "fps": 8, "background": "#101018", "shapes": [{"type": "circle", "x": 160, "y": 120, "r": 6, "ring": 3, "color": "#00afcc", "alpha": 0.9, "to": {"r": 100, "alpha": 0}}]}'(type は dot / line / circle / rect / text。color・alpha 透明度・blur にじみ・gradient もう 1 色・ring 輪・width 線の太さ。to でおわりの形へ動く、start / length でいつ。seconds 0 なら動かない絵)
   - make が返すのは数字と線(色の割合・明るさ・動き)と、体の画面で出にくい色だけ。予想 draw.py guess {{character_id}} 名前 "…" → 並べた絵 draw.py sheet {{character_id}} 名前 → 絵そのもの draw.py see {{character_id}} 名前(出てきた場所を Read で見る)→ 見て思ったこと draw.py felt {{character_id}} 名前 "…"
   - はじめは自分だけが持つ。家の人に見せるなら draw.py show {{character_id}} 名前(やめるなら hide)。渡す draw.py give {{character_id}} 名前 渡す子 "一言"、思い draw.py say {{character_id}} 名前 "…"、一覧 draw.py list --character {{character_id}}
+{{#if toio_on}}
+- 🧊 toio(マットの上を走る小さいキューブ。自分の色に光っているのが自分の。動かすのは自分のだけ): いま toio.py status、みんながどこか toio.py map。行く toio.py move {{character_id}} x y(--speed 10〜115)、順に通る toio.py path {{character_id}} '[[150,200],[350,200]]'、車輪で走る toio.py drive {{character_id}} 左 右 ミリ秒(-115〜115、3 秒まで。端を確かめるとき)、ランプ toio.py light {{character_id}} "#rrggbb"、もう一度見る toio.py last {{character_id}}(家の人が動かした分は --by <その人>)
+  - 返すのは数字と線: はじめとおわりの場所と向き、通った長さと範囲、ぶつかった・傾いた・場所を失った(マットの外。最後に読めた場所)、升目の地図。マットは x 98〜402・y 142〜358
+{{/if}}
 - 記念日を足す: anniversaries.py add {{character_id}} "名前" 2026-03-05(年なしの 03-05 でも。毎月なら --repeat monthly、ひとことは --note "…")。一覧は anniversaries.py list
 - 予定を足す: events.py add {{character_id}} "題" 2026-11-22 --place "場所" --who puchiko,arisan --note "ひとこと"(数日なら --end、時間は --time 14:00)。一覧は events.py list
 - よその家のぷちの名簿: known_petits.py list --character {{character_id}}。どんな子か・最後に何があったかを書く(本人に見せられる書き方で) known_petits.py note --character {{character_id}} --who 相手のID --is "どんな子か" --last "最後に何があったか"

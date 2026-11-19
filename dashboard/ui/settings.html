@@ -206,6 +206,14 @@
         <div id="optMcpRows"></div>
         <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="a-btn a-btn--sub a-btn--s" onclick="loadOptMcp(true)">機体を探し直す</button></div>
       </div>
+      <div class="m-card" id="toioCard">
+        <span class="a-heading">🧊 toio</span>
+        <p class="a-hint" style="margin:0 0 4px">マットの上を走る小さいキューブ。「使う」のあいだ、ぷちの「できること」に toio が出て、PC がキューブとつながる。「使わない」にすると、つながりをほどき(キューブはしばらくして眠る)、ぷちにも出さない。</p>
+        <div class="s-row"><span id="toioNow" class="a-hint">読み込み中…</span>
+          <span class="m-pills" style="flex:0 0 auto"><button class="a-pill" id="toioOn" onclick="setToio(true)">使う</button><button class="a-pill" id="toioOff" onclick="setToio(false)">使わない</button></span></div>
+        <div id="toioCubes"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px"><a class="a-btn a-btn--ghost a-btn--s" href="/toio">🧊 toio を開く</a><button class="a-btn a-btn--sub a-btn--s" onclick="scanToio()">探す</button></div>
+      </div>
       <div class="m-card">
         <span class="a-heading">SwitchBot 連携</span>
         <p class="a-hint" style="margin:0 0 4px">部屋の記録(10 分ごと)に入れる機体(SwitchBot と、PC に差した OMRON)。切った機体は記録せず、ようす・よてい・ぷちにも出ない。SwitchBot の鍵は家の .env</p>
@@ -338,7 +346,7 @@
     // 道具の一覧(id・絵・名前)。トップページ(dashboard/main.py の TOOLS)と同じ並び。scripts/tests/test_ui_settings_page.py が同じか確かめる
     const TOOL_LABELS = [
       ["yousu", "🌱", "ようす"], ["settings", "⚙️", "設定"], ["help", "📖", "使い方"], ["petitlog", "📜", "ぷちログ"], ["diary", "📔", "日記"], ["calendar", "📅", "よてい"], ["music", "🎧", "聴く"], ["slips", "🧾", "合作日記"], ["toolbox", "🧰", "道具箱"],
-      ["desires", "🫧", "欲求"], ["sounds", "🔔", "音"], ["draw", "🎨", "えがく"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["video", "🎬", "動画メモ"], ["notes", "📓", "ノート"],
+      ["desires", "🫧", "欲求"], ["sounds", "🔔", "音"], ["draw", "🎨", "えがく"], ["toio", "🧊", "toio"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["video", "🎬", "動画メモ"], ["notes", "📓", "ノート"],
       ["notebook", "📖", "交換日記"], ["kairanban", "📋", "回覧板"], ["library", "📚", "ライブラリ"], ["relations", "🤝", "関係"], ["kankei", "🔒", "ひみつ"], ["monitor", "📡", "モニタ"],
       ["terminal", "🖥️", "ターミナル"], ["logs", "🔍", "行動ログ"], ["costs", "💰", "おかね"],
     ];
@@ -508,6 +516,44 @@
         drawOptMcp(d); toast("決めました");
       } catch (e) { toast("決められませんでした"); }
     }
+    // 🧊 toio: 使う / 使わない と、キューブごとのつながり・電池(scripts/toio_server.py の番人に聞く)
+    function toioRows(d) {
+      const faces = d.faces || {};
+      const rows = Object.keys(faces).map(w => {
+        const c = (d.cubes || []).find(x => x.who === w), f = faces[w];
+        const now = !d.on ? "使わない" : !c ? "キューブが決まっていない" : !c.connected ? "つながっていない(電源が切れているか、眠っている)"
+          : `つながっている・電源 入・電池 ${c.battery ?? "?"}%${c.pos ? "・マットの上" : "・マットの外"}`;
+        return `<div class="s-row"><span><span class="a-dot" style="background:${esc(f.color || "#ccc")}"></span> ${esc(f.name)}${c ? ` <span class="a-hint">${esc(c.name.split(" ")[0])}</span>` : ""}</span><span class="a-hint">${esc(now)}</span></div>`;
+      });
+      return rows.join("");
+    }
+    async function loadToio() {
+      try {
+        const d = await (await fetch("/api/toio")).json();
+        document.getElementById("toioOn").classList.toggle("is-on", !!d.on);
+        document.getElementById("toioOff").classList.toggle("is-on", !d.on);
+        const n = (d.cubes || []).filter(c => c.connected).length;
+        document.getElementById("toioNow").textContent = d.error && d.on ? d.error : d.on ? `使っている(つながっているのは ${n} 台)` : "使っていない";
+        document.getElementById("toioCubes").innerHTML = toioRows(d);
+      } catch (e) { document.getElementById("toioNow").textContent = "読み込めませんでした"; }
+    }
+    async function setToio(on) {
+      document.getElementById("toioNow").textContent = on ? "キューブを探しています(10 秒くらい)…" : "つながりをほどいています…";
+      try {
+        const res = await fetch("/api/toio/power", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({on})});
+        const d = await res.json();
+        toast(!res.ok ? (d.error || "決められませんでした") : d.error || "決めました");
+      } catch (e) { toast("決められませんでした"); }
+      loadToio();
+    }
+    async function scanToio() {
+      document.getElementById("toioNow").textContent = "キューブを探しています(10 秒くらい)…";
+      try { const res = await fetch("/api/toio/scan", {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"}); if (!res.ok) toast((await res.json()).error || "探せませんでした"); } catch (e) {}
+      loadToio();
+    }
+    loadToio();
+    setInterval(() => { if (!document.hidden) loadToio(); }, 5000);
+
     // 🔘 ぷちボタン(config/button.json。scripts/puchi_button.py)。家の世話人にだけ出す
     let buttonV = null;
     function renderButton() {
