@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja" data-ui="foster">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>toio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@700&family=M+PLUS+Rounded+1c:wght@400;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="/ui/tokens.css">
+  <link rel="stylesheet" href="/ui/atoms.css">
+  <link rel="stylesheet" href="/ui/molecules.css">
+  <link rel="stylesheet" href="/ui/pages.css">
+  <script src="/ui/page.js"></script>
+  <style>
+    /* マット(上から見た図): キューブは子の色の丸と向きの線。押すと、えらんだ子のキューブがそこへ行く */
+    .t-mat { width: 100%; display: block; background: #f6f1e7; border: 1px solid var(--ui-line-soft); border-radius: 10px; touch-action: manipulation; cursor: crosshair; }
+    .t-who { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+    .t-who .a-pill { display: inline-flex; align-items: center; gap: 6px; }
+    .t-who .a-pill.is-off { opacity: 0.45; }
+    .t-state { font-size: var(--ui-fs-s); color: var(--ui-text-sub); min-height: 1.4em; font-variant-numeric: tabular-nums; }
+    /* コントローラ: 押しているあいだ走る十字 */
+    .t-pad { display: grid; grid-template-columns: repeat(3, 72px); grid-template-rows: repeat(3, 72px); gap: 8px; justify-content: center; margin: 12px 0 6px; user-select: none; -webkit-user-select: none; }
+    .t-pad button { border: none; border-radius: 50%; background: var(--ui-accent); color: var(--ui-accent-ink); font-size: 1.6rem; cursor: pointer; touch-action: none; -webkit-touch-callout: none; }
+    .t-pad button.is-on { filter: brightness(0.85); transform: scale(0.96); }
+    .t-pad .t-stop { background: var(--ui-surface); color: var(--ui-text-sub); border: 1px solid var(--ui-line-soft); font-size: 1rem; }
+    .t-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: var(--ui-fs-s); color: var(--ui-text-sub); }
+    .t-row input[type=range] { flex: 1 1 10em; }
+    .t-last { font-size: var(--ui-fs-s); padding: 6px 0; border-top: 1px solid var(--ui-line-soft); }
+    .t-last:first-child { border-top: none; }
+    .t-assign select { min-width: 0; }
+    .t-power { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: var(--ui-fs-s); color: var(--ui-text-sub); margin-top: 6px; font-variant-numeric: tabular-nums; }
+    .t-power b { font-weight: 700; color: var(--ui-text); display: inline-flex; align-items: center; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="p-wrap">
+    <div class="p-head"><a class="a-btn a-btn--sub a-btn--s" href="/">← もどる</a><h1>🧊 toio</h1></div>
+
+    <div class="m-card">
+      <span class="a-heading">マットの上</span>
+      <div class="t-who" id="who"></div>
+      <svg class="t-mat" id="mat" viewBox="0 0 304 216" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="t-state" id="state">読み込んでいます…</div>
+      <div class="t-power" id="power"></div>
+      <p class="a-label">えらんだ子のキューブが太い丸です。マットを押すと、そこへ行きます。うすい線は、それぞれが最後に走った道です。</p>
+    </div>
+
+    <div class="m-card">
+      <span class="a-heading">コントローラ</span>
+      <p class="a-label">押しているあいだ走ります。指を離すと止まります。ぷちが自分で動かしている最中は、終わるまで待ちます。動かした道は、手を止めて 3 秒たつと「わたしが動かした道」として残ります(ぷちが見比べられます)。</p>
+      <div class="t-pad" id="pad">
+        <span></span><button data-dir="f" aria-label="前へ">▲</button><span></span>
+        <button data-dir="l" aria-label="左へ回る">◀</button><button class="t-stop" data-stop>とめる</button><button data-dir="r" aria-label="右へ回る">▶</button>
+        <span></span><button data-dir="b" aria-label="後ろへ">▼</button><span></span>
+      </div>
+      <label class="t-row"><span>速さ</span><input type="range" id="speed" min="15" max="100" step="5" value="40"><b id="speedOut">40</b></label>
+      <div class="t-state" id="padMsg"></div>
+    </div>
+
+    <details class="m-card" id="setup">
+      <summary class="a-heading">つなぐ・だれの分か</summary>
+      <p class="a-label">キューブの電源を入れて(青く点滅)、「探す」。つながると、その子の色に光ります。どのキューブをだれの分にするかは、ここで選び直せます。</p>
+      <div class="t-row"><button class="a-btn a-btn--sub a-btn--s" id="scan">探す</button><span id="scanMsg"></span></div>
+      <div id="assign" class="t-assign"></div>
+    </details>
+  </div>
+
+  <script>
+    const { esc } = PetitPage;
+    const $ = id => document.getElementById(id);
+    let st = { cubes: [], mat: { x0: 98, x1: 402, y0: 142, y1: 358 }, faces: {}, last: {} }, pick = "";
+    try { pick = localStorage.getItem("toio.pick") || ""; } catch (e) {}
+
+    async function call(method, url, body) {
+      const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || "うまくいきませんでした");
+      return j;
+    }
+    const cubeOf = who => st.cubes.find(c => c.who === who);
+    const face = who => st.faces[who] || { name: who, color: "#999" };
+
+    function drawWho() {
+      const ids = Object.keys(st.faces);
+      if (!pick || !ids.includes(pick)) pick = ids.find(w => (cubeOf(w) || {}).connected) || ids[0] || "";
+      $("who").innerHTML = ids.map(w => { const c = cubeOf(w), f = face(w);
+        return `<button class="a-pill${w === pick ? " is-on" : ""}${c && c.connected ? "" : " is-off"}" data-who="${esc(w)}"><span class="a-dot" style="background:${esc(f.color)}"></span>${esc(f.name)}</button>`; }).join("");
+    }
+    function drawMat() {
+      const m = st.mat, W = m.x1 - m.x0, H = m.y1 - m.y0;
+      $("mat").setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const X = x => x - m.x0, Y = y => y - m.y0;
+      let g = `<rect x="0" y="0" width="${W}" height="${H}" fill="none" stroke="#d8cdb8" stroke-dasharray="4 4"/>`;
+      for (const [w, run] of Object.entries(st.last || {})) {   // 最後に走った道(うすく)
+        if (!run || !run.trail || run.trail.length < 2) continue;
+        g += `<polyline points="${run.trail.map(p => `${X(p[1])},${Y(p[2])}`).join(" ")}" fill="none" stroke="${esc(face(w).color)}" stroke-width="2" stroke-opacity="0.45" stroke-linejoin="round"/>`;
+      }
+      for (const c of st.cubes) {
+        if (!c.who) continue;
+        const p = c.pos || c.last_pos;
+        if (!p) continue;
+        const col = face(c.who).color, a = (p.a || 0) * Math.PI / 180, r = c.who === pick ? 11 : 8, off = !c.pos;
+        g += `<g opacity="${off ? 0.35 : 1}"><circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${r}" fill="${esc(col)}" stroke="#3a322d" stroke-width="${c.who === pick ? 2.5 : 1}"/>
+          <line x1="${X(p.x)}" y1="${Y(p.y)}" x2="${X(p.x) + Math.cos(a) * (r + 6)}" y2="${Y(p.y) + Math.sin(a) * (r + 6)}" stroke="#3a322d" stroke-width="2" stroke-linecap="round"/></g>`;
+      }
+      $("mat").innerHTML = g;
+      const c = cubeOf(pick);
+      $("state").textContent = st.error ? st.error : !c ? `${face(pick).name}のキューブは、まだつながっていません(下の「つなぐ」から)`
+        : !c.connected ? `${face(pick).name}のキューブとのつながりが切れています`
+        : c.pos ? `${face(pick).name}: (${c.pos.x}, ${c.pos.y}) 向き ${c.pos.a}°・${c.posture}・電池 ${c.battery ?? "?"}%${c.busy ? "・動いている最中" : ""}`
+        : `${face(pick).name}: マットの外${c.last_pos ? `(最後に読めたのは ${c.last_pos.x}, ${c.last_pos.y})` : ""}・電池 ${c.battery ?? "?"}%`;
+    }
+    function drawPower() {   // 3 台のつながり・電源・電池
+      $("power").innerHTML = st.on === false ? '<span></span><span>toio は、いま使わないことになっています(⚙️ 設定 → 家 → 🧊 toio)</span>'
+        : Object.keys(st.faces).map(w => { const c = cubeOf(w), f = face(w);
+          const now = !c ? "キューブが決まっていない" : !c.connected ? "つながっていない(電源が切れているか、眠っている)" : `つながっている・電源 入・電池 ${c.battery ?? "?"}%`;
+          return `<b><span class="a-dot" style="background:${esc(f.color)}"></span>${esc(f.name)}</b><span>${esc(now)}</span>`; }).join("");
+    }
+    function drawAssign() {
+      const names = st.cubes.map(c => c.name);
+      $("assign").innerHTML = Object.keys(st.faces).map(w => { const c = cubeOf(w);
+        return `<label class="t-row"><span class="a-dot" style="background:${esc(face(w).color)}"></span><span style="min-width:4em">${esc(face(w).name)}</span>
+          <select class="a-input a-input--s" data-assign="${esc(w)}"><option value="">(なし)</option>${names.map(n => `<option${c && c.name === n ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>`; }).join("");
+    }
+    async function load() {
+      try { st = await call("GET", "/api/toio"); } catch (e) { st.error = e.message; }
+      drawWho(); drawMat(); drawPower();
+      if (!$("assign").contains(document.activeElement)) drawAssign();
+    }
+
+    $("who").addEventListener("click", e => { const b = e.target.closest("[data-who]"); if (!b) return; pick = b.dataset.who; try { localStorage.setItem("toio.pick", pick); } catch (e2) {} drawWho(); drawMat(); });
+    $("mat").addEventListener("click", async e => {   // 押した所へ行く
+      const svg = $("mat"), pt = svg.createSVGPoint();
+      pt.x = e.clientX; pt.y = e.clientY;
+      const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+      const x = Math.round(p.x + st.mat.x0), y = Math.round(p.y + st.mat.y0);
+      $("state").textContent = `(${x}, ${y}) へ行きます…`;
+      try { const r = await call("POST", "/api/toio/move", { who: pick, x, y, speed: +$("speed").value }); $("state").textContent = r.result || ""; }
+      catch (e2) { $("state").textContent = e2.message; }
+      load();
+    });
+
+    // 十字: 押しているあいだ 0.2 秒ごとに短く(0.3 秒)走らせる。離したら止める
+    const WHEELS = { f: [1, 1], b: [-1, -1], l: [-0.5, 0.5], r: [0.5, -0.5] };
+    let timer = null, held = null;
+    function nudge() {
+      const s = +$("speed").value, w = WHEELS[held];
+      call("POST", "/api/toio/nudge", { who: pick, left: Math.round(w[0] * s), right: Math.round(w[1] * s), ms: 300 })
+        .then(() => { $("padMsg").textContent = ""; }).catch(e => { $("padMsg").textContent = e.message; release(); });
+    }
+    function press(dir, btn) {
+      release(); held = dir; btn.classList.add("is-on"); nudge(); timer = setInterval(nudge, 200);
+    }
+    function release() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (held) { held = null; call("POST", "/api/toio/stop", { who: pick }).catch(() => {}); }
+      document.querySelectorAll("#pad .is-on").forEach(x => x.classList.remove("is-on"));
+    }
+    $("pad").addEventListener("pointerdown", e => { const b = e.target.closest("[data-dir]"); if (!b) return; e.preventDefault(); b.setPointerCapture(e.pointerId); press(b.dataset.dir, b); });
+    $("pad").addEventListener("pointerup", release);
+    $("pad").addEventListener("pointercancel", release);
+    $("pad").addEventListener("contextmenu", e => e.preventDefault());
+    $("pad").addEventListener("click", e => { if (e.target.closest("[data-stop]")) { held = "x"; release(); } });
+    window.addEventListener("blur", release);
+    $("speed").addEventListener("input", () => { $("speedOut").textContent = $("speed").value; });
+
+    $("scan").addEventListener("click", async () => {
+      $("scanMsg").textContent = "探しています(10 秒くらい)…"; $("scan").disabled = true;
+      try { await call("POST", "/api/toio/scan", {}); $("scanMsg").textContent = ""; } catch (e) { $("scanMsg").textContent = e.message; }
+      $("scan").disabled = false; drawAssign(); load();
+    });
+    $("assign").addEventListener("change", async e => {
+      const s = e.target.closest("[data-assign]"); if (!s) return;
+      try { await call("POST", "/api/toio/assign", { who: s.dataset.assign, name: s.value }); } catch (e2) { alert(e2.message); }
+      drawAssign(); load();
+    });
+
+    load();
+    setInterval(() => { if (!document.hidden) load(); }, 700);
+  </script>
+</body>
+</html>

@@ -554,6 +554,7 @@ HIDEABLE_TOOLS = {   # 道具の id → その道具のページ・入口の頭(
     "desires": ("/desires",),
     "sounds": ("/sounds", "/api/sounds"),
     "draw": ("/draw", "/api/draw"),   # 🎨 えがく(ぷちが見せると決めた絵だけ。2026-11-17)
+    "toio": ("/toio", "/api/toio"),   # 🧊 toio(マットの上のキューブ。ありさんのコントローラも。2026-11-18)
     "album": ("/album", "/api/album"),
     "voice": ("/voice_memo", "/api/voice_memo"),
     "video": ("/video_memo", "/api/video_memo"),   # 動画メモ(人が撮る。2026-11-14)
@@ -1868,6 +1869,7 @@ def _chat_system_prompt(character_id: str, username: str | None, restriction_tex
         mail_targets=", ".join(all_ids + [os.getenv("COMPANION_ID", "arisan")]),
         relay_example_id=(other_ids[0] if other_ids else character_id),
         restriction_text=restriction_text,
+        toio_on="1" if _toio().enabled(DATA_DIR) else "",
         whereabouts=_whereabouts_text(character_id),
         events=_events_text(character_id),
         sky_change="" if preview else _sky_change_text(character_id),
@@ -3460,7 +3462,7 @@ def api_diary_day(character_id: str, date: str):
 
 
 _UI_PAGES = {"petitlog": "petitlog.html", "diary": "diary.html", "anniversaries": "anniversaries.html", "desires": "desires.html",
-             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html", "draw": "draw.html",
+             "sounds": "sounds.html", "settings": "settings.html", "help": "help.html", "calendar": "calendar.html", "music": "music.html", "toolbox": "toolbox.html", "draw": "draw.html", "toio": "toio.html",
              "video_memo": "videomemo.html", "slips": "slips.html"}
 
 
@@ -4403,6 +4405,81 @@ def _draw():
         sys.path.insert(0, scripts_dir)
     import draw
     return draw
+
+
+# ---- 🧊 toio(scripts/toio.py・toio_server.py): キューブとつながっているのは番人だけ。ここは番人に頼む窓口 ----
+def _toio():
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import toio
+    return toio
+
+
+@app.get("/toio", response_class=HTMLResponse)
+def toio_page():
+    return HTMLResponse((UI_DIR / _UI_PAGES["toio"]).read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+
+
+async def _toio_ask(path: str, body: dict | None = None, timeout: float = 60):
+    t = _toio()
+    try:
+        return await asyncio.to_thread(t.ask, path, body, timeout)
+    except t.ToioError as e:
+        return JSONResponse({"error": str(e)}, status_code=409)
+
+
+@app.get("/api/toio")
+async def api_toio(request: Request):
+    """キューブの今(だれの分・場所・向き)と、子の色、それぞれの最後の走り"""
+    t = _toio()
+    st = await _toio_ask("/cubes", None, 5)
+    if isinstance(st, JSONResponse):
+        st = {"cubes": [], "mat": t.mat_of(t.load_config(DATA_DIR)), "on": t.enabled(DATA_DIR), "error": "toio の番人が動いていません"}
+    faces = {c["id"]: {"name": c.get("name") or c["id"], "color": c.get("color") or ""} for c in list_characters()}
+    last = {w: (t.runs(DATA_DIR, w, n=1) or [None])[0] for w in faces}
+    return {**st, "faces": faces, "last": last, "me": _get_username(request) or OWNER_USER}
+
+
+class ToioBody(BaseModel):
+    who: str = ""
+    x: int = 0
+    y: int = 0
+    left: int = 0
+    right: int = 0
+    ms: int = 300
+    speed: int = 50
+    color: str = ""
+    name: str = ""
+    on: bool = True
+
+
+@app.post("/api/toio/{act}")
+async def api_toio_act(act: str, body: ToioBody, request: Request):
+    """コントローラ: 押しているあいだ短く走る(nudge)・その場所へ行く(move)・とめる・探す・ランプ・だれの分か"""
+    me = _get_username(request) or OWNER_USER
+    b = {"who": body.who, "by": me}
+    if act == "nudge":
+        return await _toio_ask("/nudge", {**b, "left": body.left, "right": body.right, "ms": body.ms}, 10)
+    if act == "move":
+        return await _toio_ask("/move", {**b, "x": body.x, "y": body.y, "speed": body.speed}, 30)
+    if act == "stop":
+        return await _toio_ask("/stop", b, 10)
+    if act == "light":
+        return await _toio_ask("/light", {**b, "color": body.color}, 10)
+    if act == "scan":
+        return await _toio_ask("/scan", {}, 90)
+    if act == "power":   # 家で使う / 使わない(⚙️ 設定)
+        if not _is_owner(request):
+            return JSONResponse({"error": "決められるのは家の持ち主だけです"}, status_code=403)
+        res = await _toio_ask("/power", {"on": body.on}, 90)
+        if isinstance(res, JSONResponse):   # 番人が止まっていても、決めたことは残す
+            _toio().set_enabled(DATA_DIR, body.on)
+            return {"on": body.on, "cubes": [], "error": "toio の番人が動いていません(決めたことは残しました)"}
+        return res
+    if act == "assign":
+        return await _toio_ask("/assign", {"who": body.who, "name": body.name}, 10)
+    return JSONResponse({"error": "その頼み方は分かりません"}, status_code=404)
 
 
 @app.get("/draw", response_class=HTMLResponse)
@@ -10348,6 +10425,7 @@ HTML = """<!DOCTYPE html>
       desires:   {icon: "🫧", name: "欲求",       pane: "desires"},
       sounds:    {icon: "🔔", name: "音",         pane: "sounds"},
       draw:      {icon: "🎨", name: "えがく",     pane: "draw"},       // ぷちが見せると決めた絵(2026-11-17)。はじめは「ほか」の中
+      toio:      {icon: "🧊", name: "toio",       pane: "toio"},       // マットの上のキューブと、コントローラ(2026-11-18)。はじめは「ほか」の中
       album:     {icon: "🖼️", name: "アルバム",   pane: "album"},
       voice:     {icon: "🎤", name: "ボイスメモ", pane: "voice"},
       video:     {icon: "🎬", name: "動画メモ",   pane: "video"},   // 人が撮る 10 秒までの動画(2026-11-14)。はじめは「ほか」の中
@@ -10557,7 +10635,7 @@ HTML = """<!DOCTYPE html>
     // ぷちログ・日記・アルバム・ボイスメモ・ノート・交換日記・ライブラリは別のページへ行かず、会話の場所に出す(2026-11-10 ありさん)。
     // もう一度同じ道具を押すか、下の「会話にもどる」で会話へ
     let _pane = null;
-    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", slips: "/slips", desires: "/desires", sounds: "/sounds", draw: "/draw", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
+    const PANES = {album: "/album", voice: "/voice_memo", video: "/video_memo", notes: "/notes", notebook: "/notebook", petitlog: "/petitlog", diary: "/diary", calendar: "/calendar", music: "/music", toolbox: "/toolbox", slips: "/slips", desires: "/desires", sounds: "/sounds", draw: "/draw", toio: "/toio", kairanban: "/kairanban", costs: "/costs", kankei: "/kankei", relations: "/relations", library: "/library", settings: "/settings", help: "/help"};
     function showPane(name) {
       if (name === _pane) name = null;
       _pane = name;

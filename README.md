@@ -141,6 +141,8 @@ petit-ones/                   ← コード(git 管理、public)
 │   ├── mail_receipts.py      # 手紙が届いたこと(読まれた・スタンプ)を、書いたぷちに 1 回だけ知らせる
 │   ├── body_log.py           # 体の数字(明るさ・傾き)のきょうの線・差分・変わり目(材料は体験デーモンの 5 分おきの記録)
 │   ├── draw.py               # えがく: 絵と動く絵(数字と線 → 並べた絵 → 絵そのもの。体の画面で出にくい色。見せるかは本人)
+│   ├── toio.py               # 🧊 toio: マットの上のキューブを動かす(番人 toio_server.py に頼む。返すのは数字と線と升目の地図)
+│   ├── toio_server.py        # toio の番人(Bluetooth でキューブとつながったまま。petit-toio.service)
 │   ├── todo_check.py         # TODO_ACTIVE の見張り(1 日 1 回 1 行・list・ARCHIVE へ移す・返事待ちの欄。片付けるのは本人)
 │   ├── said.py               # 自分が前に言った言葉を探す(体の声・Slack・ボイスメモ・ダッシュボードの返事・みんなの会話。state/said/<id>.jsonl)
 │   ├── toolbox.py            # 🧰 道具箱: 道具の地図・だれがどれを使うか・1 つ渡す・使い心地
