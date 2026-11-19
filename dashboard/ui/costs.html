@@ -43,7 +43,9 @@
     .c-scroll { overflow-x: auto; }
     @media (max-width: 440px) { .c-table { font-size: 0.78rem; } .c-table th, .c-table td { padding: 6px 2px; } .c-dot { margin-right: 3px; } }
     /* 棒グラフ: 1 色。目安の線は点線 */
-    .c-chart { position: relative; }
+    .c-chart { position: relative; padding-left: 40px; }
+    .c-chart .grid { stroke: var(--ui-line-soft); stroke-width: 1; vector-effect: non-scaling-stroke; }
+    .c-ylab { position: absolute; left: 0; width: 34px; transform: translateY(-50%); text-align: right; font-size: 10px; color: var(--ui-text-mute); font-variant-numeric: tabular-nums; pointer-events: none; }
     .c-chart svg { display: block; width: 100%; height: 180px; overflow: visible; }
     /* 会話 = 水色、自律行動 = 桃色(やさしい 2 色。dataviz の検査を通した)、ほか = うすい灰色(2026-11-19) */
     :root { --k-chat: #6fa3e0; --k-autonomous: #f0997b; --k-other: #cbbfb2; }
@@ -221,7 +223,12 @@
       if (S.who) title += `・${nameOf(S.who)}`;
       const sumK = bars.reduce((a, x) => { for (const k of STACK) { a[k] += x[k]; a.n[k] += x.n[k]; } return a; }, emptyBar(""));
       const W = 600, H = 180, top = 10, bottom = 22, n = bars.length;
-      const max = Math.max(goal * 1.15, 0.01, ...bars.map(b => b.total));
+      const top0 = Math.max(goal * 1.15, 0.01, ...bars.map(b => b.total));
+      // 縦軸の目盛り: 1・2・5 × 10^k のきりのいい刻みで 3〜5 本(2026-11-19)
+      const raw = top0 / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), step = [1, 2, 5, 10].map(m => m * mag).find(v => v >= raw);
+      const max = Math.ceil(top0 / step) * step;
+      const ticks = Array.from({ length: Math.round(max / step) + 1 }, (_, i) => i * step);
+      const tickLabel = v => v === 0 ? "$0" : step < 0.1 ? "$" + v.toFixed(2) : step < 1 ? "$" + v.toFixed(1) : "$" + Math.round(v);
       const scale = v => (H - top - bottom) * v / max;
       const bw = W / n, gap = Math.min(4, bw * 0.25), w = Math.max(1, bw - gap);
       const every = n > 16 ? Math.ceil(n / 8) : n > 12 ? 2 : 1;
@@ -240,6 +247,8 @@
         if (i % every === 0) segs.push(`<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(S.view === "day" ? String(b.key) : md(b.key))}</text>`);
         hits.push(`<rect class="hit" x="${i * bw}" y="0" width="${bw}" height="${H - bottom}" data-i="${i}"></rect>`);
       });
+      const grid = ticks.slice(1).map(v => `<line class="grid" x1="0" x2="${W}" y1="${H - bottom - scale(v)}" y2="${H - bottom - scale(v)}"></line>`).join("");
+      const ylabs = ticks.map(v => `<div class="c-ylab" style="top:${H - bottom - scale(v)}px">${tickLabel(v)}</div>`).join("");
       const goalLine = goal ? `<line class="goal" x1="0" x2="${W}" y1="${H - bottom - scale(goal)}" y2="${H - bottom - scale(goal)}"></line>` : "";
       S._bars = bars;
       const key = [["chat", "会話"], ["autonomous", "自律行動"], ["other", "ほか"]].filter(([k]) => k !== "other" || sumK.n.other)
@@ -250,7 +259,7 @@
         <div class="c-bar-row">${whoPills}</div>
         <div class="c-key">${key}</div>
         <div class="c-chart" id="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}の代">
-          <line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${segs.join("")}${goalLine}${hits.join("")}</svg><div class="c-tip" id="tip" hidden></div></div>
+          ${grid}<line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${segs.join("")}${goalLine}${hits.join("")}</svg>${ylabs}<div class="c-tip" id="tip" hidden></div></div>
         ${goal ? `<div class="c-legend">点線は 1 日の目安 ${money(goal)}(予算 ÷ 周期の日数)</div>` : ""}</div>`;
     }
 
