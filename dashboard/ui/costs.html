@@ -213,12 +213,12 @@
         return `<rect class="hit" x="${i * bw}" y="0" width="${bw}" height="${H}" data-i="${i}"></rect>${path ? `<path class="bar${sel ? " is-sel" : ""}" d="${path}"></path>` : ""}`
           + (i % every === 0 ? `<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(S.view === "day" ? String(b.key) : b.label)}</text>` : "");
       }).join("");
-      const goalLine = goal ? `<line class="goal" x1="0" x2="${W}" y1="${y(goal)}" y2="${y(goal)}"></line><text class="axis" x="${W}" y="${y(goal) - 4}" text-anchor="end">目安 ${money(goal)}</text>` : "";
+      const goalLine = goal ? `<line class="goal" x1="0" x2="${W}" y1="${y(goal)}" y2="${y(goal)}"></line>` : "";
       S._bars = bars;
       return `<div class="m-card"><span class="a-heading">${title}</span>
         <div class="c-chart" id="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}の代">
           <line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${svg}${goalLine}</svg><div class="c-tip" id="tip" hidden></div></div>
-        ${goal ? '<div class="c-legend">点線は 1 日の目安(予算 ÷ 周期の日数)</div>' : ""}</div>`;
+        ${goal ? '<div class="c-legend">点線は 1 日の目安 ${money(goal)}(予算 ÷ 周期の日数)</div>' : ""}</div>`;
     }
 
     function runsCard(date) {
