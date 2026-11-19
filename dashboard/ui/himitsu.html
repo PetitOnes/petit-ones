@@ -56,6 +56,7 @@
     /* わたしている文: その子のプロンプトに入る文とファイルを、1 つずつ開いて読む */
     .h-views { display: flex; gap: 8px; margin-bottom: 12px; }
     [data-view-box][hidden] { display: none; }
+    .h-frame { display: block; width: 100%; min-height: 60vh; border: 0; background: transparent; }
     .h-views { flex-wrap: wrap; }
     [data-view][hidden] { display: none; }
     /* 行動ログ: ぷちが動いた 1 回ごとの記録。回を押すと、考えたこと・言ったこと・使った道具が時間の順に並ぶ */
@@ -104,6 +105,8 @@
       <button class="a-pill is-on" aria-pressed="true" data-view="mail">💌 手紙</button>
       <button class="a-pill" aria-pressed="false" data-view="words">📜 わたしている文</button>
       <button class="a-pill" aria-pressed="false" data-view="logs">🔍 行動ログ</button>
+      <button class="a-pill" aria-pressed="false" data-view="desires">🫧 欲求</button>
+      <button class="a-pill" aria-pressed="false" data-view="costs">💰 おかね</button>
     </div>
     <div data-view-box="mail">
     <div class="h-bar" id="scopes"></div>
@@ -137,6 +140,12 @@
       <div class="h-count" id="gCount"></div>
       <div id="gList"></div>
       <div class="p-empty" id="gEmpty">読み込み中…</div>
+    </div>
+    <div data-view-box="desires" hidden>
+      <iframe class="h-frame" data-src="/desires?embed=1" title="欲求"></iframe>
+    </div>
+    <div data-view-box="costs" hidden>
+      <iframe class="h-frame" data-src="/costs?embed=1" title="おかね"></iframe>
     </div>
   </div>
   <script>
@@ -413,16 +422,26 @@
       document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
       if (v === "words" && !words.loaded) loadWords("");
       if (v === "logs" && !logs.loaded) loadLogChars();
+      // 🫧 欲求・💰 おかね は、ひみつ の中のタブに(2026-11-19)。開いたときに読む
+      const f = document.querySelector(`[data-view-box="${v}"] .h-frame`);
+      if (f && !f.getAttribute("src")) f.src = f.dataset.src;
       try { history.replaceState(null, "", v === "mail" ? location.pathname + location.search : "#" + v); } catch (e) {}
     }
     $("views").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
-    if (["#words", "#logs"].includes(location.hash)) setView(location.hash.slice(1));
-    // 行動ログを見せないことになっている人には、粒を出さない(開いていたら手紙へ戻す)
+    // 欲求・おかねの高さを中身に合わせる(同じ家のページなので読める)
+    document.querySelectorAll(".h-frame").forEach(f => f.addEventListener("load", () => {
+      const fit = () => { try { f.style.height = f.contentDocument.documentElement.scrollHeight + "px"; } catch (e) {} };
+      fit(); setTimeout(fit, 400); setTimeout(fit, 1500);
+    }));
+    if (["#words", "#logs", "#desires", "#costs"].includes(location.hash)) setView(location.hash.slice(1));
+    // 行動ログ・欲求・おかねを見せないことになっている人には、粒を出さない(開いていたら手紙へ戻す)
     fetch("/api/me").then(r => r.json()).then(me => {
-      if (!(me.hide_tools || []).includes("logs")) return;
-      const b = document.querySelector('[data-view="logs"]');
-      if (b.classList.contains("is-on")) setView("mail");
-      b.hidden = true;
+      for (const id of ["logs", "desires", "costs"]) {
+        if (!(me.hide_tools || []).includes(id)) continue;
+        const b = document.querySelector(`[data-view="${id}"]`);
+        if (b.classList.contains("is-on")) setView("mail");
+        b.hidden = true;
+      }
     }).catch(() => {});
     load(true);
   </script>

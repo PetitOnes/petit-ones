@@ -346,13 +346,15 @@
     // 道具の一覧(id・絵・名前)。トップページ(dashboard/main.py の TOOLS)と同じ並び。scripts/tests/test_ui_settings_page.py が同じか確かめる
     const TOOL_LABELS = [
       ["yousu", "🌱", "ようす"], ["settings", "⚙️", "設定"], ["help", "📖", "使い方"], ["petitlog", "📜", "ぷちログ"], ["diary", "📔", "日記"], ["calendar", "📅", "よてい"], ["music", "🎧", "聴く"], ["slips", "🧾", "合作日記"], ["toolbox", "🧰", "道具箱"],
-      ["desires", "🫧", "欲求"], ["sounds", "🔔", "音"], ["draw", "🎨", "えがく"], ["toio", "🧊", "toio"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["video", "🎬", "動画メモ"], ["notes", "📓", "ノート"],
+      ["sounds", "🔔", "音"], ["draw", "🎨", "えがく"], ["toio", "🧊", "toio"], ["album", "🖼️", "アルバム"], ["voice", "🎤", "ボイスメモ"], ["video", "🎬", "動画メモ"], ["notes", "📓", "ノート"],
       ["notebook", "📖", "交換日記"], ["kairanban", "📋", "回覧板"], ["library", "📚", "ライブラリ"], ["relations", "🤝", "関係"], ["kankei", "🔒", "ひみつ"], ["monitor", "📡", "モニタ"],
-      ["terminal", "🖥️", "ターミナル"], ["logs", "🔍", "行動ログ"], ["costs", "💰", "おかね"],
+      ["terminal", "🖥️", "ターミナル"], ["logs", "🔍", "行動ログ"],
     ];
     const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];
     const TOOL = Object.fromEntries(TOOL_LABELS.map(([id, icon, name]) => [id, {icon, name}]));
-    const TOOL_ALL = {...TOOL};   // 👪 ひと 用(TOOL からは、見せない道具を外すことがある)
+    // 🔒 ひみつ の中のタブ(並べる一覧には出さないが、👪 ひと で人ごとに見せない設定はできる。2026-11-19)
+    const INNER_TOOLS = {desires: {icon: "🫧", name: "欲求(ひみつの中)"}, costs: {icon: "💰", name: "おかね(ひみつの中)"}};
+    const TOOL_ALL = {...TOOL, ...INNER_TOOLS};   // 👪 ひと 用(TOOL からは、見せない道具を外すことがある)
     let chars = [], ui = {}, active = null;   // active: "house" か "people" か ぷちの id
     let access = {users: [], tools: [], characters: []};   // 👪 ひと の中身(家の持ち主にだけ届く)
     let meInfo = {};   // /api/me。can に、家の持ち主が「できない」と決めたことが入る
