@@ -13,7 +13,7 @@
   <script src="/ui/page.js"></script>
   <style>
     /* おかね(API 代)。2026-11-19 作り直し: 日 / 週 / 月(予算の周期)を切り替えて、
-       その期間の合計・前の期間との差・だれが何回(会話 / ひとりの時間 / ほか)・1 回あたり・棒グラフ。予算のペースはいつも上に */
+       その期間の合計・前の期間との差・だれが何回(会話 / 自律行動 / ほか)・1 回あたり・棒グラフ。予算のペースはいつも上に */
     .c-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 10px; }
     .c-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
     .c-nav .lbl { min-width: 8.5em; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -41,13 +41,20 @@
     .c-table .n { display: block; font-size: 0.72rem; color: var(--ui-text-mute); white-space: nowrap; }
     .c-dot { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 50%; vertical-align: -1px; box-shadow: 0 0 0 1px rgba(0,0,0,.12); }
     .c-scroll { overflow-x: auto; }
+    @media (max-width: 440px) { .c-table { font-size: 0.78rem; } .c-table th, .c-table td { padding: 6px 2px; } .c-dot { margin-right: 3px; } }
     /* 棒グラフ: 1 色。目安の線は点線 */
     .c-chart { position: relative; }
     .c-chart svg { display: block; width: 100%; height: 180px; overflow: visible; }
-    .c-chart .bar { fill: var(--ui-accent-text); }
-    .c-chart .bar.is-sel { fill: var(--ui-heading); }
+    /* 会話 = 青、自律行動 = オレンジ、ほか = 緑(dataviz の検査を通した 3 色。2026-11-19) */
+    :root { --k-chat: #2a78d6; --k-autonomous: #eb6834; --k-other: #1baf7a; }
+    .c-chart .seg { pointer-events: none; }
+    .c-chart .seg.chat { fill: var(--k-chat); } .c-chart .seg.autonomous { fill: var(--k-autonomous); } .c-chart .seg.other { fill: var(--k-other); }
     .c-chart .hit { fill: transparent; cursor: pointer; }
-    .c-chart .hit:hover + .bar, .c-chart .bar.is-hover { opacity: .75; }
+    .c-chart .hit:hover { fill: rgba(0,0,0,.05); }
+    .c-chart .sel { fill: none; stroke: var(--ui-text); stroke-width: 1.5; pointer-events: none; }
+    .c-key { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 8px; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+    .c-key i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 3px; vertical-align: -1px; }
+    .c-key .n { color: var(--ui-text-sub); font-size: 0.78rem; }
     .c-chart .goal { stroke: var(--ui-text-sub); stroke-width: 1; stroke-dasharray: 4 3; }
     .c-chart .axis { font-size: 10px; fill: var(--ui-text-mute); }
     .c-chart .base { stroke: var(--ui-line-soft); stroke-width: 1; }
@@ -68,7 +75,7 @@
   </div>
   <script>
     const { esc } = PetitPage;
-    const KIND = { chat: "会話", autonomous: "ひとりの時間" };   // それ以外(日記・ボタン・体のひとこと…)は「ほか」
+    const KIND = { chat: "会話", autonomous: "自律行動" };   // それ以外(日記・ボタン・体のひとこと…)は「ほか」
     const OTHER_LABELS = { diary: "日記", button: "ボタン", display_phrase: "体のひとこと", sensor: "体のセンサー", camera: "体のカメラ", mic: "体のマイク" };
     const kindOf = s => KIND[s] ? s : "other";
     const money = v => "$" + Number(v || 0).toFixed(2);
@@ -114,7 +121,14 @@
       }
       return out;
     }
-    const dayTotals = (from, to) => { const m = {}; for (const r of S.rows) if (r.date >= from && r.date <= to) { const x = (m[r.date] ||= { total: 0, chat: 0, autonomous: 0, other: 0 }); x.total += r.cost; x[kindOf(r.source)] += r.cost; } return m; };
+    const emptyBar = key => ({ key, total: 0, chat: 0, autonomous: 0, other: 0, n: { chat: 0, autonomous: 0, other: 0 } });
+    const dayTotals = (from, to) => { const m = {}; for (const r of S.rows) if (r.date >= from && r.date <= to) { const x = (m[r.date] ||= emptyBar(r.date)); const k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += r.n; } return m; };
+    // ふだんの 1 日(きのうまでの 7 日の平均): 自律行動・ほかの代と回数、会話 1 往復の代
+    function usual() {
+      const to = addDays(S.base.today_str, -1), from = addDays(to, -6), m = dayTotals(from, to);
+      const t = Object.values(m).reduce((a, x) => { for (const k of ["chat", "autonomous", "other"]) { a[k] += x[k]; a.n[k] += x.n[k]; } return a; }, emptyBar(""));
+      return { auto: t.autonomous / 7, autoN: t.n.autonomous / 7, other: t.other / 7, chatPer: t.n.chat ? t.chat / t.n.chat : 0.06 };
+    }
 
     function budgetCard() {
       const b = S.base, today = b.today_str;
@@ -141,8 +155,12 @@
           予算 <b>${money(b.budget)}</b> のうち <b>${money(used)}</b> 使った(残り ${money(b.remaining)}、${md(lastDay)} まで あと ${b.days_remaining} 日)<br>
           いまの目安より <b class="${diff > 0 ? "c-up" : "c-down"}">${money(Math.abs(diff))} ${diff > 0 ? "多い" : "少ない"}</b>。
           このままだと ${md(lastDay)} には <b>${money(pace)}</b> くらい<br>
-          残りを予算内にするなら、1 日 <b>${money(perDayOk)}</b> まで(ふつうの目安は 1 日 ${money(b.budget / total)})
-        </div></div>`;
+          残りを予算内にするなら、1 日 <b>${money(perDayOk)}</b> まで(ふつうの目安は 1 日 ${money(b.budget / total)})<br>
+          ${(() => { const u = usual(), room = perDayOk - u.auto - u.other;
+            return room > 0
+              ? `→ 自律行動がいつもどおり(1 日 約 ${Math.round(u.autoN)} 回・${money(u.auto)})なら、<b>会話は 1 日 約 ${Math.floor(room / u.chatPer)} 回まで</b>(1 往復 約 ${money3(u.chatPer)})`
+              : `→ 自律行動だけで 1 日 約 ${money(u.auto)}(${Math.round(u.autoN)} 回)かかるので、会話をしなくても少し超えます`; })()}
+        </div><div class="c-hint">「いつもどおり」は、きのうまでの 7 日の平均</div></div>`;
     }
 
     function heroCard(from, to, cur) {
@@ -178,47 +196,58 @@
       const perRows = ids.filter(id => cur.by[id].chat || cur.by[id].autonomous).map(id => `<tr><td>${who(id)}</td><td>${per(cur.by[id].chat)}</td><td>${per(cur.by[id].autonomous)}</td></tr>`).join("");
       if (!rows) return '<div class="m-card"><span class="a-heading">だれが・何に</span><div class="p-empty">この期間は使っていません</div></div>';
       return `<div class="m-card"><span class="a-heading">だれが・何に</span>
-        <div class="c-scroll"><table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>ひとり</th><th>ほか</th><th>計</th></tr></thead>
+        <div class="c-scroll"><table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>自律行動</th><th>ほか</th><th>計</th></tr></thead>
         <tbody>${rows}</tbody><tfoot><tr><td>みんな</td>${K.map(k => `<td>${cell(tot[k])}</td>`).join("")}<td><span class="m">${money(cur.total)}</span><span class="n">${cur.n} 回</span></td></tr></tfoot></table></div>
-        <div class="c-hint">会話 = ダッシュボードやターミナルで話した 1 往復。ひとり = ひとりの時間(自律行動)の 1 回。ほか = 日記・ボタンなど</div></div>
+        <div class="c-hint">会話 = ダッシュボードやターミナルで話した 1 往復。自律行動 = ぷちがひとりで動く 1 回。ほか = 日記・ボタンなど</div></div>
       <div class="m-card"><span class="a-heading">1 回あたり</span>
-        <table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>ひとりの時間</th></tr></thead><tbody>${perRows}</tbody>
+        <table class="c-table"><thead><tr><th>だれ</th><th>会話</th><th>自律行動</th></tr></thead><tbody>${perRows}</tbody>
         <tfoot><tr><td>みんな</td><td>${per(tot.chat)}</td><td>${per(tot.autonomous)}</td></tr></tfoot></table></div>`;
     }
 
-    // 棒グラフ。週・月は 1 日 1 本(押すとその日へ)、日は 1 時間 1 本
+    // 棒グラフ。週・月は 1 日 1 本(押すとその日へ)、日は 1 時間 1 本。下から 自律行動・会話・ほか を積む
+    const STACK = ["autonomous", "chat", "other"];
     function chartCard(from, to) {
       let bars = [], goal = 0, title;
       if (S.view === "day") {
-        const runs = S.runs[from] || [];
-        const h = Array.from({ length: 24 }, (_, i) => ({ key: i, label: `${i}時`, total: 0, chat: 0, autonomous: 0, other: 0 }));
-        for (const r of runs) { const x = h[Number(r.time.slice(0, 2))]; x.total += r.cost; x[kindOf(r.source)] += r.cost; }
+        const h = Array.from({ length: 24 }, (_, i) => emptyBar(i));
+        for (const r of (S.runs[from] || [])) { const x = h[Number(r.time.slice(0, 2))], k = kindOf(r.source); x.total += r.cost; x[k] += r.cost; x.n[k] += 1; }
         bars = h; title = "1 時間ごと";
       } else {
         const m = dayTotals(from, to);
-        for (let d = from; d <= to; d = addDays(d, 1)) bars.push({ key: d, label: md(d), total: 0, chat: 0, autonomous: 0, other: 0, ...(m[d] || {}) });
+        for (let d = from; d <= to; d = addDays(d, 1)) bars.push(m[d] || emptyBar(d));
         goal = S.base.budget / daysBetween(S.base.cycle_start, S.base.cycle_end);
         title = "1 日ごと(押すとその日)";
       }
+      const sumK = bars.reduce((a, x) => { for (const k of STACK) { a[k] += x[k]; a.n[k] += x.n[k]; } return a; }, emptyBar(""));
       const W = 600, H = 180, top = 10, bottom = 22, n = bars.length;
       const max = Math.max(goal * 1.15, 0.01, ...bars.map(b => b.total));
-      const y = v => top + (H - top - bottom) * (1 - v / max);
+      const scale = v => (H - top - bottom) * v / max;
       const bw = W / n, gap = Math.min(4, bw * 0.25), w = Math.max(1, bw - gap);
       const every = n > 16 ? Math.ceil(n / 8) : n > 12 ? 2 : 1;
-      const svg = bars.map((b, i) => {
-        const x = i * bw + gap / 2, yy = y(b.total), hh = Math.max(b.total > 0 ? 2 : 0, H - bottom - yy);
-        const r = Math.min(4, w / 2, hh);
-        const path = hh > 0 ? `M${x},${H - bottom} V${H - bottom - hh + r} Q${x},${H - bottom - hh} ${x + r},${H - bottom - hh} H${x + w - r} Q${x + w},${H - bottom - hh} ${x + w},${H - bottom - hh + r} V${H - bottom} Z` : "";
-        const sel = S.view !== "day" && b.key === S.date;
-        return `<rect class="hit" x="${i * bw}" y="0" width="${bw}" height="${H}" data-i="${i}"></rect>${path ? `<path class="bar${sel ? " is-sel" : ""}" d="${path}"></path>` : ""}`
-          + (i % every === 0 ? `<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(S.view === "day" ? String(b.key) : b.label)}</text>` : "");
-      }).join("");
-      const goalLine = goal ? `<line class="goal" x1="0" x2="${W}" y1="${y(goal)}" y2="${y(goal)}"></line>` : "";
+      const segs = [], hits = [];
+      bars.forEach((b, i) => {
+        const x = i * bw + gap / 2;
+        let y0 = H - bottom;
+        const parts = STACK.filter(k => b[k] > 0);
+        parts.forEach((k, j) => {
+          const hh = Math.max(1.5, scale(b[k])), last = j === parts.length - 1, r = last ? Math.min(4, w / 2, hh) : 0;
+          const yt = y0 - hh;
+          segs.push(`<path class="seg ${k}" d="M${x},${y0} V${yt + r} Q${x},${yt} ${x + r},${yt} H${x + w - r} Q${x + w},${yt} ${x + w},${yt + r} V${y0} Z"></path>`);
+          y0 = yt - (last ? 0 : 1.5);   // 積んだ色のあいだに細いすき間
+        });
+        if (S.view !== "day" && b.key === S.date && b.total > 0) segs.push(`<rect class="sel" x="${x - 1}" y="${y0 - 1}" width="${w + 2}" height="${H - bottom - y0 + 1}" rx="3"></rect>`);
+        if (i % every === 0) segs.push(`<text class="axis" x="${x + w / 2}" y="${H - 6}" text-anchor="middle">${esc(S.view === "day" ? String(b.key) : md(b.key))}</text>`);
+        hits.push(`<rect class="hit" x="${i * bw}" y="0" width="${bw}" height="${H - bottom}" data-i="${i}"></rect>`);
+      });
+      const goalLine = goal ? `<line class="goal" x1="0" x2="${W}" y1="${H - bottom - scale(goal)}" y2="${H - bottom - scale(goal)}"></line>` : "";
       S._bars = bars;
+      const key = [["chat", "会話"], ["autonomous", "自律行動"], ["other", "ほか"]].filter(([k]) => k !== "other" || sumK.n.other)
+        .map(([k, l]) => `<span><i style="background:var(--k-${k})"></i>${l} <b>${money(sumK[k])}</b> <span class="n">${sumK.n[k].toLocaleString()} 回</span></span>`).join("");
       return `<div class="m-card"><span class="a-heading">${title}</span>
+        <div class="c-key">${key}</div>
         <div class="c-chart" id="chart"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${title}の代">
-          <line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${svg}${goalLine}</svg><div class="c-tip" id="tip" hidden></div></div>
-        ${goal ? '<div class="c-legend">点線は 1 日の目安 ${money(goal)}(予算 ÷ 周期の日数)</div>' : ""}</div>`;
+          <line class="base" x1="0" x2="${W}" y1="${H - bottom}" y2="${H - bottom}"></line>${segs.join("")}${goalLine}${hits.join("")}</svg><div class="c-tip" id="tip" hidden></div></div>
+        ${goal ? `<div class="c-legend">点線は 1 日の目安 ${money(goal)}(予算 ÷ 周期の日数)</div>` : ""}</div>`;
     }
 
     function runsCard(date) {
@@ -280,7 +309,8 @@
       if (!tip) return;
       if (!hit) { tip.hidden = true; return; }
       const b = S._bars[Number(hit.dataset.i)], box = document.getElementById("chart").getBoundingClientRect(), r = hit.getBoundingClientRect();
-      tip.innerHTML = `<b>${esc(S.view === "day" ? `${b.key}時台` : mdw(b.key))} ${money(b.total)}</b><br>会話 ${money(b.chat)} ・ ひとりの時間 ${money(b.autonomous)}${b.other ? ` ・ ほか ${money(b.other)}` : ""}`;
+      const line = (k, l) => b.n[k] ? `<br><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:var(--k-${k})"></i> ${l} ${b.n[k]} 回 ${money(b[k])}` : "";
+      tip.innerHTML = `<b>${esc(S.view === "day" ? `${b.key}時台` : mdw(b.key))} ${money(b.total)}</b>${line("chat", "会話")}${line("autonomous", "自律行動")}${line("other", "ほか")}${b.total ? "" : "<br>使っていない"}`;
       tip.hidden = false;
       const x = r.left - box.left + r.width / 2;
       tip.style.left = Math.max(0, Math.min(box.width - tip.offsetWidth, x - tip.offsetWidth / 2)) + "px";
