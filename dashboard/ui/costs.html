@@ -215,7 +215,7 @@
       } else {
         const m = dayTotals(from, to, S.who || null);
         for (let d = from; d <= to; d = addDays(d, 1)) bars.push(m[d] || emptyBar(d));
-        goal = S.base.budget / daysBetween(S.base.cycle_start, S.base.cycle_end);
+        goal = S.who ? 0 : S.base.budget / daysBetween(S.base.cycle_start, S.base.cycle_end);   // 目安はみんなの分なので、1 人のときは引かない
         title = "1 日ごと(押すとその日)";
       }
       if (S.who) title += `・${nameOf(S.who)}`;
