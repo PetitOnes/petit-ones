@@ -847,10 +847,15 @@ else
     cr=$(echo "$result_json"    | jq -r '.usage.cache_read_input_tokens // 0' 2>/dev/null)
     cost=$(echo "$result_json"  | jq -r '.total_cost_usd // 0' 2>/dev/null)
     turns=$(echo "$result_json" | jq -r '.num_turns // 0' 2>/dev/null)
-    echo "[usage] type=$run_type turns=$turns input=$input output=$out cache_create=$cc cache_read=$cr cost_usd=$cost" >> "$LOG_FILE"
+    # total_cost_usd は続きの会話だと累計。セッションごとに差を出して 1 回ぶん(cost_run)も残す(2026-11-19、scripts/cost_run.py)
+    local sid run_cost
+    sid=$(echo "$result_json" | jq -r '.session_id // ""' 2>/dev/null)
+    run_cost=$(PETIT_DATA_DIR="$DATA_DIR" python3 "${PROJECT_DIR}/scripts/cost_run.py" "$sid" "$cost" 2>/dev/null || echo "$cost")
+    [[ "$run_cost" =~ ^[0-9.eE+-]+$ ]] || run_cost="$cost"
+    echo "[usage] type=$run_type turns=$turns input=$input output=$out cache_create=$cc cache_read=$cr cost_usd=$cost cost_run=$run_cost" >> "$LOG_FILE"
     local ts entry
     ts=$(date -Iseconds)
-    entry="{\"timestamp\":\"$ts\",\"source\":\"autonomous\",\"character\":\"$CHARACTER_ID\",\"session_type\":\"$run_type\",\"turns\":$turns,\"input\":$input,\"output\":$out,\"cache_creation\":$cc,\"cache_read\":$cr,\"cost_usd\":$cost}"
+    entry="{\"timestamp\":\"$ts\",\"source\":\"autonomous\",\"character\":\"$CHARACTER_ID\",\"session_type\":\"$run_type\",\"session_id\":\"$sid\",\"turns\":$turns,\"input\":$input,\"output\":$out,\"cache_creation\":$cc,\"cache_read\":$cr,\"cost_usd\":$cost,\"cost_run\":$run_cost}"
     mkdir -p "$DATA_DIR/token_logs/$CHARACTER_ID" "$DATA_DIR/token_logs"
     echo "$entry" >> "$DATA_DIR/token_logs/$CHARACTER_ID/token_log.jsonl"
     echo "$entry" >> "$DATA_DIR/token_logs/token_log.jsonl"

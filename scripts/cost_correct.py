@@ -7,6 +7,8 @@
 直し方: 2026-09-19 以降の行で、トークン数からの概算(est)と比べて cost が 1.15 倍を超える行は累計の疑い。同じ (character, source) の
 直近 8 行の cost のうち、引いた差が est にいちばん近いもの(または引かない)を選ぶ。new の行と、est と合っている行はそのまま。
 
+2026-11-19 から、記録のときに 1 回ぶん(cost_run。cost_run.py)を一緒に書いている。その行は推定せずにそれを使う。
+
 使い方: python3 cost_correct.py            → 月別・キャラ別の 元の合計 / 直した合計 を表示
         from cost_correct import load_corrected  → [{timestamp, date, character, source, cost, cost_raw, fixed}]"""
 import collections
@@ -43,7 +45,9 @@ def load_corrected(path=TOKEN_LOG):
         e = est(ev); raw = ev.get("cost_usd") or 0
         key = (ev.get("character", "unknown"), ev.get("source", "unknown"))
         cost, fixed = raw, False
-        if raw == 0: cost = e
+        if ev.get("cost_run") is not None and ev["cost_run"] != raw:   # 記録のときに 1 回ぶんを出してある(2026-11-19 から。cost_run.py)。推定しない
+            cost = ev["cost_run"]   # 同じ値のときは、はじめての回か、前の累計を知らなかった回(入れた日に続いていた会話)。下の推定にまかせる
+        elif raw == 0: cost = e
         elif ev["_dt"].strftime("%Y-%m-%d") >= CUMULATIVE_SINCE and ev.get("session_type") != "new" and e > 0 and raw / e > SUSPECT_RATIO:
             # 累計の疑い: 直近の cost を引いた差のうち、概算にいちばん近いものを選ぶ(引かない も候補)
             cands = [raw] + [raw - c for c in recent[key][-8:] if 0 < raw - c]
