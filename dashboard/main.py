@@ -1152,6 +1152,17 @@ def _house_alert_check(result_item: dict | None, source: str, character_id: str)
     threading.Thread(target=_run, daemon=True).start()
 
 
+def _cost_run(result: dict) -> float:
+    """1 回ぶんの代。total_cost_usd は続きの会話だと累計なので、セッションごとに差を出す(scripts/cost_run.py、2026-11-19)"""
+    total = result.get("total_cost_usd", 0) or 0
+    try:
+        sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+        import cost_run
+        return cost_run.run_cost(result.get("session_id") or "", total, DATA_DIR)
+    except Exception:
+        return total
+
+
 def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
     try:
         data = json.loads(raw_json)
@@ -1172,6 +1183,8 @@ def _append_token_log(source: str, character_id: str, raw_json: str) -> None:
             "cache_creation": usage.get("cache_creation_input_tokens", 0),
             "cache_read": usage.get("cache_read_input_tokens", 0),
             "cost_usd": result_item.get("total_cost_usd", 0),
+            "session_id": result_item.get("session_id") or "",
+            "cost_run": _cost_run(result_item),
         }
         _TOKEN_LOG.parent.mkdir(parents=True, exist_ok=True)
         with open(_TOKEN_LOG, "a", encoding="utf-8") as f:
@@ -2105,6 +2118,8 @@ async def call_claude(character_id: str, message: str, m5_online: bool | None = 
                 "cache_creation": usage.get("cache_creation_input_tokens", 0),
                 "cache_read": usage.get("cache_read_input_tokens", 0),
                 "cost_usd": result_ev.get("total_cost_usd", 0),
+                "session_id": result_ev.get("session_id") or "",
+                "cost_run": _cost_run(result_ev),
             }
             _TOKEN_LOG.parent.mkdir(parents=True, exist_ok=True)
             with open(_TOKEN_LOG, "a", encoding="utf-8") as f:
