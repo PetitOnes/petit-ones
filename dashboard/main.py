@@ -10440,7 +10440,6 @@ HTML = """<!DOCTYPE html>
       monitor:   {icon: "📡", name: "モニタ",     attr: 'href="/display" target="_blank"'},
       terminal:  {icon: "🖥️", name: "ターミナル", attr: 'href="/terminal"'},
       logs:      {icon: "🔍", name: "行動ログ",   attr: 'href="/stream-logs"'},
-      costs:     {icon: "💰", name: "おかね",     pane: "costs"},
     };
     const TOOLS_DEFAULT_SHOWN = ["yousu", "petitlog", "diary", "album", "voice", "notes", "notebook"];   // それ以外(設定・回覧板…)は「ほか」
     // 家の設定と一覧を合わせる: 知らない id は捨て、設定に無い道具は後ろに足す

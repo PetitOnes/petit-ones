@@ -104,6 +104,7 @@
       <button class="a-pill is-on" aria-pressed="true" data-view="mail">💌 手紙</button>
       <button class="a-pill" aria-pressed="false" data-view="words">📜 わたしている文</button>
       <button class="a-pill" aria-pressed="false" data-view="logs">🔍 行動ログ</button>
+      <button class="a-pill" aria-pressed="false" data-view="costs">💰 おかね</button>
     </div>
     <div data-view-box="mail">
     <div class="h-bar" id="scopes"></div>
@@ -137,6 +138,9 @@
       <div class="h-count" id="gCount"></div>
       <div id="gList"></div>
       <div class="p-empty" id="gEmpty">読み込み中…</div>
+    </div>
+    <div data-view-box="costs" hidden>
+      <iframe id="cFrame" title="おかね" style="display:block;width:100%;min-height:60vh;border:0;background:transparent"></iframe>
     </div>
   </div>
   <script>
@@ -413,16 +417,25 @@
       document.querySelectorAll("[data-view-box]").forEach(x => { x.hidden = x.dataset.viewBox !== v; });
       if (v === "words" && !words.loaded) loadWords("");
       if (v === "logs" && !logs.loaded) loadLogChars();
+      if (v === "costs" && !$("cFrame").src) $("cFrame").src = "/costs?embed=1";   // 💰 おかね は、ひみつ の中のタブに(2026-11-19)
       try { history.replaceState(null, "", v === "mail" ? location.pathname + location.search : "#" + v); } catch (e) {}
     }
     $("views").addEventListener("click", e => { const b = e.target.closest("[data-view]"); if (b) setView(b.dataset.view); });
-    if (["#words", "#logs"].includes(location.hash)) setView(location.hash.slice(1));
-    // 行動ログを見せないことになっている人には、粒を出さない(開いていたら手紙へ戻す)
+    // おかねの高さを中身に合わせる(同じ家のページなので読める)
+    $("cFrame").addEventListener("load", () => {
+      const f = $("cFrame");
+      const fit = () => { try { f.style.height = f.contentDocument.documentElement.scrollHeight + "px"; } catch (e) {} };
+      fit(); setTimeout(fit, 400); setTimeout(fit, 1500);
+    });
+    if (["#words", "#logs", "#costs"].includes(location.hash)) setView(location.hash.slice(1));
+    // 行動ログ・おかねを見せないことになっている人には、粒を出さない(開いていたら手紙へ戻す)
     fetch("/api/me").then(r => r.json()).then(me => {
-      if (!(me.hide_tools || []).includes("logs")) return;
-      const b = document.querySelector('[data-view="logs"]');
-      if (b.classList.contains("is-on")) setView("mail");
-      b.hidden = true;
+      for (const id of ["logs", "costs"]) {
+        if (!(me.hide_tools || []).includes(id)) continue;
+        const b = document.querySelector(`[data-view="${id}"]`);
+        if (b.classList.contains("is-on")) setView("mail");
+        b.hidden = true;
+      }
     }).catch(() => {});
     load(true);
   </script>
