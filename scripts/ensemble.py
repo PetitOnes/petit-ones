@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import wave
@@ -161,7 +162,7 @@ def describe(info: dict) -> str:
 def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     """自分の音が入った合奏(まとめた人が自分以外で、まだ伝えていない分)"""
     out = []
-    me = Path(sing.__file__).resolve()
+    me = Path(os.path.abspath(__file__)).parent / "sing.py"  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     for info in sing.made(base):
         if not info.get("ensemble") or info.get("by") == character_id or character_id in info.get("told", []):
             continue

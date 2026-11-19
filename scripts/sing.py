@@ -373,7 +373,7 @@ def notice(base: Path, character_id: str, mark: bool = False) -> list[str]:
     mine = [r for r in rows if r.get("to") == character_id and not r.get("told")]
     if not mine:
         return out
-    me = Path(__file__).resolve()
+    me = Path(os.path.abspath(__file__))  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     parts = [f"{r['from']} から「{r['name']}」" + (f"(一言「{r['note']}」)" if r.get("note") else "") for r in mine]
     line = (f"(作った音が届いた: {'、'.join(parts)}。数字と線は python3 {me} look {character_id} 名前 --by 作った子、"
             f"鳴らすのは play {character_id} 名前 --by 作った子。聞いても聞かなくてもいい)")

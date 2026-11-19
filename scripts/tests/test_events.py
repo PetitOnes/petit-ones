@@ -66,3 +66,20 @@ def test_list_lines_and_cli_add(tmp_path, monkeypatch, capsys):
     assert len(ev.list_lines(base, Date(2026, 12, 1), all_=True)) == 1
     monkeypatch.setattr(sys, "argv", ["events.py", "add", "puchiko", "", "2026-11-22"])
     assert ev.main() == 1                                               # 題が無いと足せない
+
+
+def test_fresh_lines_tell_each_stage_once(tmp_path):
+    from datetime import datetime
+    base = _house(tmp_path)
+    ev.add({"title": "座談会", "date": "2026-11-19", "time": "14:00", "who": ["puchiko"]}, base)
+    assert len(ev.fresh_lines(base, "puchiko", Date(2026, 11, 15))) == 1      # はじめて 7 日以内に入った
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 16)) == []          # あとはしばらく言わない
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 18))[0].endswith("あと 1 日。行く: ぷちこ(自分も行く)")
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 18)) == []
+    morning = datetime(2026, 11, 19, 7, 35)
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 19), morning)[0].startswith("きょうは ")
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 19), datetime(2026, 11, 19, 12, 5)) == []
+    assert len(ev.fresh_lines(base, "puchiko", Date(2026, 11, 19), datetime(2026, 11, 19, 13, 5))) == 1   # 始まる前にもう一度
+    assert ev.fresh_lines(base, "puchiko", Date(2026, 11, 19), datetime(2026, 11, 19, 13, 35)) == []
+    assert len(ev.fresh_lines(base, "puchiru", Date(2026, 11, 19), morning)) == 1   # 子ごとに覚える
+    assert ev.fresh_lines(base, "puchiteya", Date(2026, 11, 19), morning, mark=False) == ev.fresh_lines(base, "puchiteya", Date(2026, 11, 19), morning, mark=False)

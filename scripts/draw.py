@@ -573,7 +573,7 @@ def notice(base: Path, cid: str, mark: bool = False) -> list[str]:
     mine = [r for r in rows if r.get("to") == cid and not r.get("told")]
     if not mine:
         return []
-    me = Path(__file__).resolve()
+    me = Path(os.path.abspath(__file__))  # resolve() だと embodied-claude のリンクが解けて、許可の道と合わない
     parts = [f"{r['from']} から「{r['name']}」" + (f"(一言「{r['note']}」)" if r.get("note") else "") for r in mine]
     line = (f"(描いた絵が届いた: {'、'.join(parts)}。数字と線は python3 {me} look {cid} 名前 --by 描いた子、"
             f"並べた絵は sheet、絵そのものは see。見ても見なくてもいい)")
