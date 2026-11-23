@@ -9617,7 +9617,7 @@ HTML = """<!DOCTYPE html>
        窓がスクロールすると、スマホのブラウザが URL の欄を畳み、端では画面ごと引っぱられて、頭の帯まで上へずれる */
     html { height: 100%; overflow: hidden; overscroll-behavior: none; }
     body { height: 100vh; height: 100dvh; overflow: hidden; overscroll-behavior: none; display: flex; flex-direction: column; }
-    .sticky-head { flex: none; }
+    body > .sticky-head { flex: none; position: relative; }   /* 窓が動かないので貼り付けは要らない(sticky のままだと、body の余白ぶん下がる) */
     #chatBody { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 calc(50% - 50vw); padding: 0 calc(50vw - 50%); }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
@@ -11830,6 +11830,13 @@ HTML = """<!DOCTYPE html>
     // 会話はページのスクロールそのもの。いちばん下(最新)へ
     let _holdScroll = false;   // 古い分を足している間は下へ送らない
     function chatToBottom() { if (!_holdScroll) { const sc = document.getElementById("chatBody"); sc.scrollTop = sc.scrollHeight; } }
+    // いちばん下を見ているあいだに箱の高さが変わったら(頭の帯が伸びた・キーボードが出た・写真が読めた)、いちばん下のままにする
+    let _chatAtBottom = true;
+    document.getElementById("chatBody").addEventListener("scroll", e => { const sc = e.currentTarget; _chatAtBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40; }, {passive: true});
+    if (window.ResizeObserver) {
+      const keep = new ResizeObserver(() => { if (_chatAtBottom && !_pane) chatToBottom(); });
+      keep.observe(document.getElementById("chatBody")); keep.observe(document.getElementById("chat"));
+    }
     function scrollChatToBottom() {
       const chat = document.getElementById("chat");
       requestAnimationFrame(() => { chatToBottom(); });
