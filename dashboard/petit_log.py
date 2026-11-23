@@ -8,7 +8,8 @@
 - 体のことは「体に起きたこと」(持ち上げられた・置かれた・触られた・眠った・起こされた / 自分で起きた / 体が入れ直された)だけ。
   明るさの変わり目・つながらなかった時間・電池の知らせは出さない
 - 人の手で起きること(持ち上げられた・置かれた・触られた・起こされた)には、家の持ち主の名前を付ける
-  (「ありさんに持ち上げられた」)。体はだれの手かまでは分からないので、家の持ち主と見なして書く
+  (「ありさんに持ち上げられた」)。体はだれの手かまでは分からないので、家の持ち主と見なして書く。
+  違ったときは、家の人が行を押して直せる(scripts/petit_log_hands.py。直しのある時間は、その人の名前で書く)
 - 目覚めは、つながらなかった時間の直後なら「体が入れ直された」(再起動・電源の入れ直し)、
   ひとりの時間や会話のなかでその子が自分の体の wake を呼んでいたら「自分で起きた」(起きてから体でしたことがあれば「自分で起きて、話した」のように添える)、
   それ以外(体を 3 回触る・ダッシュボード・話しかけられて)は「起こされた」
@@ -127,6 +128,7 @@ class Sources:
     user_label: Callable[[str], str]   # 人の id → 表示名
     name_of: Callable[[str], str]      # ぷち・人の id → 表示名(メールの宛先)
     owner_name: str = ""               # 家の持ち主の表示名。体に人の手で起きたことに「〜に」と付ける(無ければ付けない)
+    hand_of: Callable[[datetime], str | None] | None = None   # その時刻の手の直し(人の id。"" は「わからない」、None は直しなし)
     anniversaries: Callable[[Date], list[dict]] | None = None   # その日の記念日 [{"label", "note"}](家の設定から。無ければ出さない)
 
 
@@ -558,9 +560,11 @@ class _Index:
                     out[ev["type"]].append((ts, ev["with"]))
         return out
 
-    def _by_owner(self, text: str) -> str:
-        """人の手で起きたことに、家の持ち主の名前を付ける(「ありさんに持ち上げられた」)"""
-        return f"{self.src.owner_name}に{text}" if self.src.owner_name else text
+    def _by_owner(self, text: str, ts: datetime) -> str:
+        """人の手で起きたことに、家の持ち主の名前を付ける(「ありさんに持ち上げられた」)。直しのある時刻は、その人の名前で"""
+        who = self.src.hand_of(ts) if self.src.hand_of else None
+        name = self.src.owner_name if who is None else (self.src.user_label(who) if who else "")
+        return f"{name}に{text}" if name else text
 
     def _body(self, day: Date) -> list[dict]:
         """体に起きたこと。
@@ -618,7 +622,7 @@ class _Index:
                 text = "抱っこされて、たくさん触れてもらった" if "picked_up" in kinds else "たくさん触られた"
             else:
                 text = "持ち上げられたり、置かれたりした"
-            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": self._by_owner(text), "count": 1})
+            out.append({"_ts": st[0][0], "_end": st[-1][0], "kind": "body", "text": self._by_owner(text, st[0][0]), "count": 1, "_hand": True})
             busy.update(st)
 
         last: dict[str, dict] = {}
@@ -626,6 +630,7 @@ class _Index:
             if (ts, kind) in busy:
                 continue
             word = BODY_WORDS[kind]
+            by_hand = False   # だれの手かを見立てて書いた行(あとで直せる)
             if kind == "sleep" and pressed_by("sleep_by", ts):
                 word = f"{pressed_by('sleep_by', ts)}に寝かされた"   # ダッシュボードから寝かされた
             if kind == "woken" and pressed_by("wake_by", ts):
@@ -638,15 +643,15 @@ class _Index:
                 elif (after := self._woke_itself(ts)) is not None:
                     word = _woke_words(after)
                 else:
-                    word = self._by_owner(word)
+                    word, by_hand = self._by_owner(word, ts), True
             elif kind in BODY_CONTACT:
-                word = self._by_owner(word)
+                word, by_hand = self._by_owner(word, ts), True
             prev = last.get(word)
             if prev and (ts - prev["_last"]).total_seconds() <= BODY_GROUP_S:
                 prev["count"] += 1
                 prev["_last"] = ts
                 continue
-            item = {"_ts": ts, "_last": ts, "kind": "body", "text": word, "count": 1}
+            item = {"_ts": ts, "_last": ts, "kind": "body", "text": word, "count": 1, "_hand": by_hand}
             last[word] = item
             out.append(item)
         return out
@@ -712,6 +717,9 @@ class _Index:
                     did = _alone_did(it["_file"], self.src.char_id)
                     row["text"] = _alone_words(did)
                     row["quiet"] = did <= ALONE_QUIET_KEYS   # 確かめた・思い出した・記憶に残した だけの回
+            if it.get("_hand"):   # だれの手かを直すときの、この行の時間
+                row["hand"] = {"from": ts.isoformat(timespec="seconds"),
+                               "to": (it.get("_end") or it.get("_last") or ts).isoformat(timespec="seconds")}
             if it["kind"] not in ("alone", "anniv") and any(a <= ts <= b for a, b in runs):
                 row["alone"] = True
             out.append(row)

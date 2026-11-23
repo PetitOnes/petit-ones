@@ -44,6 +44,7 @@
       anniv:  { icon: "🎂", chip: "記念日" },
     };
     let charId = "", nextBefore = null, busy = false;
+    let hands = [];   // 体の行の「だれの手?」で選べる人(直してよい人にだけ届く)
     let off = new Set();   // 出さない種類
     try { off = new Set(JSON.parse(localStorage.getItem("petitLogOff") || "[]")); } catch (e) {}
 
@@ -89,6 +90,8 @@
         body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
       } else if (it.kind === "body") {
         body = esc(it.text) + (it.count > 1 ? ` <span class="o-log-sub">× ${it.count}</span>` : "");
+        // 体は だれの手かまでは分からない。違ったときに直す口(直してよい人にだけ出る)
+        if (it.hand && hands.length) body += ` <button class="p-hand-btn" data-from="${esc(it.hand.from)}" data-to="${esc(it.hand.to)}" title="だれの手だったかを直す">だれの手?</button>`;
       } else if (it.kind === "anniv") {
         body = `<b>${esc(it.text)}</b>` + (it.note ? ` <span class="o-log-sub">${esc(it.note)}</span>` : "");
       } else if (it.kind === "alone") {
@@ -100,7 +103,7 @@
 
     function dayHtml(day) {
       const diary = day.has_diary ? `<a class="a-btn a-btn--sub a-btn--s" href="${esc(link("/diary", { char: charId, date: day.date }))}">📖 日記</a>` : "";
-      return `<section class="p-day"><h2 class="o-day">${esc(dayLabel(day.date, day.weekday))}${diary}</h2><div class="o-log">${day.items.map(rowHtml).join("")}</div></section>`;
+      return `<section class="p-day" data-date="${esc(day.date)}"><h2 class="o-day">${esc(dayLabel(day.date, day.weekday))}${diary}</h2><div class="o-log">${day.items.map(rowHtml).join("")}</div></section>`;
     }
 
     async function loadMore() {
@@ -111,6 +114,7 @@
       try {
         const url = `/api/${charId}/petit_log?days=3` + (nextBefore ? `&before=${nextBefore}` : "");
         const res = await (await fetch(url)).json();
+        hands = res.hands || [];
         const box = document.getElementById("days");
         box.insertAdjacentHTML("beforeend", (res.days || []).map(dayHtml).join(""));
         nextBefore = res.next_before;
@@ -124,6 +128,24 @@
       } finally {
         busy = false;
         btn.disabled = false;
+      }
+    }
+
+    async function setHand(pill) {
+      const btn = pill.closest(".o-log-body").querySelector(".p-hand-btn"), day = pill.closest(".p-day");
+      pill.closest(".p-hand-pick").querySelectorAll("button").forEach(b => { b.disabled = true; });
+      try {
+        const res = await fetch(`/api/${charId}/petit_log/hand`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ start: btn.dataset.from, end: btn.dataset.to, who: pill.dataset.who }) });
+        if (!res.ok) throw new Error((await res.json()).error || "直せませんでした");
+        // その日だけ読み直す(before はその次の日)
+        const next = new Date(day.dataset.date + "T12:00:00"); next.setDate(next.getDate() + 1);
+        const before = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+        const one = await (await fetch(`/api/${charId}/petit_log?days=1&before=${before}`)).json();
+        const fresh = (one.days || []).find(d => d.date === day.dataset.date);
+        if (fresh) { day.outerHTML = dayHtml(fresh); applyKinds(); }
+      } catch (err) {
+        pill.closest(".p-hand-pick").textContent = err.message;
       }
     }
 
@@ -157,6 +179,17 @@
         }
         return;
       }
+      // だれの手?: 押すと家の人の粒が出る。選ぶと、その行の時間の手を直して、その日だけ読み直す
+      const handBtn = e.target.closest(".p-hand-btn");
+      if (handBtn) {
+        const open = handBtn.parentElement.querySelector(".p-hand-pick");
+        if (open) { open.remove(); return; }
+        const pick = [...hands, { id: "", name: "わからない" }].map(h => `<button class="a-pill" data-who="${esc(h.id)}">${esc(h.name)}</button>`).join("");
+        handBtn.insertAdjacentHTML("afterend", `<div class="p-hand-pick m-pills">${pick}</div>`);
+        return;
+      }
+      const who = e.target.closest(".p-hand-pick [data-who]");
+      if (who) { setHand(who); return; }
       const photo = e.target.closest(".o-log-photo");
       if (photo) { window.open(photo.src, "_blank"); return; }
       const play = e.target.closest("[data-play]");
