@@ -10042,8 +10042,8 @@ HTML = """<!DOCTYPE html>
       <div id="plusMenu" class="plus-menu" style="display:none">
         <!-- 見てみて・かんじてかんじて(2026-11-23 ありさん): いまの相手に、カメラで見て / センサーで感じて、と頼む。返事は会話に出る -->
         <button class="ask-body" id="askLookBtn" onclick="askBody('look')">👀 見てみて</button>
-        <button class="ask-body" id="askFeelBtn" onclick="askBody('feel')">🫧 かんじてかんじて</button>
         <div class="ask-body plus-note" id="askBodyNote" style="display:none"></div>
+        <button class="ask-body" id="askFeelBtn" onclick="askBody('feel')">🫧 かんじてかんじて</button>
         <hr class="plus-sep ask-body">
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
