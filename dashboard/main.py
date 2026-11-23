@@ -580,6 +580,7 @@ CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("hello", "{kids}に「ここにいるよ」を送る"),
     ("ask_body", "会話の ＋ から、{kids}に「見てみて」「かんじてかんじて」を頼む(言葉で頼むのは、いつでもできる)"),
     ("rest", "{kids}の からだ おやすみ を使う"),
+    ("hand", "ぷちログ: 体に触れたのが だれの手か を直す"),
     ("body", "ようす から、{kids}の体の設定(明るさ・音量・PSAVE・WHO)を変える"),
     ("album_delete", "自分のアルバムの写真を消す"),
     ("voice_delete", "自分のボイスメモを消す"),
@@ -596,6 +597,7 @@ CAN_KEYS = [k for k, _ in CAN_LABELS]
 # 決まりを、入口(メソッドと道)で掛けるもの。設定の保存(/api/<id>/settings)は、中身を見て api_save_settings で掛ける
 CAN_ROUTES = [   # (できること, メソッド, 道の正規表現)
     ("hello", "POST", r"/api/hello"),
+    ("hand", "POST", r"/api/[^/]+/petit_log/hand"),
     ("notebook", "POST", r"/api/notebook"),
     ("rest", "POST", r"/api/switches/rest|/api/[^/]+/switches/rest"),
     ("schedule", "POST", r"/api/[^/]+/awake"),
@@ -3440,9 +3442,19 @@ def _petit_log_sources(character_id: str):
         user_label=_user_label,
         name_of=lambda i: _user_label(i, fallback=_char_display_name(i)),
         owner_name=_owner_name(),
+        hand_of=lambda ts, _m=_hands().load(char_dir(character_id)): _hands().hand_of(_m, ts),
         anniversaries=lambda day, _a=_anniv().load(DATA_DIR), _e=_events().load(DATA_DIR): (
             [{"label": f"📅 {it['title']}", "note": it["place"]} for it in _events().on_day(_e, day)] + _anniv().on_day(_a, day)),
     )
+
+
+def _hands():
+    """ぷちログの「だれの手か」の直し(scripts/petit_log_hands.py)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import petit_log_hands
+    return petit_log_hands
 
 
 def _is_petit(character_id: str) -> bool:
@@ -3450,12 +3462,36 @@ def _is_petit(character_id: str) -> bool:
 
 
 @app.get("/api/{character_id}/petit_log")
-def api_petit_log(character_id: str, before: str | None = None, days: int = 3):
+def api_petit_log(character_id: str, request: Request, before: str | None = None, days: int = 3):
     """その子の 1 日のタイムライン(新しい日から days 日ぶん)。読むだけ"""
     import petit_log
     if not _is_petit(character_id):
         return JSONResponse({"error": "unknown character"}, status_code=404)
-    return petit_log.build(_petit_log_sources(character_id), before=before, days=days)
+    res = petit_log.build(_petit_log_sources(character_id), before=before, days=days)
+    # 体の行の「だれの手?」で選べる人(直せないことになっている人には渡さない = 押すところが出ない)
+    res["hands"] = [] if _cannot(request, "hand") else [{"id": k, "name": v.get("name", k)} for k, v in _USER_DISPLAY.items()]
+    return res
+
+
+class HandBody(BaseModel):
+    start: str        # 行の時間(ぷちログの hand.from / hand.to)
+    end: str
+    who: str = ""     # 家の人の id。空は「わからない」
+
+
+@app.post("/api/{character_id}/petit_log/hand")
+def api_petit_log_hand(character_id: str, body: HandBody, request: Request):
+    """体に触れたのが だれの手か を直す(体の記録は変えず、直しを 1 行足す)"""
+    if not _is_petit(character_id):
+        return JSONResponse({"error": "unknown character"}, status_code=404)
+    if body.who and body.who not in _USER_DISPLAY:
+        return JSONResponse({"error": "家の人から選んでください"}, status_code=400)
+    try:
+        start, end = datetime.fromisoformat(body.start).replace(tzinfo=None), datetime.fromisoformat(body.end).replace(tzinfo=None)
+        _hands().mark(char_dir(character_id), start, end, body.who, by=_get_username(request) or OWNER_USER)
+    except ValueError:
+        return JSONResponse({"error": "時間が読めません"}, status_code=400)
+    return {"ok": True}
 
 
 @app.get("/api/{character_id}/diary_list")

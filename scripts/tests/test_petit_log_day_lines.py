@@ -259,3 +259,31 @@ def test_woke_itself_in_a_chat(tmp_path):
     _stream(src, "20261113_115950_chat_stream.jsonl", [("2026-11-13T12:00:03", "mcp__m5-puchiko__speak")])
     _stream(src, "20261113_133000_chat_stream.jsonl", [("2026-11-13T13:30:03", "mcp__m5-puchiko__wake")])   # 30 分前の wake は別の出来事
     assert _wakes(src) == ["10:00 自分で起きて、まわりを見た", "12:00 ありさんに起こされた", "14:00 ありさんに起こされた"]
+
+
+def test_hand_can_be_corrected(tmp_path):
+    """体はだれの手かまでは分からない。直しのある時間は その人の名前で、「わからない」は名前なしで出る"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from datetime import datetime
+
+    import petit_log_hands as hands
+
+    src = _house(tmp_path)
+    assert hands.load(src.char_dir) == []
+    hands.mark(src.char_dir, datetime(2026, 11, 13, 15, 31, 0), datetime(2026, 11, 13, 15, 32, 0), "kazeo", by="arisan")
+    hands.mark(src.char_dir, datetime(2026, 11, 13, 17, 43, 0), datetime(2026, 11, 13, 17, 43, 5), "", by="arisan")
+    (src.char_dir / "state" / hands.FILE).open("a", encoding="utf-8").write("not json\n")
+    marks = hands.load(src.char_dir)
+    src.hand_of = lambda ts: hands.hand_of(marks, ts)
+    src.user_label = lambda i: {"kazeo": "かぜおさん"}.get(i, "ありさん")
+    lines = pl.day_lines(src, DAY)
+    assert "15:31 かぜおさんに持ち上げられた" in lines and "15:31 かぜおさんに置かれた" in lines
+    assert "17:43 持ち上げられた" in lines          # わからない
+    assert "17:43 ありさんに置かれた" in lines       # 直しの外は、家の持ち主のまま
+    # あとの直しが勝つ
+    hands.mark(src.char_dir, datetime(2026, 11, 13, 15, 31, 0), datetime(2026, 11, 13, 15, 32, 0), "arisan", by="kazeo")
+    assert hands.hand_of(hands.load(src.char_dir), datetime(2026, 11, 13, 15, 31, 39)) == "arisan"
+    # 画面には、直すときの時間が渡る(人の手の行だけ)
+    rows = pl.build(src, before="2026-11-14", days=1, today=DAY)["days"][0]["items"]
+    assert [r["hand"] for r in rows if r.get("text") == "持ち上げられた"] == [{"from": "2026-11-13T17:43:00", "to": "2026-11-13T17:43:00"}]
+    assert all("hand" not in r for r in rows if r.get("text") == "眠った")

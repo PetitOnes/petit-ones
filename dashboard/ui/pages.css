@@ -30,6 +30,8 @@ html.embed .p-head { display: none; }
 .o-log-row > .a-time { flex: 0 0 2.9em; padding-top: 2px; }
 .o-log-row > .o-log-icon { flex: 0 0 1.4em; text-align: center; }
 .o-log-row > .o-log-body { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.p-hand-btn { border: none; background: none; padding: 0 2px; font: inherit; font-size: var(--ui-fs-s); color: var(--ui-text-mute); text-decoration: underline dotted; cursor: pointer; }
+.p-hand-pick { margin-top: 6px; }
 .o-log-row .o-log-sub { font-size: var(--ui-fs-s); color: var(--ui-text-mute); }
 .o-log-row .o-log-text { white-space: pre-wrap; color: var(--ui-text); }
 .o-log-row .o-log-text.fold { cursor: pointer; }
