@@ -2,6 +2,7 @@
    <html class="embed"> のときだけ効く。暗い配色をクリームに替え、そのページの題と「戻る」は出さない。
    アクセントはトップページから ?accent=rrggbb で渡る(--embed-accent)。 */
 html.embed body { background: var(--ui-cream); color: #3A322D; }
+html.embed { overscroll-behavior: contain; }   /* 端まで来ても、外の画面を引っぱらない */
 html.embed h1, html.embed .back-link { display: none; }
 html.embed .bar label, html.embed .bar .count { color: #6E625A; }
 html.embed .tab-btn { background: #fff; border: 1.5px solid var(--ui-cream-line); color: #6E625A; font-family: var(--ui-font-maru-head); font-weight: 700; }

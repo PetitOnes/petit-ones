@@ -9613,6 +9613,12 @@ HTML = """<!DOCTYPE html>
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: var(--ui-font-maru); background: var(--ui-cream); color: #444; padding: 16px; max-width: 900px; margin: 0 auto; transition: background 0.4s; overflow-x: hidden; }
+    /* ページ全体(窓)はスクロールさせず、会話の箱(#chatBody)だけをスクロールする(2026-11-23 ありさん)。
+       窓がスクロールすると、スマホのブラウザが URL の欄を畳み、端では画面ごと引っぱられて、頭の帯まで上へずれる */
+    html { height: 100%; overflow: hidden; overscroll-behavior: none; }
+    body { height: 100vh; height: 100dvh; overflow: hidden; overscroll-behavior: none; display: flex; flex-direction: column; }
+    body > .sticky-head { flex: none; position: relative; }   /* 窓が動かないので貼り付けは要らない(sticky のままだと、body の余白ぶん下がる) */
+    #chatBody { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; margin: 0 calc(50% - 50vw); padding: 0 calc(50vw - 50%); }
     .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
     h1 { font-size: 1.2rem; color: var(--char-dark); display: flex; align-items: center; gap: 6px; }
     .char-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--char); flex-shrink: 0; transition: background 0.4s; }
@@ -10429,7 +10435,8 @@ HTML = """<!DOCTYPE html>
       h.more = older.length >= CHAT_HISTORY_SHOW;
       h.shown += older.length;
       const chat = document.getElementById("chat");
-      const before = document.documentElement.scrollHeight, y = window.scrollY;
+      const sc = document.getElementById("chatBody");   // 会話をスクロールする箱
+      const before = sc.scrollHeight, y = sc.scrollTop;
       _holdScroll = true;
       let anchor = chat.firstChild;
       const frag = document.createDocumentFragment();
@@ -10446,10 +10453,10 @@ HTML = """<!DOCTYPE html>
       }
       chat.insertBefore(frag, anchor);
       _holdScroll = false;
-      window.scrollTo(0, y + (document.documentElement.scrollHeight - before));
+      sc.scrollTop = y + (sc.scrollHeight - before);
       h.busy = false;
     }
-    window.addEventListener("scroll", () => { if (window.scrollY < 600) loadOlderChat(); }, {passive: true});
+    document.getElementById("chatBody").addEventListener("scroll", e => { if (e.currentTarget.scrollTop < 600) loadOlderChat(); }, {passive: true});
     // markdown の部品はあとから届いてもよい。届いたら、いま出ている会話を作り直す
     window._mdReady = () => { if (_hist[currentCharId] && !_pane) loadChatHistoryInto(currentCharId); };
     // いま画面の上にある会話の日付を、頭のすぐ下に出す。止まったら少しして消える
@@ -10469,7 +10476,7 @@ HTML = """<!DOCTYPE html>
       clearTimeout(_dateFloatTimer);
       _dateFloatTimer = setTimeout(() => el.classList.remove("show"), 1500);
     }
-    window.addEventListener("scroll", () => { if (!_dateFloatBusy) { _dateFloatBusy = true; requestAnimationFrame(updateDateFloat); } }, {passive: true});
+    document.getElementById("chatBody").addEventListener("scroll", () => { if (!_dateFloatBusy) { _dateFloatBusy = true; requestAnimationFrame(updateDateFloat); } }, {passive: true});
 
     // 道具の一覧。並びと、列に出すか「ほか」に入れるかは家の設定(⚙️ → 道具の列)で変えられる
     const TOOLS = {
@@ -11822,7 +11829,14 @@ HTML = """<!DOCTYPE html>
     function closePopup(id) { document.getElementById(id).classList.remove("open"); }
     // 会話はページのスクロールそのもの。いちばん下(最新)へ
     let _holdScroll = false;   // 古い分を足している間は下へ送らない
-    function chatToBottom() { if (!_holdScroll) window.scrollTo(0, document.documentElement.scrollHeight); }
+    function chatToBottom() { if (!_holdScroll) { const sc = document.getElementById("chatBody"); sc.scrollTop = sc.scrollHeight; } }
+    // いちばん下を見ているあいだに箱の高さが変わったら(頭の帯が伸びた・キーボードが出た・写真が読めた)、いちばん下のままにする
+    let _chatAtBottom = true;
+    document.getElementById("chatBody").addEventListener("scroll", e => { const sc = e.currentTarget; _chatAtBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40; }, {passive: true});
+    if (window.ResizeObserver) {
+      const keep = new ResizeObserver(() => { if (_chatAtBottom && !_pane) chatToBottom(); });
+      keep.observe(document.getElementById("chatBody")); keep.observe(document.getElementById("chat"));
+    }
     function scrollChatToBottom() {
       const chat = document.getElementById("chat");
       requestAnimationFrame(() => { chatToBottom(); });
