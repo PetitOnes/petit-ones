@@ -578,6 +578,7 @@ TOOL_SPLIT_FROM = {"relations": "kankei", "calendar": "anniv"}
 # can: その人が「してよいこと」。家の持ち主が外すと、できなくなる(消す・変えるなど、あとに残ること)。はじめは全部してよい
 CAN_LABELS = [   # (id, 👪 ひと に出す言葉)
     ("hello", "{kids}に「ここにいるよ」を送る"),
+    ("ask_body", "会話の ＋ から、{kids}に「見てみて」「かんじてかんじて」を頼む(言葉で頼むのは、いつでもできる)"),
     ("rest", "{kids}の からだ おやすみ を使う"),
     ("body", "ようす から、{kids}の体の設定(明るさ・音量・PSAVE・WHO)を変える"),
     ("album_delete", "自分のアルバムの写真を消す"),
@@ -9730,6 +9731,7 @@ HTML = """<!DOCTYPE html>
     .sticky-head .tool-row { margin: 0; padding: 8px max(16px, calc(50vw - 434px)) 6px; }
     .chat-input .plus-menu button { margin: 0; }
     .chat-input .plus-menu input { flex: none; margin: 4px 14px; padding: 6px; }
+    .plus-note { font-size: 0.72rem; color: #888; padding: 0 14px 4px; white-space: normal; max-width: 15em; }
     .plus-sep { border: none; border-top: 1px solid var(--ui-cream-line); margin: 4px 6px; }
     .yousu-body { background: var(--ui-cream); }
     /* 会話を選んで画像にする: 選んでいるあいだは、選んでいない吹き出しを薄く、選んだものに枠 */
@@ -10038,6 +10040,11 @@ HTML = """<!DOCTYPE html>
       <!-- ＋ で 写真(アルバム保存) / 写真(保存しない) / 声 を選ぶ(2026-10-16 ありさん) -->
       <button class="chat-icon-btn" id="chatPlusBtn" onclick="togglePlusMenu()" title="写真や声を送る">＋</button>
       <div id="plusMenu" class="plus-menu" style="display:none">
+        <!-- 見てみて・かんじてかんじて(2026-11-23 ありさん): いまの相手に、カメラで見て / センサーで感じて、と頼む。返事は会話に出る -->
+        <button class="ask-body" id="askLookBtn" onclick="askBody('look')">👀 見てみて</button>
+        <div class="ask-body plus-note" id="askBodyNote" style="display:none"></div>
+        <button class="ask-body" id="askFeelBtn" onclick="askBody('feel')">🫧 かんじてかんじて</button>
+        <hr class="plus-sep ask-body">
         <button onclick="choosePhoto(true)">📷 写真（アルバムにも保存）</button>
         <button onclick="choosePhoto(false)">📷 写真（保存しない）</button>
         <button onclick="closePlusMenu(); chatMic()">🎤 声を送る</button>
@@ -11169,6 +11176,39 @@ HTML = """<!DOCTYPE html>
       if (_chatRecorder) { _chatRecorder.stop(); return; }   // 録音中は ＋(⏹) で止める
       const m = document.getElementById("plusMenu");
       m.style.display = m.style.display === "none" ? "" : "none";
+      if (m.style.display !== "none") refreshAskBody();
+    }
+    // 見てみて・かんじてかんじて: ふつうの会話として送る(ぷちが体の道具で見て・感じて、会話で返す)
+    const ASK_BODY = {look: "👀 見てみて(いまカメラで、まわりを見てみて)", feel: "🫧 かんじてかんじて(いま体のセンサーで、まわりを感じてみて)"};
+    function askBodyTargets() {   // 体のある、いまの相手
+      const withBody = characters.filter(c => !c.chat_only).map(c => c.id);
+      if (currentCharId === "select") return withBody.filter(id => selectedCharIds.has(id));
+      if (currentCharId === "group") return withBody;
+      return withBody.filter(id => id === currentCharId);
+    }
+    async function refreshAskBody() {
+      const ids = askBodyTargets();
+      const show = canDo("ask_body") && ids.length > 0;
+      document.querySelectorAll("#plusMenu .ask-body").forEach(el => { el.style.display = show ? "" : "none"; });
+      const look = document.getElementById("askLookBtn"), note = document.getElementById("askBodyNote");
+      look.disabled = false; note.style.display = "none";
+      if (!show) return;
+      // 「見る」が切・からだ おやすみ中の子ばかりなら、見てみて は押せない(かんじて はカメラを使わないので、そのまま)
+      const views = await Promise.all(ids.map(id => fetch(`/api/${id}/switches`).then(r => r.ok ? r.json() : null).catch(() => null)));
+      if (views.some(v => !v || !v.effective || v.effective.see !== false)) return;
+      look.disabled = true;
+      note.textContent = views.some(v => v.rest && v.rest.on) ? "いまは からだ おやすみ中なので、見るのは おやすみ" : "からだの使い方で「見る」が切になっています";
+      note.style.display = "";
+    }
+    async function askBody(kind) {
+      closePlusMenu();
+      const input = document.getElementById("input");
+      if (document.getElementById("send").disabled || _pendingMedia) return;   // 返事を待っているあいだ・写真や声を付けているあいだは送らない
+      const draft = input.value;   // 書きかけは、送ったあとに戻す
+      input.value = ASK_BODY[kind];
+      const sent = send();
+      input.value = draft; refreshSend();
+      await sent;
     }
     function closePlusMenu() { document.getElementById("plusMenu").style.display = "none"; }
     function choosePhoto(saveAlbum) { _saveAlbum = saveAlbum; closePlusMenu(); document.getElementById("photoFile").click(); }
