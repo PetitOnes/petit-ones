@@ -19,6 +19,8 @@ from pathlib import Path
 # main.py と同じパス解決
 sys.path.insert(0, str(Path(__file__).parent))
 from main import (
+    DATA_DIR,
+    _diary_result,
     _query_memories,
     char_dir,
     generate_diary_summary,
@@ -62,6 +64,8 @@ async def generate_all(date: str) -> None:
         print("キャラクターが見つかりません")
         return
 
+    failures: list[str] = []
+    made = 0
     for char in chars:
         cid = char["id"]
         name = char.get("name", cid)
@@ -73,16 +77,35 @@ async def generate_all(date: str) -> None:
         print(f"[{name}] {date}: {len(memories)}件の記憶から日記生成中...")
         summary = await generate_diary_summary(cid, date, memories)
 
-        # キャッシュ保存
-        if summary:
+        # キャッシュ保存(作れなかったときの文は、日記として保存しない)
+        if _diary_result().is_failed(summary):
+            print(f"[{name}] 生成失敗(保存しない): {summary[:120]}")
+            failures.append(summary)
+        elif summary:
             cache_dir = char_dir(cid) / "diary"
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / f"{date}.txt").write_text(summary, encoding="utf-8")
+            made += 1
             print(f"[{name}] 保存完了: {summary[:60]}...")
             update_diary_summary(cid)
             print(f"[{name}] diary_summary.md 更新完了")
         else:
             print(f"[{name}] 生成失敗")
+    _tell_house(failures, made)
+
+
+def _tell_house(failures: list[str], made: int) -> None:
+    """作れなかった日記があれば世話人へ知らせ、作れたら続いていた知らせを閉じる(scripts/house_alert.py)。"""
+    try:
+        _diary_result()   # scripts/ を読めるようにする
+        import house_alert
+        if failures:
+            kind, detail = house_alert.classify({"is_error": True, "result": failures[0]})
+            house_alert.report(DATA_DIR, kind or "claude_error", "日記づくり", "", detail)
+        elif made:
+            house_alert.ok(DATA_DIR, house_alert.CLAUDE_KINDS, "日記づくり")
+    except Exception as e:
+        print(f"[house-alert] 知らせを送れなかった: {type(e).__name__}")
 
 
 def main() -> None:

@@ -2209,10 +2209,17 @@ async def _generate_diary_with_claude(prompt: str) -> str:
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=90)
     raw = stdout.decode()
     _append_token_log("diary", "", raw)
-    try:
-        return json.loads(raw).get("result", "").strip() or stderr.decode().strip()
-    except Exception:
-        return raw.strip() or stderr.decode().strip()
+    # 失敗の文(ログイン切れなど)を日記にしない。失敗は例外にする
+    return _diary_result().claude_text(raw, stderr.decode())
+
+
+def _diary_result():
+    """日記づくりの結果の見分け(scripts/diary_result.py)"""
+    scripts_dir = str(PROJECT_DIR / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import diary_result
+    return diary_result
 
 
 async def _generate_diary_with_gemini(prompt: str) -> str:
@@ -2281,7 +2288,8 @@ async def generate_diary_summary(character_id: str, date: str, memories: list[di
         else:
             summary = await _generate_diary_with_claude(prompt)
     except Exception as e:
-        return f"（サマリー生成失敗: {e}）"
+        # この文は画面に出すだけ。保存する側は diary_result.is_failed で見分けて、保存しない
+        return _diary_result().failed_text(e)
 
     # 過去の日付のみキャッシュ保存
     if summary and date != today:
@@ -5780,8 +5788,8 @@ async def api_diary_summarize(character_id: str, date: str):
     """手動でサマリーを生成（今日用）"""
     memories = _query_memories(character_id, 200, date_filter=date)
     summary = await generate_diary_summary(character_id, date, memories)
-    # 手動生成はキャッシュ保存
-    if summary:
+    # 手動生成はキャッシュ保存(作れなかったときの文は保存しない)
+    if summary and not _diary_result().is_failed(summary):
         cache_dir = char_dir(character_id) / "diary"
         cache_dir.mkdir(parents=True, exist_ok=True)
         (cache_dir / f"{date}.txt").write_text(summary, encoding="utf-8")

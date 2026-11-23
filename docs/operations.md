@@ -118,6 +118,7 @@ bash scripts/restore_petit.sh /path/to/petit_backup_YYYYMMDD
 2026-11-14 の朝、ぷち用のログインが切れて 6 時間だれも Claude を呼べていなかったのに、ログを開くまで気づけなかったためです。
 
 - **見ているところ**: 自律行動(`autonomous-action.sh` が毎回の結果を渡す)と、ダッシュボードから呼ぶ Claude(会話・一言・日記など)
+- **夜の日記づくり(23:50)**: 作れなかったときも知らせます。失敗の文は日記として保存しません(その日の日記は無いままになり、あとで `uv run python generate_diary.py <日付>` で作り直せます)
 - **知らせ方**: ログイン切れは最初の 1 回ですぐ。ほかの失敗(ネットワーク・エラー・結果なし)は、つづけて 2 回起きたら。続いているあいだは 3 時間ごとに 1 回。直ったら「直りました」を 1 回
 - **送り先(Slack)**: `.env` の `HOUSE_ALERT_SLACK_CHANNEL`(無ければ `SLACK_APPROVE_CHANNEL`)。トークンは `SLACK_APPROVE_BOT_TOKEN`
 - **送り先(手紙箱)**: `.env` に `HOUSE_ALERT_MAIL_TO=<世話人の ID>`(カンマ区切りで何人でも)を書くと、`mailbox/from_house_to_<ID>_<日時>.md` を 1 通書きます。ダッシュボードの「メール」に、差出人「家の知らせ」の未読として出ます。書かなければ手紙は出しません。ぷちの未読・既読の知らせには入りません
